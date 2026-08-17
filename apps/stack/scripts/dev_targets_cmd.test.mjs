@@ -271,6 +271,32 @@ test('dev-targets status, sync, and exec share the moving mirror without implici
     assert.match(executionLog, /mutagen\|.*\/mutagen\/data\|sync list happier-linux/);
     assert.doesNotMatch(executionLog, /sync flush/);
     assert.match(executionLog, /ssh\|.*happier-stack-linux.*apps\/cli.*CI.*rg.*--json.*needle/);
+    assert.doesNotMatch(executionLog, /remote_dependency_bootstrap\.mjs/);
+
+    await writeFile(logPath, '');
+    const typechecked = await runRaw(
+      [
+        'exec',
+        'linux',
+        '--stack=repo-test',
+        '--cwd=packages/scm-forge-adapter',
+        '--',
+        'corepack',
+        'yarn',
+        '-s',
+        'typecheck',
+      ],
+      root,
+      commandEnv,
+    );
+    assert.equal(typechecked.code, 0, typechecked.stderr);
+    const typecheckLog = await readFile(logPath, 'utf8');
+    const bootstrapIndex = typecheckLog.indexOf('remote_dependency_bootstrap.mjs');
+    const typecheckIndex = typecheckLog.lastIndexOf('typecheck');
+    assert.ok(bootstrapIndex >= 0, typecheckLog);
+    assert.ok(typecheckIndex > bootstrapIndex, typecheckLog);
+    assert.match(typecheckLog, /ssh\|.*\/home\/dev\/happier.*remote_dependency_bootstrap\.mjs/);
+    assert.match(typecheckLog, /ssh\|.*packages\/scm-forge-adapter.*corepack.*yarn.*typecheck/);
 
     await writeFile(logPath, '');
     const yarnStyleExecution = await runRaw(
@@ -339,6 +365,16 @@ test('dev-targets sync-service detached owns continuous synchronization independ
     assert.equal(status.preparation.state, 'ready');
     assert.equal(status.preparation.targets.linux.state, 'ready');
     assert.equal(status.statuses[0].status.state, 'ready');
+
+    const renderedStatus = await runRaw(
+      ['sync-service', 'status', '--stack=repo-test'],
+      root,
+      commandEnv,
+    );
+    assert.equal(renderedStatus.code, 0, renderedStatus.stderr);
+    assert.match(renderedStatus.stdout, /synchronization readiness\tready/);
+    assert.match(renderedStatus.stdout, /linux synchronization\tready/);
+    assert.doesNotMatch(renderedStatus.stdout, /dependenc(?:y|ies)/i);
 
     const stopped = await run(['sync-service', 'stop', '--stack=repo-test'], root, commandEnv);
     assert.equal(stopped.released, true);

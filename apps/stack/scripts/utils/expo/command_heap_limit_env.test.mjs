@@ -248,17 +248,26 @@ test('expoSpawn applies the same heap limit behavior', async (t) => {
   assert.match(logged, /^EXPO_UNSTABLE_WEB_MODAL=1$/m);
 });
 
-test('resolveExpoBin prefers the Windows cmd shim when both Expo shims exist', async (t) => {
+test('resolveExpoBin publishes and prefers an isolated Windows cmd shim without replacing Yarn entries', async (t) => {
   assert.equal(typeof expoCommand.resolveExpoBin, 'function');
 
   const root = await mkdtemp(join(tmpdir(), 'hs-expo-resolve-cmd-shim-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
+  const expoPackageDir = join(root, 'node_modules', 'expo');
+  await mkdir(join(expoPackageDir, 'bin'), { recursive: true });
+  await writeJson(join(root, 'package.json'), { dependencies: { expo: '55.0.11' } });
+  await writeJson(join(expoPackageDir, 'package.json'), {
+    name: 'expo',
+    version: '55.0.11',
+    bin: { expo: 'bin/cli' },
+  });
+  await writeFile(join(expoPackageDir, 'bin', 'cli'), '#!/usr/bin/env node\n', 'utf-8');
+  const installedExpoPath = join(root, 'node_modules', '.bin', 'expo');
   await mkdir(join(root, 'node_modules', '.bin'), { recursive: true });
-  const expoPath = join(root, 'node_modules', '.bin', 'expo');
-  await writeFile(expoPath, '#!/bin/sh\nexit 0\n', 'utf-8');
-  await writeFile(`${expoPath}.cmd`, '@echo off\r\nexit /b 0\r\n', 'utf-8');
+  await writeFile(installedExpoPath, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await writeFile(`${installedExpoPath}.cmd`, '@echo off\r\nexit /b 0\r\n', 'utf-8');
 
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
   assert.ok(descriptor);
@@ -267,5 +276,9 @@ test('resolveExpoBin prefers the Windows cmd shim when both Expo shims exist', a
     Object.defineProperty(process, 'platform', descriptor);
   });
 
-  assert.equal(await expoCommand.resolveExpoBin(root), `${expoPath}.cmd`);
+  const isolatedExpoPath = join(root, '.project', 'tmp', 'workspace-tool-bins', 'expo');
+  assert.equal(await expoCommand.resolveExpoBin(root), `${isolatedExpoPath}.cmd`);
+  assert.equal(await readFile(installedExpoPath, 'utf-8'), '#!/bin/sh\nexit 0\n');
+  assert.equal(await readFile(`${installedExpoPath}.cmd`, 'utf-8'), '@echo off\r\nexit /b 0\r\n');
+  assert.match(await readFile(`${isolatedExpoPath}.cmd`, 'utf-8'), /expo[\\/]bin[\\/]cli/);
 });

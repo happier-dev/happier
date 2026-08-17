@@ -11,6 +11,7 @@ import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
 import { resolveExplicitStackEnvFilePath, resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
+import { resolveStackHappierPassthroughEntrypoint } from '../scripts/stack/stack_happier_passthrough_entrypoint.mjs';
 import { refreshLocalBundledWorkspacePackages } from './localBundledWorkspacePreflight.mjs';
 
 function getCliRootDir() {
@@ -302,6 +303,34 @@ function isHelpInvocation(args) {
   return command === 'help';
 }
 
+function normalizeStackShorthandForPreflight(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  const command = args.find((arg) => !String(arg).startsWith('--')) ?? '';
+  if (!command || resolvehstackCommand(command)) return args;
+
+  const { envPath } = resolveStackEnvPath(command, process.env);
+  if (!existsSync(envPath)) return args;
+
+  const commandIndex = args.indexOf(command);
+  const rest = args.slice(commandIndex + 1);
+  const stackCommandIndex = rest.findIndex((arg) => !String(arg).startsWith('-'));
+  if (stackCommandIndex < 0) return args;
+
+  const stackCommand = rest[stackCommandIndex];
+  const preFlags = rest.slice(0, stackCommandIndex);
+  const post = rest.slice(stackCommandIndex + 1);
+  return [
+    ...args.slice(0, commandIndex),
+    'stack',
+    stackCommand,
+    command,
+    ...preFlags,
+    ...post,
+  ];
+}
+
+const STACK_LOCAL_ENV_SUBCOMMANDS = new Set(['set', 'unset', 'remove', 'rm', 'get', 'list', 'path']);
+
 function shouldSkipBundledWorkspacePreflight(argv) {
   const args = Array.isArray(argv) ? argv : [];
   const sepIndex = args.indexOf('--');
@@ -313,17 +342,113 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // checkouts, so the bundled workspace preflight remains mandatory.
   if (command === 'happier') return false;
 
+  // Help renders the already-installed Stack control plane. It must never turn
+  // an informational query into a workspace publisher or wait behind one.
+  if (isHelpInvocation(args)) return true;
+
   const resolvedCommand = command ? resolvehstackCommand(command) : null;
   if (resolvedCommand?.scriptRelPath === 'scripts/setup.mjs' && hasJsonFlag(args)) {
     return true;
   }
 
+  // Dev-target configuration and SSH diagnostics use only Stack-local modules.
+  // Keep them available while an unrelated CLI/workspace publication owns the
+  // shared build lock (notably for inspecting or repairing a running target).
+  if (command === 'dev-targets') return true;
+
+  // The TUI must render before repository publication can block. Its long-lived
+  // child delegates dependency admission to the server, daemon, and Expo owners,
+  // which can reuse their last admitted outputs and publish successors in place.
+  if (command === 'tui') return true;
+
+  const isTuiManaged = String(process.env.HAPPIER_STACK_TUI ?? '').trim() === '1';
+  if (isTuiManaged && (command === 'dev' || command === 'start')) return true;
+
   if (command !== 'stack') return false;
 
   const commandIndex = args.indexOf(command);
   const rest = commandIndex >= 0 ? args.slice(commandIndex + 1) : [];
-  const subcommand = rest.find((arg) => !String(arg).startsWith('-')) ?? '';
+  const positionals = rest.filter((arg) => arg !== '--' && !String(arg).startsWith('-'));
+  const subcommand = positionals[0] ?? '';
+
+  // Selection only consumes a producer snapshot and the named consumer's stack
+  // metadata. Its owner also owns `select --help`, so neither path needs a
+  // bundled-workspace repair/publication before dispatch.
+  if (subcommand === 'runtime' && positionals.length === 3 && positionals[2] === 'select') {
+    return true;
+  }
+
+  // A fresh no-auth stack only creates its own Stack-owned environment. It neither
+  // starts a component nor reads an auth source, so controlled consumers must be
+  // able to provision while an unrelated workspace publisher owns this global lock.
+  // The Stack control-plane imports still fail loudly after dispatch if unavailable.
+  if (subcommand === 'new' && (rest.includes('--no-copy-auth') || rest.includes('--fresh-auth'))) {
+    return true;
+  }
+
+  // An explicit runtime start launches already-admitted immutable artifacts. Keep
+  // restart availability independent of unrelated source workspace publication;
+  // the existing bundled Stack control plane still fails loudly if it is unusable.
+  if (subcommand === 'start' && preSeparatorArgs.includes('--runtime')) return true;
+
+  // These management paths only inspect or edit Stack-owned metadata. Keep the
+  // positive list narrow so dependency-consuming commands still repair bundled
+  // workspace packages before they load.
+  if (subcommand === 'list') return true;
+  if (subcommand === 'info') return Boolean(positionals[1]);
+  if (subcommand === 'status') return Boolean(positionals[1]);
+  if (subcommand === 'auth') {
+    return Boolean(positionals[1]) && positionals[2] === 'status';
+  }
+  // Stop owns only stack-recorded lifecycle cleanup. It must remain able to
+  // reclaim that stack while an unrelated workspace publication holds the
+  // shared build lock; it still fails loudly if the Stack control plane cannot
+  // load after dispatch.
+  if (subcommand === 'stop') return Boolean(positionals[1]);
+  if (subcommand === 'env') {
+    const envSubcommand = positionals[2] ?? 'list';
+    return Boolean(positionals[1]) && STACK_LOCAL_ENV_SUBCOMMANDS.has(envSubcommand);
+  }
+  // Read-only doctor only inspects the stack and daemon state. Keep --fix behind
+  // the preflight because it can mutate the local environment.
+  if (subcommand === 'doctor') return !rest.includes('--fix');
+  if (subcommand === 'runtime') {
+    const runtimeSubcommand = positionals[2] ?? '';
+    if (runtimeSubcommand !== 'activate') return true;
+  }
+
+  // The explicit runtime CLI consumes the selected immutable snapshot just as
+  // `stack start --runtime` does. Publishing source workspace packages before
+  // dispatch defeats that contract and can block read-only snapshot commands
+  // behind an unrelated source build.
+  if (subcommand === 'happier') {
+    if (preSeparatorArgs.includes('--runtime')) return true;
+    if (!preSeparatorArgs.includes('--source')) {
+      const stackName = positionals[1] ?? '';
+      const { envPath } = resolveStackEnvPath(stackName, process.env);
+      if (dotenvGetQuick(envPath, 'HAPPIER_STACK_RUNTIME_MODE').trim().toLowerCase() === 'require') {
+        return true;
+      }
+      const selectedRepoDir = dotenvGetQuick(envPath, 'HAPPIER_STACK_REPO_DIR');
+      const selectedEntrypoint = resolveStackHappierPassthroughEntrypoint({
+        rootDir: getCliRootDir(),
+        env: { HAPPIER_STACK_REPO_DIR: selectedRepoDir },
+      });
+      if (
+        selectedEntrypoint.source === 'stack-repo-wrapper'
+        && resolve(selectedEntrypoint.cwd) !== resolve(getCliRootDir())
+      ) {
+        return true;
+      }
+    }
+  }
+
   if (subcommand !== 'dev' && subcommand !== 'start') return false;
+
+  // A TUI-owned child reaches the component-specific admission owners below the
+  // Stack control plane. Re-running the global wrapper preflight here serializes
+  // startup before incumbent/last-green adoption can occur.
+  if (isTuiManaged) return true;
 
   const hasBackground = rest.some((arg) => arg === '--background');
   return hasBackground && hasJsonFlag(rest);
@@ -390,7 +515,8 @@ async function main() {
     return;
   }
 
-  const skipBundledWorkspacePreflight = shouldSkipBundledWorkspacePreflight(argv);
+  const preflightArgv = normalizeStackShorthandForPreflight(argv);
+  const skipBundledWorkspacePreflight = shouldSkipBundledWorkspacePreflight(preflightArgv);
   if (!skipBundledWorkspacePreflight) {
     await refreshLocalBundledWorkspacePackages(cliRootDir);
     await maybeAutoUpdateNotice(cliRootDir, cmd);

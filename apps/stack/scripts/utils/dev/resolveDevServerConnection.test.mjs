@@ -36,6 +36,35 @@ test('uses explicit --server-url and disables local server', () => {
   assert.equal(out.source, 'cli-arg');
 });
 
+test('keeps the internal tunnel URL separate from the public URL advertised to Expo clients', () => {
+  const { flags, kv } = makeArgs({
+    kv: {
+      '--server-url': 'http://127.0.0.1:43105',
+      '--server-public-url': 'https://dev-mac.example.test/',
+    },
+  });
+  const out = resolveDevServerConnection({ flags, kv, env: {}, resolvedLocalUrls: localUrls });
+  assert.equal(out.internalServerUrl, 'http://127.0.0.1:43105');
+  assert.equal(out.publicServerUrl, 'https://dev-mac.example.test');
+  assert.equal(out.uiApiUrl, 'https://dev-mac.example.test');
+});
+
+test('accepts HAPPIER_PUBLIC_SERVER_URL as the advertised URL for an external server', () => {
+  const { flags, kv } = makeArgs({ flags: ['--no-server'] });
+  const out = resolveDevServerConnection({
+    flags,
+    kv,
+    env: {
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:43105',
+      HAPPIER_PUBLIC_SERVER_URL: 'https://phone.example.test',
+    },
+    resolvedLocalUrls: localUrls,
+  });
+  assert.equal(out.internalServerUrl, 'http://127.0.0.1:43105');
+  assert.equal(out.publicServerUrl, 'https://phone.example.test');
+  assert.equal(out.uiApiUrl, 'https://phone.example.test');
+});
+
 test('uses HAPPIER_SERVER_URL when --no-server is set', () => {
   const { flags, kv } = makeArgs({ flags: ['--no-server'] });
   const out = resolveDevServerConnection({

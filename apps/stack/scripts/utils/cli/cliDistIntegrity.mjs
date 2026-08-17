@@ -156,26 +156,32 @@ export async function probeCliDistRuntimeImport(entrypoint, options = {}) {
     });
     let stderr = '';
     let settled = false;
+    let timedOut = false;
+    let spawnError = null;
     const timeout = setTimeout(() => {
       if (settled) return;
-      settled = true;
+      timedOut = true;
       child.kill('SIGKILL');
-      reject(new Error(`[cli-dist] runtime import probe timed out after ${timeoutMs}ms for ${entry}`));
     }, timeoutMs);
     timeout.unref?.();
     child.stderr?.on('data', (chunk) => {
       stderr += String(chunk);
     });
     child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(error);
+      spawnError = error;
     });
     child.on('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (timedOut) {
+        reject(new Error(`[cli-dist] runtime import probe timed out after ${timeoutMs}ms for ${entry}`));
+        return;
+      }
+      if (spawnError) {
+        reject(spawnError);
+        return;
+      }
       if (code === 0) {
         resolve();
         return;

@@ -1,43 +1,76 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 
 import {
   resolveStackArtifactsDir,
   resolveStackComponentArtifactDir,
+  resolveStackComponentArtifactLockPath,
   resolveStackRuntimePaths,
 } from './runtime_paths.mjs';
 
 test('resolveStackArtifactsDir places artifacts under the stack base dir', () => {
-  const dir = resolveStackArtifactsDir({ stackBaseDir: '/tmp/happier/stacks/prod-dev' });
+  const stackBaseDir = join('tmp', 'happier', 'stacks', 'prod-dev');
+  const dir = resolveStackArtifactsDir({ stackBaseDir });
 
-  assert.equal(dir, '/tmp/happier/stacks/prod-dev/artifacts');
+  assert.equal(dir, join(stackBaseDir, 'artifacts'));
 });
 
 test('resolveStackComponentArtifactDir scopes artifacts by component and fingerprint', () => {
+  const stackBaseDir = join('tmp', 'happier', 'stacks', 'prod-dev');
   const dir = resolveStackComponentArtifactDir({
-    stackBaseDir: '/tmp/happier/stacks/prod-dev',
+    stackBaseDir,
     component: 'server',
     fingerprint: 'abc123',
   });
 
-  assert.equal(dir, '/tmp/happier/stacks/prod-dev/artifacts/server/abc123');
+  assert.equal(dir, join(stackBaseDir, 'artifacts', 'server', 'abc123'));
+});
+
+test('resolveStackComponentArtifactDir rejects fingerprints that are not one managed-store path segment', () => {
+  for (const fingerprint of ['../../escaped-web', '/absolute-artifact', 'nested/artifact', 'nested\\artifact', '.', '..']) {
+    assert.throws(
+      () => resolveStackComponentArtifactDir({
+        stackBaseDir: '/tmp/happier/stacks/prod-dev',
+        component: 'server',
+        fingerprint,
+      }),
+      /artifact fingerprint.*path segment/i,
+    );
+  }
+});
+
+test('resolveStackComponentArtifactLockPath scopes publication to one immutable artifact identity', () => {
+  const stackBaseDir = join('tmp', 'happier', 'stacks', 'prod-dev');
+  assert.equal(
+    resolveStackComponentArtifactLockPath({
+      stackBaseDir,
+      component: 'server',
+      fingerprint: 'abc123',
+    }),
+    `${join(stackBaseDir, 'artifacts', 'server', 'abc123')}.lock`,
+  );
 });
 
 test('resolveStackRuntimePaths exposes build and activation locations', () => {
+  const stackBaseDir = join('tmp', 'happier', 'stacks', 'prod-dev');
+  const runtimeDir = join(stackBaseDir, 'runtime');
+  const buildsDir = join(runtimeDir, 'builds');
+  const currentDir = join(runtimeDir, 'current');
   const paths = resolveStackRuntimePaths({
-    stackBaseDir: '/tmp/happier/stacks/prod-dev',
+    stackBaseDir,
     snapshotId: 'snap-1',
   });
 
   assert.deepEqual(paths, {
-    runtimeDir: '/tmp/happier/stacks/prod-dev/runtime',
-    buildsDir: '/tmp/happier/stacks/prod-dev/runtime/builds',
-    currentDir: '/tmp/happier/stacks/prod-dev/runtime/current',
-    currentPath: '/tmp/happier/stacks/prod-dev/runtime/current.json',
-    currentManifestPath: '/tmp/happier/stacks/prod-dev/runtime/current/manifest.json',
-    lockPath: '/tmp/happier/stacks/prod-dev/runtime/build.lock',
-    snapshotDir: '/tmp/happier/stacks/prod-dev/runtime/builds/snap-1',
-    manifestPath: '/tmp/happier/stacks/prod-dev/runtime/builds/snap-1/manifest.json',
+    runtimeDir,
+    buildsDir,
+    currentDir,
+    currentPath: join(runtimeDir, 'current.json'),
+    currentManifestPath: join(currentDir, 'manifest.json'),
+    lockPath: join(runtimeDir, 'build.lock'),
+    snapshotDir: join(buildsDir, 'snap-1'),
+    manifestPath: join(buildsDir, 'snap-1', 'manifest.json'),
   });
 });
 

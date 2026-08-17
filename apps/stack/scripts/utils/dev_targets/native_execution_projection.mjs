@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { parseDevTargetsConfig, resolveDevTargetExecutionPolicy } from './config.mjs';
+import { REMOTE_DEPENDENCY_ADMISSION } from './remote_commands.mjs';
 
 function shellQuote(value) {
   return `'${String(value ?? '').replaceAll("'", `'"'"'`)}'`;
@@ -24,13 +25,15 @@ export function renderNativeExecutionProjection(config, { repoRoot = '' } = {}) 
     target.platform === 'posix' && selectedNames.has(target.name)
   ));
   const lines = [
-    assignment('HSTACK_EXEC_PROJECTION_VERSION', '1'),
+    assignment('HSTACK_EXEC_PROJECTION_VERSION', '2'),
     assignment('projection_repo_root', repoRoot),
     assignment('command_mode', policy.mode),
     assignment('include_local', policy.includeLocal === true ? '1' : '0'),
     assignment('fallback_mode', policy.fallback ?? 'local'),
     assignment('load_ttl_seconds', Math.max(1, Math.ceil((policy.loadProbeTtlMs ?? 15000) / 1000))),
     assignment('unavailable_ttl_seconds', Math.max(1, Math.ceil((policy.unavailableProbeTtlMs ?? 120000) / 1000))),
+    assignment('dependency_direct_commands', REMOTE_DEPENDENCY_ADMISSION.directCommands.join(' ')),
+    assignment('dependency_corepack_subcommands', REMOTE_DEPENDENCY_ADMISSION.corepackSubcommands.join(' ')),
     assignment('target_count', targets.length),
   ];
   targets.forEach((target, index) => {

@@ -84,6 +84,7 @@ process.exit(1);
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_DEV_PORT: String(metroPort),
         HAPPIER_STACK_EXPO_HOST: 'localhost',
@@ -187,6 +188,7 @@ process.exit(1);
           devClientEnabled: true,
           host: 'localhost',
           apiServerUrl: 'http://10.10.10.10:3005',
+          metroConfigFingerprint: 'missing',
           scheme: 'happy',
           tailscaleEnabled: false,
         },
@@ -204,6 +206,7 @@ process.exit(1);
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_HOST: 'localhost',
@@ -274,6 +277,7 @@ process.exit(1);
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_HOST: 'localhost',
@@ -393,6 +397,7 @@ process.exit(1);
       baseEnv: {
         ...process.env,
         HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_HOST: 'localhost',

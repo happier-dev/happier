@@ -26,9 +26,21 @@ function ensureTuiWatchArg(args) {
   return [...args, '--watch'];
 }
 
+function ensureTuiMobileArg(args) {
+  if (
+    !isTuiDevForwardedArgs(args)
+    || args.includes('--mobile')
+    || args.includes('--with-mobile')
+    || args.includes('--no-mobile')
+  ) {
+    return args;
+  }
+  return [...args, '--mobile'];
+}
+
 export function buildTuiChildArgs({ forwardedArgs, withTauri } = {}) {
   const args = Array.isArray(forwardedArgs) ? forwardedArgs.map((arg) => String(arg ?? '')).filter(Boolean) : [];
-  const childArgs = ensureTuiWatchArg(args.length > 0 ? args : ['dev']);
+  const childArgs = ensureTuiMobileArg(ensureTuiWatchArg(args.length > 0 ? args : ['dev']));
   if (!withTauri) {
     return childArgs;
   }
@@ -37,6 +49,32 @@ export function buildTuiChildArgs({ forwardedArgs, withTauri } = {}) {
     return childArgs;
   }
   return [...childArgs, '--no-browser'];
+}
+
+export function buildTuiBackgroundOwnerArgs({ childArgs, stackName = '' } = {}) {
+  const args = Array.isArray(childArgs) ? childArgs.map((arg) => String(arg ?? '')).filter(Boolean) : [];
+  if (!isTuiStartLikeForwardedArgs(args)) return args;
+
+  const resolvedStackName = String(stackName ?? '').trim();
+  const command = String(args[0] ?? '').trim();
+  const canonicalArgs =
+    resolvedStackName && (command === 'dev' || command === 'start')
+      ? ['stack', command, resolvedStackName, ...args.slice(1)]
+      : args;
+  if (canonicalArgs.includes('--background') || canonicalArgs.includes('--bg')) return canonicalArgs;
+
+  // Stackless commands have no persisted owner or runtime state to attach to.
+  if (canonicalArgs[0] !== 'stack') return canonicalArgs;
+  return [...canonicalArgs, '--background'];
+}
+
+export function extractTuiBackgroundOwnerRunnerLogPath({ line = '', stackName = '' } = {}) {
+  const resolvedStackName = String(stackName ?? '').trim();
+  if (!resolvedStackName) return null;
+  const prefix = `[stack] ${resolvedStackName}: logs: `;
+  const normalizedLine = String(line ?? '').trim();
+  if (!normalizedLine.startsWith(prefix)) return null;
+  return normalizedLine.slice(prefix.length).trim() || null;
 }
 
 export function buildTuiRestartChildArgs({ childArgs, stackName = '' } = {}) {

@@ -44,6 +44,7 @@ import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs'
 import {
   daemonStartGate,
   formatDaemonAuthRequiredError,
+  resolveDaemonStartAdmission,
   resolveStackDaemonStartRequested,
 } from './utils/auth/daemon_gate.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
@@ -77,6 +78,7 @@ import { spawnRuntimeServerAfterMigration } from './runtime/launch/runServerRunt
 import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
 import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
 import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
+import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -194,10 +196,11 @@ async function main() {
     throw new Error('[local] mysql requires an explicit DATABASE_URL before startup');
   }
 
-  const startDaemon = resolveStackDaemonStartRequested({
+  const daemonRequested = resolveStackDaemonStartRequested({
     env: process.env,
     noDaemon: flags.has('--no-daemon'),
   });
+  let startDaemon = daemonRequested;
   const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
   let serveUi = serveUiWanted;
   // Capability semantics: if UI serving is enabled, default to "required" (fail closed)
@@ -205,6 +208,12 @@ async function main() {
   const uiRequiredRaw = (process.env.HAPPIER_STACK_UI_REQUIRED ?? '').toString().trim();
   const uiRequired = uiRequiredRaw ? uiRequiredRaw !== '0' : Boolean(serveUiWanted);
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
+  const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: autostart.stackName,
+    producerStackName: borrowedExpoProducerStackName,
+  });
+  const startOwnedExpo = Boolean(startMobile && !borrowedExpo);
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
   const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const uiPrefix = process.env.HAPPIER_STACK_UI_PREFIX?.trim() ? process.env.HAPPIER_STACK_UI_PREFIX.trim() : '/';
@@ -248,6 +257,8 @@ async function main() {
         serveUi,
         uiRequired,
         startMobile,
+        startOwnedExpo,
+        expoOwnership: borrowedExpo ? 'borrowed' : 'owned',
         uiPrefix,
         uiBuildDir,
         cliHomeDir,
@@ -271,7 +282,7 @@ async function main() {
       await requireDir('happier-cli', cliDir);
     }
   }
-  if (startMobile) {
+  if (startOwnedExpo) {
     await requireDir('happier-ui', uiDir);
   }
 
@@ -344,6 +355,16 @@ async function main() {
   const { publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort, env: baseEnv, stackName });
   publicServerUrl = publicServerUrlPreview;
 
+  const daemonStartAdmission = resolveDaemonStartAdmission({
+    daemonRequested,
+    runtimeBackedStart,
+    terminalIsInteractive,
+    env: daemonScopeEnv,
+    cliHomeDir,
+    serverUrl: internalServerUrl,
+  });
+  startDaemon = daemonStartAdmission.startDaemon;
+
   const runtimeOwnershipObservationScope = createListenerOwnershipCommandScope();
   const serverHealthObservation = await fetchHappierHealth(internalServerUrl);
   const serverAlreadyRunning = serverHealthObservation.ok;
@@ -374,10 +395,14 @@ async function main() {
     serverTopology,
     daemonRequested: startDaemon,
     daemonRunning: daemonAlreadyRunning,
-    expoRequested: startMobile,
+    expoRequested: startOwnedExpo,
     expoRunning: false,
     restart,
   });
+
+  if (daemonStartAdmission.skipReason) {
+    console.log('[local] daemon: not started (credentials unavailable for this runtime snapshot)');
+  }
 
   if (startupDecision.startDaemon && !serviceMode && !terminalIsInteractive) {
     const initialGate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: internalServerUrl });

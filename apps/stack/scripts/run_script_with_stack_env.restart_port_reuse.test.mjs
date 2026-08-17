@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import * as stackEnvRunner from './stack/run_script_with_stack_env.mjs';
 
@@ -91,6 +93,83 @@ test('shouldReuseRuntimePortsOnRestart stays false when restart was not requeste
   );
 });
 
+test('fresh non-restart allocation excludes a stale recorded port held by a foreign listener', async () => {
+  const staleForeignPort = 3012;
+  const reservedPorts = new Set();
+  const pickedPorts = [];
+  const availabilityChecks = [];
+
+  const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
+    startPort: staleForeignPort,
+    staleRuntimeServerPort: staleForeignPort,
+    reservedPorts,
+    pickNextFreeTcpPortImpl: async (_startPort, { reservedPorts: observedReservedPorts }) => {
+      assert.ok(observedReservedPorts.has(staleForeignPort), 'stale runtime state must not select the foreign port');
+      pickedPorts.push(3013);
+      return 3013;
+    },
+    isTcpPortFreeImpl: async (port) => {
+      availabilityChecks.push(port);
+      return port === 3013;
+    },
+  });
+
+  assert.equal(selected, 3013);
+  assert.deepEqual(pickedPorts, [3013]);
+  assert.deepEqual(availabilityChecks, [3013]);
+  assert.ok(!availabilityChecks.includes(staleForeignPort), 'allocation must not claim the foreign listener');
+  assert.ok(reservedPorts.has(3012));
+});
+
+test('fresh non-restart allocation retries one racy candidate', async () => {
+  const reservedPorts = new Set();
+  const pickedPorts = [];
+  const availabilityChecks = [];
+  const candidates = [3013, 3014];
+
+  const selected = await stackEnvRunner.allocateFreshEphemeralServerPort({
+    startPort: 3012,
+    staleRuntimeServerPort: 3012,
+    reservedPorts,
+    pickNextFreeTcpPortImpl: async () => {
+      const next = candidates.shift();
+      pickedPorts.push(next);
+      return next;
+    },
+    isTcpPortFreeImpl: async (port) => {
+      availabilityChecks.push(port);
+      return port === 3014;
+    },
+  });
+
+  assert.equal(selected, 3014);
+  assert.deepEqual(pickedPorts, [3013, 3014]);
+  assert.deepEqual(availabilityChecks, [3013, 3014]);
+  assert.ok(reservedPorts.has(3013));
+});
+
+test('fresh non-restart allocation fails closed after its one bounded replacement', async () => {
+  const pickedPorts = [];
+  const candidates = [3013, 3014, 3015];
+
+  await assert.rejects(
+    () => stackEnvRunner.allocateFreshEphemeralServerPort({
+      startPort: 3012,
+      staleRuntimeServerPort: 3012,
+      reservedPorts: new Set(),
+      pickNextFreeTcpPortImpl: async () => {
+        const next = candidates.shift();
+        pickedPorts.push(next);
+        return next;
+      },
+      isTcpPortFreeImpl: async () => false,
+    }),
+    /unable to allocate a free server port after a bounded retry/,
+  );
+
+  assert.deepEqual(pickedPorts, [3013, 3014]);
+});
+
 test('stopped-stack restart cannot authorize the outer destructive stop path', async () => {
   assert.equal(
     stackEnvRunner.shouldReuseRuntimePortsOnRestart({ wantsRestart: true, runtimeState: null, wasRunning: false }),
@@ -99,17 +178,69 @@ test('stopped-stack restart cannot authorize the outer destructive stop path', a
 
   const source = await readFile(new URL('./stack/run_script_with_stack_env.mjs', import.meta.url), 'utf8');
   const decisionBoundary = source.indexOf('const isTrueRestart =');
-  const stopBoundary = source.indexOf('await stopStackWithEnv({', decisionBoundary);
+  const stopBoundary = source.indexOf('await stopObservedStackForRestart({', decisionBoundary);
   const stopGuardBoundary = source.lastIndexOf('if (isTrueRestart)', stopBoundary);
   assert.ok(
     decisionBoundary >= 0 && stopGuardBoundary > decisionBoundary && stopBoundary > stopGuardBoundary,
     'the canonical true-restart decision must guard the destructive outer stop',
+  );
+  assert.equal(
+    (source.match(/await stopObservedStackForRestart\(/g) ?? []).length,
+    2,
+    'both restart cleanup paths must use the observed lifecycle fence',
   );
   assert.doesNotMatch(
     source,
     /listListenPids\([^)]*\)[\s\S]{0,1200}killProcessGroupOwnedByStack\(/,
     'restart wrappers must never select a termination target from a listening port',
   );
+});
+
+test('restart cleanup is fenced to the originally observed lifecycle', async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), 'hstack-restart-successor-'));
+  const runtimeStatePath = join(baseDir, 'stack.runtime.json');
+  const observedRuntimeState = {
+    version: 1,
+    stackName: 'restart-successor-fence',
+    ownerPid: 999_999,
+    startedAt: '2026-08-13T08:00:00.000Z',
+    processes: {},
+  };
+  const successorRuntimeState = {
+    ...observedRuntimeState,
+    startedAt: '2026-08-13T08:00:00.001Z',
+    sentinel: 'successor-must-survive',
+  };
+
+  try {
+    await mkdir(join(baseDir, 'cli'), { recursive: true });
+    await writeFile(runtimeStatePath, `${JSON.stringify(successorRuntimeState)}\n`, 'utf8');
+
+    const result = await stackEnvRunner.stopObservedStackForRestart({
+      rootDir: baseDir,
+      stackName: observedRuntimeState.stackName,
+      baseDir,
+      env: {
+        HAPPIER_STACK_STACK: observedRuntimeState.stackName,
+        HAPPIER_STACK_ENV_FILE: join(baseDir, 'env'),
+        HAPPIER_STACK_CLI_HOME_DIR: join(baseDir, 'cli'),
+        HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+      },
+      incumbentRuntimeState: observedRuntimeState,
+    });
+
+    assert.deepEqual(result.stopAuthorization, {
+      authorized: false,
+      reason: 'successor_owner_incarnation',
+      expectedOwnerPid: observedRuntimeState.ownerPid,
+      expectedOwnerStartedAt: observedRuntimeState.startedAt,
+      currentOwnerPid: successorRuntimeState.ownerPid,
+      currentOwnerStartedAt: successorRuntimeState.startedAt,
+    });
+    assert.deepEqual(JSON.parse(await readFile(runtimeStatePath, 'utf8')), successorRuntimeState);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
 });
 
 test('buildAlreadyRunningMobileMetroArgs preserves Expo Tailscale mode', () => {

@@ -407,9 +407,9 @@ async function main() {
         data: { path, stackName, ...result },
         text: [
           `[dev-targets] independent synchronization\t${result.independent ? 'active' : 'inactive'}`,
-          `[dev-targets] dependency preparation\t${result.preparation?.state ?? 'unknown'}`,
+          `[dev-targets] synchronization readiness\t${result.preparation?.state ?? 'unknown'}`,
           ...Object.entries(result.preparation?.targets ?? {}).map(([target, preparation]) => (
-            `[dev-targets] ${target} dependencies\t${preparation.state}`
+            `[dev-targets] ${target} synchronization\t${preparation.state}`
               + (preparation.error ? `\t${preparation.error}` : '')
           )),
           ...result.statuses.map(({ target, status }) => `[dev-targets] ${target}\t${status.state}`),

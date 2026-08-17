@@ -55,9 +55,51 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
     environment: {
       HAPPIER_STACK_PM_CACHE_BASE_DIR: '/home/dev/.happier/linux/cache',
     },
+    dependencyAdmission: 'skip',
     syncAlreadyVerified: true,
     env: { TEST_ENV: 'project' },
   }]);
+});
+
+test('dependency-consuming commands bootstrap a synchronized target before dispatch while raw searches stay bootstrap-free', async () => {
+  const calls = [];
+  const dependencies = {
+    runCaptureResult: async () => readyListResult(),
+    runDependencyBootstrap: async (options) => {
+      calls.push({ kind: 'bootstrap', options });
+      return { code: 0, signal: null };
+    },
+    spawnProcess: ({ args }) => {
+      calls.push({ kind: 'command', args });
+      return { completion: Promise.resolve({ code: 0, signal: null }) };
+    },
+  };
+
+  await runDevTargetCommand({
+    target,
+    stackBaseDir: '/tmp/stack',
+    commandArgs: ['corepack', 'yarn', '-s', 'typecheck'],
+    env: {},
+  }, dependencies);
+
+  assert.equal(calls[0].kind, 'bootstrap');
+  assert.deepEqual(calls[0].options, {
+    target,
+    stackBaseDir: '/tmp/stack',
+    syncAlreadyVerified: true,
+    env: {},
+  });
+  assert.equal(calls[1].kind, 'command');
+
+  calls.length = 0;
+  await runDevTargetCommand({
+    target,
+    stackBaseDir: '/tmp/stack',
+    commandArgs: ['rg', '-n', 'needle'],
+    env: {},
+  }, dependencies);
+
+  assert.deepEqual(calls.map((call) => call.kind), ['command']);
 });
 
 test('remote exec checks sync health but launches without an implicit flush', async () => {
@@ -109,6 +151,7 @@ test('remote exec flushes only when explicitly requested and before SSH launch',
         calls.push([command, ...args]);
         return { completion: Promise.resolve({ code: 0, signal: null }) };
       },
+      runDependencyBootstrap: async () => ({ code: 0, signal: null }),
     },
   );
 

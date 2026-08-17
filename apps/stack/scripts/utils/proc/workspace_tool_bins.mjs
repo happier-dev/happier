@@ -13,14 +13,6 @@ function unique(values) {
   return [...new Set((values ?? []).map((value) => String(value ?? '').trim()).filter(Boolean))];
 }
 
-function resolveNodeModulesBinDirs(dir) {
-  const candidateDirs = [];
-  const monorepoRoot = coerceHappyMonorepoRootFromPath(dir);
-  if (monorepoRoot) candidateDirs.push(join(monorepoRoot, 'node_modules', '.bin'));
-  candidateDirs.push(join(resolve(dir), 'node_modules', '.bin'));
-  return unique(candidateDirs);
-}
-
 function createPackageRequire(dir) {
   try {
     return createRequire(join(resolve(dir), 'package.json'));
@@ -265,12 +257,15 @@ async function ensureWorkspaceToolBins(dir, options = {}) {
 }
 
 export async function resolveWorkspaceToolBinDirs(dir, { outputBinDir = null } = {}) {
-  const isolatedOutputBinDir = outputBinDir ? resolve(outputBinDir) : null;
+  // Installed package-manager bins are read-only inputs. Stack-owned shims live in one
+  // checkout-local ignored directory so long-lived crawlers never observe us replacing
+  // Yarn-owned symlinks while resolving commands.
+  const workspaceToolBinRoot = coerceHappyMonorepoRootFromPath(dir) ?? resolve(dir);
+  const isolatedOutputBinDir = resolve(
+    outputBinDir ?? join(workspaceToolBinRoot, '.project', 'tmp', 'workspace-tool-bins'),
+  );
   const createdBinDirs = await ensureWorkspaceToolBins(dir, {
     outputBinDir: isolatedOutputBinDir,
   });
-  const candidateDirs = isolatedOutputBinDir
-    ? [isolatedOutputBinDir]
-    : [...createdBinDirs, ...resolveNodeModulesBinDirs(dir)];
-  return unique(candidateDirs).filter((candidate) => existsSync(candidate));
+  return unique([isolatedOutputBinDir, ...createdBinDirs]).filter((candidate) => existsSync(candidate));
 }

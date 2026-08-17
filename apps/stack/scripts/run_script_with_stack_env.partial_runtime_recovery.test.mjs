@@ -8,13 +8,22 @@ import { spawn } from 'node:child_process';
 
 import {
   cleanupFailedRestartAttempt,
+  createOuterStackRuntimeStartPublication,
   inspectExistingStartLikeRuntime,
   runStackScriptWithStackEnv,
   shouldAdoptOccupiedRuntimePortsForRecovery,
+  shouldAttachToLiveBackgroundRuntime,
+  shouldPreserveBackgroundRunnerAfterReadinessFailure,
   waitForBackgroundStackReadiness,
 } from './stack/run_script_with_stack_env.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
 import { getComponentDir } from './utils/paths/paths.mjs';
+import {
+  readStackRuntimeStateFile,
+  recordStackRuntimeStart,
+  recordStackRuntimeUpdate,
+} from './utils/stack/runtime_state.mjs';
+import { isTcpPortFree } from './utils/net/ports.mjs';
 import {
   isCliDistBuildLockActive,
   resolveCliDistBuildLockPath,
@@ -53,6 +62,46 @@ async function reserveUnusedPort() {
   return port;
 }
 
+test('background readiness timeout preserves a live progressing runner but not a hard failure', () => {
+  const timeout = Object.assign(new Error('still starting'), { code: 'ESTACKREADINESSPENDING' });
+  assert.equal(shouldPreserveBackgroundRunnerAfterReadinessFailure(timeout, { runnerAlive: true }), true);
+  assert.equal(shouldPreserveBackgroundRunnerAfterReadinessFailure(timeout, { runnerAlive: false }), false);
+  assert.equal(
+    shouldPreserveBackgroundRunnerAfterReadinessFailure(new Error('invalid configuration'), {
+      runnerAlive: true,
+    }),
+    false,
+  );
+});
+
+test('a repeated background start attaches to a live canonical owner even before all components are ready', () => {
+  assert.equal(typeof shouldAttachToLiveBackgroundRuntime, 'function');
+  assert.equal(
+    shouldAttachToLiveBackgroundRuntime({
+      background: true,
+      wantsRestart: false,
+      existingRuntimeStatus: { ownerRunning: true, canShortCircuit: false },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAttachToLiveBackgroundRuntime({
+      background: false,
+      wantsRestart: false,
+      existingRuntimeStatus: { ownerRunning: true, canShortCircuit: false },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAttachToLiveBackgroundRuntime({
+      background: true,
+      wantsRestart: true,
+      existingRuntimeStatus: { ownerRunning: true, canShortCircuit: false },
+    }),
+    false,
+  );
+});
+
 test('background readiness leaves deferred-auth daemon startup to the inner runner', async () => {
   for (const env of [
     { HAPPIER_STACK_AUTH_FLOW: '1' },
@@ -85,6 +134,32 @@ test('background readiness still awaits an ordinarily requested daemon', async (
     }), /runner exited before requested daemon readiness was published/);
   } finally {
     await server.close();
+  }
+});
+
+test('background runtime readiness does not await a daemon without credentials', async () => {
+  const temp = await withTempDir();
+  let daemonObservations = 0;
+  try {
+    await waitForBackgroundStackReadiness({
+      stackName: 'runtime-no-auth',
+      scriptPath: 'run.mjs',
+      runtimeBackedStart: true,
+      env: { HAPPIER_STACK_CLI_HOME_DIR: join(temp.dir, 'cli') },
+      runtimeStatePath: join(temp.dir, 'stack.runtime.json'),
+      internalServerUrl: 'http://127.0.0.1:4010',
+      timeoutMs: 50,
+      waitForServerReadyImpl: async () => {},
+      isRunnerAlive: () => true,
+      checkDaemonStateImpl: async () => {
+        daemonObservations += 1;
+        return { status: 'stopped', pid: null };
+      },
+    });
+
+    assert.equal(daemonObservations, 0);
+  } finally {
+    await temp.cleanup();
   }
 });
 
@@ -356,6 +431,138 @@ test('background readiness does not await a daemon disabled by --no-daemon', asy
   }
 });
 
+test('background readiness rejects a stale target worker projection after child lifecycle publication', async () => {
+  const temp = await withTempDir();
+  const runtimeStatePath = join(temp.dir, 'stack.runtime.json');
+  const stackName = 'target-hosted-daemon';
+  const ownerPid = process.pid;
+  await recordStackRuntimeStart(runtimeStatePath, {
+    stackName,
+    script: 'previous-dev.mjs',
+    ephemeral: true,
+    ownerPid,
+    ports: {},
+    placement: { daemon: 'mac' },
+    remoteTargets: {
+      mac: {
+        services: { daemon: true },
+        status: 'running',
+      },
+    },
+  });
+  const expectedRuntimeState = await recordStackRuntimeStart(
+    runtimeStatePath,
+    createOuterStackRuntimeStartPublication({
+      stackName,
+      scriptPath: 'dev.mjs',
+      ephemeral: true,
+      ownerPid,
+      ports: { server: 4_201 },
+      runtimeSnapshotId: null,
+    }),
+  );
+
+  let localDaemonProbes = 0;
+  let runnerAlive = true;
+  await recordStackRuntimeStart(runtimeStatePath, {
+    stackName,
+    script: 'dev.mjs',
+    ephemeral: true,
+    ownerPid,
+    ports: { server: 4_201 },
+  });
+  const runtimeAfterChildStart = await readStackRuntimeStateFile(runtimeStatePath);
+  assert.equal(runtimeAfterChildStart?.placement?.daemon, 'mac');
+  assert.equal(runtimeAfterChildStart?.remoteTargets?.mac?.status, 'running');
+
+  try {
+    await assert.rejects(waitForBackgroundStackReadiness({
+      stackName,
+      scriptPath: 'dev.mjs',
+      env: {},
+      runtimeStatePath,
+      expectedRuntimeState,
+      internalServerUrl: 'http://127.0.0.1:1',
+      timeoutMs: 1_200,
+      waitForServerReadyImpl: async () => {},
+      isDaemonPreparationActiveImpl: () => false,
+      checkDaemonStateImpl: async () => {
+        localDaemonProbes += 1;
+        runnerAlive = false;
+        return { status: 'stopped', pid: null };
+      },
+      isRunnerAlive: () => runnerAlive,
+    }), /runner exited before requested daemon readiness was published/);
+
+    assert.equal(localDaemonProbes, 1);
+  } finally {
+    await temp.cleanup();
+  }
+});
+
+test('background readiness does not treat an unverified target worker as daemon ready', async () => {
+  const temp = await withTempDir();
+  const runtimeStatePath = join(temp.dir, 'stack.runtime.json');
+  const stackName = 'target-worker-without-daemon-ready';
+  const ownerPid = process.pid;
+  const expectedRuntimeState = await recordStackRuntimeStart(
+    runtimeStatePath,
+    createOuterStackRuntimeStartPublication({
+      stackName,
+      scriptPath: 'dev.mjs',
+      ephemeral: true,
+      ownerPid,
+      ports: { server: 4_202 },
+      runtimeSnapshotId: null,
+    }),
+  );
+
+  await recordStackRuntimeStart(runtimeStatePath, {
+    stackName,
+    script: 'dev.mjs',
+    ephemeral: true,
+    ownerPid,
+    ports: { server: 4_202 },
+  });
+  await recordStackRuntimeUpdate(runtimeStatePath, {
+    placement: { daemon: 'mac' },
+    remoteTargets: {
+      mac: {
+        services: { daemon: true },
+        status: 'running',
+      },
+    },
+  });
+  const runtimeAfterWorkerSpawn = await readStackRuntimeStateFile(runtimeStatePath);
+  assert.equal(runtimeAfterWorkerSpawn?.remoteTargets?.mac?.status, 'running');
+
+  let localDaemonProbes = 0;
+  let runnerAlive = true;
+  try {
+    await assert.rejects(waitForBackgroundStackReadiness({
+      stackName,
+      scriptPath: 'dev.mjs',
+      env: {},
+      runtimeStatePath,
+      expectedRuntimeState,
+      internalServerUrl: 'http://127.0.0.1:1',
+      timeoutMs: 1_200,
+      waitForServerReadyImpl: async () => {},
+      isDaemonPreparationActiveImpl: () => false,
+      checkDaemonStateImpl: async () => {
+        localDaemonProbes += 1;
+        if (localDaemonProbes >= 2) runnerAlive = false;
+        return { status: 'stopped', pid: null };
+      },
+      isRunnerAlive: () => runnerAlive,
+    }), /runner exited before requested daemon readiness was published/);
+
+    assert.equal(localDaemonProbes, 2);
+  } finally {
+    await temp.cleanup();
+  }
+});
+
 async function withTempDir() {
   const dir = await mkdtemp(join(os.tmpdir(), 'hstack-test-'));
   return {
@@ -364,6 +571,138 @@ async function withTempDir() {
       await rm(dir, { recursive: true, force: true });
     },
   };
+}
+
+async function spawnStackOwnedIdleProcess(t, { stackName, envPath }) {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_PROCESS_KIND: 'server',
+    },
+    stdio: 'ignore',
+  });
+  t.after(() => {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // already stopped
+    }
+  });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
+  return child;
+}
+
+test('a second detached background attachment preserves the existing owner and does not spawn another dev runner', async (t) => {
+  const temp = await withTempDir();
+  const storageDir = join(temp.dir, 'storage');
+  const rootDir = join(temp.dir, 'repo');
+  const stackName = 'background-attach-owner';
+  const baseDir = join(storageDir, stackName);
+  const envPath = join(baseDir, 'env');
+  const launchMarkerPath = join(temp.dir, 'unexpected-dev-launch');
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+
+  try {
+    await Promise.all([
+      mkdir(join(rootDir, 'scripts'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'server'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'cli'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'ui'), { recursive: true }),
+      mkdir(baseDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(rootDir, 'package.json'), '{"private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'server', 'package.json'), '{"private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'cli', 'package.json'), '{"private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'ui', 'package.json'), '{"private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'scripts', 'dev.mjs'), `import { writeFile } from 'node:fs/promises'; await writeFile(${JSON.stringify(launchMarkerPath)}, 'launched\\n');\n`, 'utf8'),
+      writeFile(
+        envPath,
+        [
+          `HAPPIER_STACK_REPO_DIR=${rootDir}`,
+          'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
+          'HAPPIER_STACK_DAEMON=0',
+          'HAPPIER_STACK_MANAGED_INFRA=0',
+        ].join('\n') + '\n',
+        'utf8',
+      ),
+    ]);
+    const incumbent = await spawnStackOwnedIdleProcess(t, { stackName, envPath });
+    const runtimeStatePath = join(baseDir, 'stack.runtime.json');
+    const initial = await recordStackRuntimeStart(runtimeStatePath, {
+      stackName,
+      script: 'dev.mjs',
+      ephemeral: true,
+      ownerPid: incumbent.pid,
+      ports: {},
+      logs: { runner: join(baseDir, 'logs', 'dev.existing.log') },
+    });
+
+    await runStackScriptWithStackEnv({
+      rootDir,
+      stackName,
+      scriptPath: 'dev.mjs',
+      args: ['--no-ui', '--no-daemon', '--no-dev-targets'],
+      background: true,
+    });
+
+    await assert.rejects(readFile(launchMarkerPath, 'utf8'), { code: 'ENOENT' });
+    const retained = await readStackRuntimeStateFile(runtimeStatePath);
+    assert.equal(retained?.ownerPid, incumbent.pid);
+    assert.equal(retained?.startedAt, initial.startedAt);
+    assert.doesNotThrow(() => process.kill(incumbent.pid, 0));
+  } finally {
+    restore();
+    await temp.cleanup();
+  }
+});
+
+async function spawnStackOwnedHealthServer(t, { stackName, envPath }) {
+  const child = spawn(process.execPath, ['-e', `
+    const http = require('node:http');
+    const server = http.createServer((req, res) => {
+      if (req.url === '/health' || req.url === '/ready') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+        return;
+      }
+      res.statusCode = 204;
+      res.end();
+    });
+    server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'));
+    setInterval(() => {}, 1000);
+  `], {
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_PROCESS_KIND: 'server',
+    },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  const port = await new Promise((resolve, reject) => {
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      output += String(chunk);
+      const value = Number(output.split(/\r?\n/).find(Boolean));
+      if (Number.isInteger(value) && value > 0) resolve(value);
+    });
+    child.once('error', reject);
+    child.once('exit', (code) => reject(new Error(`stack-owned health server exited early (${code ?? 'unknown'})`)));
+  });
+  const close = async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    child.stdout?.destroy();
+  };
+  t.after(close);
+  return { child, pid: child.pid, port, close };
 }
 
 async function spawnMetroLikeServer({ includeNeedle = '' } = {}) {
@@ -730,15 +1069,19 @@ test('failed restart cleanup finalizes a definitively unowned reused runner with
   assert.equal(Number(listenerMeta.listenerPid) > 1, true);
 });
 
-test('inspectExistingStartLikeRuntime does not short-circuit dev when server is up but Expo UI is down', async () => {
-  const server = await withListeningServer();
+test('inspectExistingStartLikeRuntime does not short-circuit dev when server is up but Expo UI is down', async (t) => {
+  const stackName = 'test-stack-ui-down';
+  const temp = await withTempDir();
+  const envPath = join(temp.dir, 'env');
+  await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+  const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
   const staleUiPort = await reserveUnusedPort();
   try {
     const runtimeState = {
       ownerPid: 999_999_999,
       ports: { server: server.port },
       processes: {
-        serverPid: 999_999_998,
+        serverPid: server.pid,
         expoPid: 999_999_997,
       },
       expo: {
@@ -749,6 +1092,8 @@ test('inspectExistingStartLikeRuntime does not short-circuit dev when server is 
     };
 
     const status = await inspectExistingStartLikeRuntime({
+      stackName,
+      envPath,
       scriptPath: 'dev.mjs',
       args: [],
       runtimeState,
@@ -761,6 +1106,149 @@ test('inspectExistingStartLikeRuntime does not short-circuit dev when server is 
     assert.equal(shouldAdoptOccupiedRuntimePortsForRecovery(status), true);
   } finally {
     await server.close();
+    await temp.cleanup();
+  }
+});
+
+test('partial runtime recovery refuses to adopt an occupied foreign backend port', async (t) => {
+  const temp = await withTempDir();
+  const storageDir = join(temp.dir, 'storage');
+  const rootDir = join(temp.dir, 'repo');
+  const stackName = 'partial-recovery-foreign-backend';
+  const baseDir = join(storageDir, stackName);
+  const envPath = join(baseDir, 'env');
+  const markerPath = join(temp.dir, 'child-env.json');
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  const foreignBackend = await withListeningServer();
+
+  try {
+    await Promise.all([
+      mkdir(join(rootDir, 'scripts'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'server'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'cli'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'ui'), { recursive: true }),
+      mkdir(baseDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(rootDir, 'package.json'), '{"private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'server', 'package.json'), '{"name":"@happier-dev/server","private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'cli', 'package.json'), '{"name":"@happier-dev/cli","private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'ui', 'package.json'), '{"name":"@happier-dev/app","private":true}\n', 'utf8'),
+      writeFile(
+        join(rootDir, 'scripts', 'dev.mjs'),
+        "import { writeFile } from 'node:fs/promises'; await writeFile(process.env.PARTIAL_RECOVERY_MARKER, JSON.stringify({ backend: process.env.HAPPIER_STACK_SERVER_BACKEND_PORT }) + '\\n');\n",
+        'utf8',
+      ),
+      writeFile(
+        envPath,
+        [
+          `HAPPIER_STACK_REPO_DIR=${rootDir}`,
+          'HAPPIER_STACK_SERVER_COMPONENT=happier-server',
+          'HAPPIER_STACK_MANAGED_INFRA=0',
+          'HAPPIER_STACK_DAEMON=0',
+          `PARTIAL_RECOVERY_MARKER=${markerPath}`,
+        ].join('\n') + '\n',
+        'utf8',
+      ),
+    ]);
+    const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
+    await writeFile(
+      join(baseDir, 'stack.runtime.json'),
+      JSON.stringify({
+        version: 1,
+        stackName,
+        ephemeral: true,
+        ownerPid: 999_999,
+        startedAt: '2026-08-13T08:00:00.000Z',
+        ports: { server: server.port, backend: foreignBackend.port },
+        processes: { serverPid: server.pid },
+      }) + '\n',
+      'utf8',
+    );
+
+    await assert.rejects(
+      runStackScriptWithStackEnv({
+        rootDir,
+        stackName,
+        scriptPath: 'dev.mjs',
+        args: ['--no-server', '--no-ui', '--mobile', '--no-browser', '--no-daemon'],
+      }),
+      /cannot recover.*backend.*stack-owned/i,
+    );
+    await assert.rejects(readFile(markerPath, 'utf8'), { code: 'ENOENT' });
+    assert.equal(await isTcpPortFree(foreignBackend.port), false, 'foreign backend listener must remain untouched');
+  } finally {
+    restore();
+    await foreignBackend.close();
+    await temp.cleanup();
+  }
+});
+
+test('partial runtime recovery preserves a proven stack-owned light-server port', async (t) => {
+  const temp = await withTempDir();
+  const storageDir = join(temp.dir, 'storage');
+  const rootDir = join(temp.dir, 'repo');
+  const stackName = 'partial-recovery-light-server';
+  const baseDir = join(storageDir, stackName);
+  const envPath = join(baseDir, 'env');
+  const markerPath = join(temp.dir, 'child-env.json');
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+
+  try {
+    await Promise.all([
+      mkdir(join(rootDir, 'scripts'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'server'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'cli'), { recursive: true }),
+      mkdir(join(rootDir, 'apps', 'ui'), { recursive: true }),
+      mkdir(baseDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(rootDir, 'package.json'), '{"private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'server', 'package.json'), '{"name":"@happier-dev/server","private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'cli', 'package.json'), '{"name":"@happier-dev/cli","private":true}\n', 'utf8'),
+      writeFile(join(rootDir, 'apps', 'ui', 'package.json'), '{"name":"@happier-dev/app","private":true}\n', 'utf8'),
+      writeFile(
+        join(rootDir, 'scripts', 'dev.mjs'),
+        "import { writeFile } from 'node:fs/promises'; await writeFile(process.env.PARTIAL_RECOVERY_MARKER, JSON.stringify({ server: process.env.HAPPIER_STACK_SERVER_PORT }) + '\\n');\n",
+        'utf8',
+      ),
+      writeFile(
+        envPath,
+        [
+          `HAPPIER_STACK_REPO_DIR=${rootDir}`,
+          'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
+          'HAPPIER_STACK_MANAGED_INFRA=0',
+          'HAPPIER_STACK_DAEMON=0',
+          `PARTIAL_RECOVERY_MARKER=${markerPath}`,
+        ].join('\n') + '\n',
+        'utf8',
+      ),
+    ]);
+    const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
+    await writeFile(
+      join(baseDir, 'stack.runtime.json'),
+      JSON.stringify({
+        version: 1,
+        stackName,
+        ephemeral: true,
+        ownerPid: 999_999,
+        startedAt: '2026-08-13T08:00:00.000Z',
+        ports: { server: server.port },
+        processes: { serverPid: server.pid },
+      }) + '\n',
+      'utf8',
+    );
+
+    await runStackScriptWithStackEnv({
+      rootDir,
+      stackName,
+      scriptPath: 'dev.mjs',
+      args: ['--no-server', '--no-ui', '--mobile', '--no-browser', '--no-daemon'],
+    });
+    assert.deepEqual(JSON.parse(await readFile(markerPath, 'utf8')), { server: String(server.port) });
+  } finally {
+    restore();
+    await temp.cleanup();
   }
 });
 
@@ -802,14 +1290,67 @@ test('inspectExistingStartLikeRuntime does not short-circuit run for an untruste
   assert.equal(status.canShortCircuit, false);
 });
 
-test('inspectExistingStartLikeRuntime allows dev short-circuit when stack Expo state is running', async () => {
-  const stackName = 'test-stack';
+test('inspectExistingStartLikeRuntime does not short-circuit run for a healthy foreign endpoint with stale runtime state', async () => {
   const server = await withListeningServer();
+  try {
+    const status = await inspectExistingStartLikeRuntime({
+      stackName: 'foreign-runtime-endpoint',
+      envPath: join(os.tmpdir(), 'hstack-foreign-runtime-endpoint-env'),
+      scriptPath: 'run.mjs',
+      args: [],
+      runtimeState: {
+        ownerPid: 999_999_999,
+        runtimeSnapshotId: 'snap-stale',
+        ports: { server: server.port },
+        processes: { serverPid: process.pid },
+      },
+    });
+
+    assert.equal(status.serverRunning, false);
+    assert.equal(status.wasRunning, false);
+    assert.equal(status.canShortCircuit, false);
+  } finally {
+    await server.close();
+  }
+});
+
+test('inspectExistingStartLikeRuntime does not adopt a foreign healthy endpoint from a trusted non-listening server pid', async (t) => {
+  const stackName = 'foreign-runtime-endpoint-trusted-pid';
+  const temp = await withTempDir();
+  const envPath = join(temp.dir, 'env');
+  await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+  const recordedServer = await spawnStackOwnedIdleProcess(t, { stackName, envPath });
+  const foreignServer = await withListeningServer();
+  try {
+    const status = await inspectExistingStartLikeRuntime({
+      stackName,
+      envPath,
+      scriptPath: 'run.mjs',
+      args: [],
+      runtimeState: {
+        ownerPid: 999_999_999,
+        runtimeSnapshotId: 'snap-stale',
+        ports: { server: foreignServer.port },
+        processes: { serverPid: recordedServer.pid },
+      },
+    });
+
+    assert.equal(status.serverRunning, false);
+    assert.equal(status.canShortCircuit, false);
+  } finally {
+    await foreignServer.close();
+    await temp.cleanup();
+  }
+});
+
+test('inspectExistingStartLikeRuntime allows dev short-circuit when stack Expo state is running', async (t) => {
+  const stackName = 'test-stack';
   const metroNeedle = join(os.tmpdir(), 'hstack-metro-needle');
   const metro = await spawnMetroLikeServer({ includeNeedle: metroNeedle });
   const temp = await withTempDir();
   const envPath = join(temp.dir, 'env');
-  await writeFile(envPath, 'DUMMY=1\n', 'utf8');
+  await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+  const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
   try {
     const expoDevRoot = join(temp.dir, 'expo-dev', 'abc123');
     await mkdir(expoDevRoot, { recursive: true });
@@ -824,7 +1365,7 @@ test('inspectExistingStartLikeRuntime allows dev short-circuit when stack Expo s
       ownerPid: 999_999_999,
       ports: { server: server.port },
       processes: {
-        serverPid: 999_999_998,
+        serverPid: server.pid,
         expoPid: 999_999_997,
       },
       expo: {
@@ -854,14 +1395,14 @@ test('inspectExistingStartLikeRuntime allows dev short-circuit when stack Expo s
   }
 });
 
-test('inspectExistingStartLikeRuntime allows mobile-only dev short-circuit when Expo state is running without web', async () => {
+test('inspectExistingStartLikeRuntime allows mobile-only dev short-circuit when Expo state is running without web', async (t) => {
   const stackName = 'test-stack';
-  const server = await withListeningServer();
   const metroNeedle = join(os.tmpdir(), 'hstack-mobile-metro-needle');
   const metro = await spawnMetroLikeServer({ includeNeedle: metroNeedle });
   const temp = await withTempDir();
   const envPath = join(temp.dir, 'env');
-  await writeFile(envPath, 'DUMMY=1\n', 'utf8');
+  await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+  const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
   try {
     const expoDevRoot = join(temp.dir, 'expo-dev', 'abc123');
     await mkdir(expoDevRoot, { recursive: true });
@@ -875,7 +1416,7 @@ test('inspectExistingStartLikeRuntime allows mobile-only dev short-circuit when 
       ownerPid: 999_999_999,
       ports: { server: server.port },
       processes: {
-        serverPid: 999_999_998,
+        serverPid: server.pid,
         expoPid: 999_999_997,
       },
       expo: {
@@ -906,7 +1447,6 @@ test('inspectExistingStartLikeRuntime allows mobile-only dev short-circuit when 
 
 test('runStackScriptWithStackEnv reports the verified running Expo port instead of stale runtime UI metadata', async (t) => {
   const stackName = 'test-stack';
-  const server = await withListeningServer();
   const metroNeedle = getComponentDir(process.cwd(), 'happier-ui', {
     ...process.env,
     HAPPIER_STACK_REPO_DIR: process.cwd(),
@@ -919,11 +1459,15 @@ test('runStackScriptWithStackEnv reports the verified running Expo port instead 
   const logs = [];
   const originalLog = console.log;
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  let server = null;
 
   try {
     await mkdir(join(baseDir, 'expo-dev', 'abc123'), { recursive: true });
+    const envPath = join(baseDir, 'env');
+    await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+    server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
     await writeFile(
-      join(baseDir, 'env'),
+      envPath,
       [
         `HAPPIER_STACK_REPO_DIR=${process.cwd()}`,
         `HAPPIER_STACK_SERVER_PORT=${server.port}`,
@@ -938,7 +1482,7 @@ test('runStackScriptWithStackEnv reports the verified running Expo port instead 
         ownerPid: 999_999_999,
         ports: { server: server.port },
         processes: {
-          serverPid: 999_999_998,
+          serverPid: server.pid,
           expoPid: 999_999_997,
         },
         expo: {
@@ -973,14 +1517,13 @@ test('runStackScriptWithStackEnv reports the verified running Expo port instead 
     console.log = originalLog;
     restore();
     await metro.kill();
-    await server.close();
+    await server?.close();
     await temp.cleanup();
   }
 });
 
 test('runStackScriptWithStackEnv does not report stale UI metadata when dev short-circuits without UI requested', async (t) => {
   const stackName = 'test-stack';
-  const server = await withListeningServer();
   const staleUiPort = await reserveUnusedPort();
   const temp = await withTempDir();
   const storageDir = join(temp.dir, 'storage');
@@ -988,11 +1531,15 @@ test('runStackScriptWithStackEnv does not report stale UI metadata when dev shor
   const logs = [];
   const originalLog = console.log;
   const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: storageDir });
+  let server = null;
 
   try {
     await mkdir(baseDir, { recursive: true });
+    const envPath = join(baseDir, 'env');
+    await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+    server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
     await writeFile(
-      join(baseDir, 'env'),
+      envPath,
       [
         `HAPPIER_STACK_REPO_DIR=${process.cwd()}`,
         `HAPPIER_STACK_SERVER_PORT=${server.port}`,
@@ -1007,7 +1554,7 @@ test('runStackScriptWithStackEnv does not report stale UI metadata when dev shor
         ownerPid: 999_999_999,
         ports: { server: server.port },
         processes: {
-          serverPid: 999_999_998,
+          serverPid: server.pid,
           expoPid: 999_999_997,
         },
         expo: {
@@ -1037,23 +1584,24 @@ test('runStackScriptWithStackEnv does not report stale UI metadata when dev shor
   } finally {
     console.log = originalLog;
     restore();
-    await server.close();
+    await server?.close();
     await temp.cleanup();
   }
 });
 
-test('inspectExistingStartLikeRuntime does not treat an unrelated Metro as stack UI', async () => {
+test('inspectExistingStartLikeRuntime does not treat an unrelated Metro as stack UI', async (t) => {
   const stackName = 'test-stack';
-  const envPath = join(os.tmpdir(), 'hstack-env-file-does-not-exist');
   const temp = await withTempDir();
-  const server = await withListeningServer();
+  const envPath = join(temp.dir, 'env');
+  await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+  const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
   const metro = await spawnMetroLikeServer();
   try {
     const runtimeState = {
       ownerPid: 999_999_999,
       ports: { server: server.port },
       processes: {
-        serverPid: 999_999_998,
+        serverPid: server.pid,
         expoPid: 999_999_997,
       },
       expo: {
@@ -1083,12 +1631,12 @@ test('inspectExistingStartLikeRuntime does not treat an unrelated Metro as stack
   }
 });
 
-test('inspectExistingStartLikeRuntime does not short-circuit dev when Expo state is for a different UI dir', async () => {
+test('inspectExistingStartLikeRuntime does not short-circuit dev when Expo state is for a different UI dir', async (t) => {
   const stackName = 'test-stack';
-  const server = await withListeningServer();
   const temp = await withTempDir();
   const envPath = join(temp.dir, 'env');
-  await writeFile(envPath, 'DUMMY=1\n', 'utf8');
+  await writeFile(envPath, `HAPPIER_STACK_STACK=${stackName}\n`, 'utf8');
+  const server = await spawnStackOwnedHealthServer(t, { stackName, envPath });
 
   const stateProjectDir = join(os.tmpdir(), 'hstack-metro-project-a');
   const expectedUiDir = join(os.tmpdir(), 'hstack-metro-project-b');
@@ -1105,7 +1653,7 @@ test('inspectExistingStartLikeRuntime does not short-circuit dev when Expo state
     const runtimeState = {
       ownerPid: 999_999_999,
       ports: { server: server.port },
-      processes: { serverPid: 999_999_998, expoPid: 999_999_997 },
+      processes: { serverPid: server.pid, expoPid: 999_999_997 },
       expo: { webPort: metro.port, port: metro.port, webEnabled: true },
     };
 

@@ -26,12 +26,46 @@ export function assertRuntimeSnapshotId(value, options) {
   return validation.snapshotId;
 }
 
+export function validateRuntimeArtifactFingerprint(value, { allowEmpty = false } = {}) {
+  const artifactFingerprint = String(value ?? '').trim();
+  if (!artifactFingerprint) {
+    return allowEmpty
+      ? { ok: true, artifactFingerprint: '', error: null }
+      : { ok: false, artifactFingerprint: '', error: '[runtime] artifact fingerprint is required.' };
+  }
+  if (artifactFingerprint === '.' || artifactFingerprint === '..' || /[\\/\u0000]/.test(artifactFingerprint)) {
+    return {
+      ok: false,
+      artifactFingerprint,
+      error: '[runtime] artifact fingerprint must be a single managed-store path segment.',
+    };
+  }
+  return { ok: true, artifactFingerprint, error: null };
+}
+
+export function assertRuntimeArtifactFingerprint(value, options) {
+  const validation = validateRuntimeArtifactFingerprint(value, options);
+  if (!validation.ok) throw new Error(validation.error);
+  return validation.artifactFingerprint;
+}
+
 export function resolveStackArtifactsDir({ stackBaseDir }) {
   return join(String(stackBaseDir ?? '').trim(), 'artifacts');
 }
 
 export function resolveStackComponentArtifactDir({ stackBaseDir, component, fingerprint }) {
-  return join(resolveStackArtifactsDir({ stackBaseDir }), String(component ?? '').trim(), String(fingerprint ?? '').trim());
+  return join(
+    resolveStackArtifactsDir({ stackBaseDir }),
+    String(component ?? '').trim(),
+    assertRuntimeArtifactFingerprint(fingerprint),
+  );
+}
+
+// Immutable artifact publication is serialized by the artifact identity, not by
+// the mutable runtime pointer. Keep the lock adjacent to its object without
+// placing it inside a directory that atomic publication replaces.
+export function resolveStackComponentArtifactLockPath({ stackBaseDir, component, fingerprint }) {
+  return `${resolveStackComponentArtifactDir({ stackBaseDir, component, fingerprint })}.lock`;
 }
 
 export function resolveStackRuntimePaths({ stackBaseDir, snapshotId = '' }) {

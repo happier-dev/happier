@@ -10,7 +10,6 @@ import {
   buildRemoteCancelCommand,
   buildRemoteExecCommand,
   buildRemoteDoctorCommand,
-  buildRemoteLoadProbeCommand,
   buildRemoteDaemonCommand,
   buildRemoteDaemonReadinessProbeCommand,
   buildRemoteStackStopCommand,
@@ -79,22 +78,6 @@ test('remote doctor checks prerequisites without changing the target', () => {
   assert.match(decodedPowerShell, /Get-Command node/);
   assert.match(decodedPowerShell, /Get-Command corepack/);
   assert.doesNotMatch(decodedPowerShell, /yarn install/);
-});
-
-test('remote load probe emits one structured lightweight Node sample on both platforms', () => {
-  const posixCommand = buildRemoteLoadProbeCommand({
-    ...posix,
-    remotePath: ['/opt/node/bin'],
-  });
-  assert.match(posixCommand, /__HAPPIER_LOAD__/);
-  assert.match(posixCommand, /availableParallelism/);
-  assert.match(posixCommand, /loadavg/);
-
-  const windowsCommand = buildRemoteLoadProbeCommand({
-    ...windows,
-    remotePath: ['C:/node'],
-  });
-  assert.match(windowsCommand, /EncodedCommand/);
 });
 
 test('remote daemon readiness probe requires a live pid from the server-scoped state', async () => {

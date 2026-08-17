@@ -22,6 +22,15 @@ test('buildTuiChildArgs forces watch for dev forwarded commands', () => {
   assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev'], withTauri: false }), [
     'dev',
     '--watch',
+    '--mobile',
+  ]);
+});
+
+test('buildTuiChildArgs preserves an explicit web-only dev request', () => {
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev', '--no-mobile'], withTauri: false }), [
+    'dev',
+    '--no-mobile',
+    '--watch',
   ]);
 });
 
@@ -29,6 +38,7 @@ test('buildTuiChildArgs forces watch for Tauri dev commands while preserving no-
   assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev'], withTauri: true }), [
     'dev',
     '--watch',
+    '--mobile',
     '--no-browser',
   ]);
 });
@@ -37,6 +47,7 @@ test('buildTuiChildArgs preserves explicit no-watch for dev commands', () => {
   assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev', '--no-watch'], withTauri: false }), [
     'dev',
     '--no-watch',
+    '--mobile',
   ]);
 });
 
@@ -46,6 +57,7 @@ test('buildTuiChildArgs forces watch for stack dev forwarded commands', () => {
     'dev',
     'exp1',
     '--watch',
+    '--mobile',
   ]);
 });
 
@@ -56,6 +68,52 @@ test('buildTuiChildArgs does not force watch for start forwarded commands', () =
     'start',
     'exp1',
   ]);
+});
+
+test('buildTuiBackgroundOwnerArgs routes start-like TUI commands through the canonical detached owner', () => {
+  assert.equal(typeof tauriMode.buildTuiBackgroundOwnerArgs, 'function');
+  assert.deepEqual(
+    tauriMode.buildTuiBackgroundOwnerArgs({
+      childArgs: ['dev', '--watch', '--mobile'],
+      stackName: 'exp1',
+    }),
+    ['stack', 'dev', 'exp1', '--watch', '--mobile', '--background'],
+  );
+  assert.deepEqual(
+    tauriMode.buildTuiBackgroundOwnerArgs({
+      childArgs: ['stack', 'start', 'exp1', '--background'],
+      stackName: 'ignored',
+    }),
+    ['stack', 'start', 'exp1', '--background'],
+  );
+});
+
+test('buildTuiBackgroundOwnerArgs retains stackless and non-start commands', () => {
+  assert.deepEqual(
+    tauriMode.buildTuiBackgroundOwnerArgs({ childArgs: ['dev', '--watch'], stackName: '' }),
+    ['dev', '--watch'],
+  );
+  assert.deepEqual(
+    tauriMode.buildTuiBackgroundOwnerArgs({ childArgs: ['stack', 'auth', 'exp1', 'login'], stackName: 'exp1' }),
+    ['stack', 'auth', 'exp1', 'login'],
+  );
+});
+
+test('TUI recognizes only its canonical owner runner-log announcement', () => {
+  assert.equal(
+    tauriMode.extractTuiBackgroundOwnerRunnerLogPath({
+      stackName: 'exp1',
+      line: '[stack] exp1: logs: /tmp/exp1/logs/dev.202.log',
+    }),
+    '/tmp/exp1/logs/dev.202.log',
+  );
+  assert.equal(
+    tauriMode.extractTuiBackgroundOwnerRunnerLogPath({
+      stackName: 'exp1',
+      line: '[stack] exp1: runner log: /tmp/exp1/logs/dev.101.log',
+    }),
+    null,
+  );
 });
 
 test('buildTuiRestartChildArgs delegates plain dev restart to the named stack owner', () => {

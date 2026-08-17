@@ -83,6 +83,7 @@ test('repo-local wrapper dry-run prints hstack invocation with repo-local env', 
   assert.ok(String(data.env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim() !== '', 'expected wrapper to set a stack-scoped CLI home dir');
   assert.ok(String(data.env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() !== '', 'expected wrapper to set a stack-scoped active server id');
   assert.ok(String(data.env.HAPPIER_STACK_LOG_TEE_DIR ?? '').trim() !== '', 'expected wrapper to set a stack-scoped log tee dir');
+  assert.equal(data.env.HAPPIER_STACK_LOG_TEE_TIMESTAMPS, '1');
   assert.ok(String(data.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim() !== '');
   assert.equal(data.env.HAPPIER_STACK_RUNTIME_MODE, 'source', 'expected repo-local wrapper to default to source runtime mode');
 });
@@ -122,7 +123,7 @@ test('repo-local wrapper replaces an inherited runtime-state path with its check
   }
 });
 
-test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are provided', async () => {
+test('repo-local wrapper defaults `tui` to mobile-capable `tui dev` when no forwarded args are provided', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack
   const repoRoot = dirname(dirname(packageRoot)); // repo root
@@ -140,6 +141,8 @@ test('repo-local wrapper defaults `tui` to `tui dev` when no forwarded args are 
   assert.equal(data.ok, true);
   assert.equal(data.args[1], 'tui');
   assert.equal(data.args[2], 'dev');
+  assert.equal(data.args[3], '--mobile');
+  assert.equal(data.env.HAPPIER_STACK_CLI_BUILD_MODE, 'always');
 });
 
 test('repo-local wrapper preserves explicit `tui` forwarded args', async () => {
@@ -365,6 +368,63 @@ test('repo-local wrapper auto-installs deps when node_modules are missing', asyn
     assert.match(log, /\binstall\b/);
   } finally {
     rmSync(preflightRoot, { recursive: true, force: true });
+  }
+});
+
+test('repo-local runtime snapshot selection bypasses repository identity and dependency bootstrap', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const packageRoot = dirname(scriptsDir);
+  const repoRoot = dirname(dirname(packageRoot));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'happier-repo-local-select-bypass-'));
+  try {
+    const loaderPath = join(fixtureRoot, 'select-bypass-loader.mjs');
+    writeFileSync(
+      loaderPath,
+      [
+        'export async function resolve(specifier, context, defaultResolve) {',
+        "  if (specifier === './utils/stack/repo_stack_identity.mjs') {",
+        "    return { url: 'data:text/javascript,export function resolveRepoStackIdentity(){throw new Error(\\\"repo identity bootstrap observed\\\")}export function resolveStacksStorageRoot(){throw new Error(\\\"repo identity bootstrap observed\\\")}', shortCircuit: true };",
+        '  }',
+        "  if (specifier === './utils/proc/pm.mjs') {",
+        "    return { url: 'data:text/javascript,export async function ensureDepsInstalled(){throw new Error(\\\"dependency bootstrap must not run\\\")}', shortCircuit: true };",
+        '  }',
+        '  return defaultResolve(specifier, context, defaultResolve);',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    for (const args of [
+      ['stack', 'runtime', 'qa-consumer', 'select'],
+      ['stack', 'runtime', 'qa-consumer', 'select', '--help'],
+    ]) {
+      const res = await runNode([join(packageRoot, 'scripts', 'repo_local.mjs'), ...args], {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+          HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: fixtureRoot,
+          NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+        },
+      });
+
+      assert.equal(res.code, 0, `selection bootstrap bypass failed for ${args.join(' ')}\nstderr:\n${res.stderr}`);
+    }
+
+    const activation = await runNode([join(packageRoot, 'scripts', 'repo_local.mjs'), 'stack', 'runtime', 'qa-consumer', 'activate'], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1',
+        HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ROOT: fixtureRoot,
+        NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+      },
+    });
+    assert.notEqual(activation.code, 0, 'runtime activation must retain repository bootstrap');
+    assert.match(activation.stderr, /repo identity bootstrap observed/);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
 

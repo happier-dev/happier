@@ -56,7 +56,9 @@ async function createTsxSourceCliFixture(t, options = {}) {
 
 test('hstack happier uses the active runtime snapshot when runtime mode is required', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixture = await createRuntimeSnapshotFixture(t);
+  const fixture = await createRuntimeSnapshotFixture(t, {
+    cliEntrypoint: 'cli/happier.mjs',
+  });
 
   const env = {
     ...process.env,
@@ -71,6 +73,83 @@ test('hstack happier uses the active runtime snapshot when runtime mode is requi
   const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), '--help'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
   assert.match(res.stdout, /SNAPSHOT CLI HELP/);
+});
+
+test('hstack happier uses source CLI for an active source-backed stack even when stack env requires snapshots', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const runtimeFixture = await createRuntimeSnapshotFixture(t, {
+    stackName: 'source-dev',
+    cliEntrypoint: 'cli/happier.mjs',
+  });
+  const sourceFixture = await createSourceCliFixture(t, {
+    cliSource: 'process.stdout.write("SOURCE CLI HELP\\n");\n',
+  });
+  await writeFile(join(runtimeFixture.stackDir, 'stack.runtime.json'), `${JSON.stringify({
+    version: 1,
+    stackName: runtimeFixture.stackName,
+    script: 'dev.mjs',
+    ownerPid: process.pid,
+    runtimeSnapshotId: null,
+  })}\n`, 'utf8');
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STACK: runtimeFixture.stackName,
+    HAPPIER_STACK_STORAGE_DIR: runtimeFixture.storageDir,
+    HAPPIER_STACK_RUNTIME_MODE: 'require',
+    HAPPIER_STACK_ENV_FILE: join(runtimeFixture.stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: sourceFixture.repoRoot,
+    HAPPIER_HOME_DIR: join(runtimeFixture.root, '.happy-home'),
+  };
+
+  const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), '--help'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  assert.match(res.stdout, /SOURCE CLI HELP/);
+  assert.doesNotMatch(res.stdout, /SNAPSHOT CLI HELP/);
+
+  const explicitRuntimeRes = await runNode(
+    [join(rootDir, 'scripts', 'happier.mjs'), '--runtime', '--help'],
+    { cwd: rootDir, env },
+  );
+  assert.equal(
+    explicitRuntimeRes.code,
+    0,
+    `stderr:\n${explicitRuntimeRes.stderr}\nstdout:\n${explicitRuntimeRes.stdout}`,
+  );
+  assert.match(explicitRuntimeRes.stdout, /SNAPSHOT CLI HELP/);
+});
+
+test('hstack happier does not let stale source-backed runtime state weaken required snapshot mode', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const runtimeFixture = await createRuntimeSnapshotFixture(t, {
+    stackName: 'stale-source-dev',
+    cliEntrypoint: 'cli/happier.mjs',
+  });
+  const sourceFixture = await createSourceCliFixture(t, {
+    cliSource: 'process.stdout.write("SOURCE CLI HELP\\n");\n',
+  });
+  await writeFile(join(runtimeFixture.stackDir, 'stack.runtime.json'), `${JSON.stringify({
+    version: 1,
+    stackName: runtimeFixture.stackName,
+    script: 'dev.mjs',
+    ownerPid: 999_999_999,
+    runtimeSnapshotId: null,
+  })}\n`, 'utf8');
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STACK: runtimeFixture.stackName,
+    HAPPIER_STACK_STORAGE_DIR: runtimeFixture.storageDir,
+    HAPPIER_STACK_RUNTIME_MODE: 'require',
+    HAPPIER_STACK_ENV_FILE: join(runtimeFixture.stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: sourceFixture.repoRoot,
+    HAPPIER_HOME_DIR: join(runtimeFixture.root, '.happy-home'),
+  };
+
+  const res = await runNode([join(rootDir, 'scripts', 'happier.mjs'), '--help'], { cwd: rootDir, env });
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  assert.match(res.stdout, /SNAPSHOT CLI HELP/);
+  assert.doesNotMatch(res.stdout, /SOURCE CLI HELP/);
 });
 
 test('hstack happier runs runtime snapshot JS entrypoints through node', async (t) => {

@@ -1,6 +1,18 @@
 import { resolve } from 'node:path';
 
 import { watchDebounced } from '../proc/watch.mjs';
+
+export function requestInitialDevRefreshes({
+  reloadWatcher,
+  serverReloadEnabled = false,
+  daemonReloadEnabled = false,
+} = {}) {
+  if (!reloadWatcher?.requestReload) return [];
+  const pending = [];
+  if (serverReloadEnabled) pending.push(reloadWatcher.requestReload('server'));
+  if (daemonReloadEnabled) pending.push(reloadWatcher.requestReload('daemon'));
+  return pending;
+}
 import {
   isDevRuntimeReloadIgnoredPath,
   readDevReloadWatchChangeSignature,
@@ -171,6 +183,7 @@ export function startDevReloadCoordinator(
   let inFlight = false;
   let inFlightPromise = null;
   let pending = false;
+  let pendingNamedChange = false;
   let cycle = 0;
   let retryTimer = null;
   let retryTimerGeneration = 0;
@@ -195,6 +208,14 @@ export function startDevReloadCoordinator(
     for (const descriptorId of descriptorIds) {
       signatureInitializationPendingDescriptorIds.add(descriptorId);
     }
+  };
+
+  const recordNamedChangeObservation = (event) => {
+    if (
+      (event?.eventType === 'change' || event?.eventType === 'rename')
+      && typeof event?.filename === 'string'
+      && event.filename.trim()
+    ) pendingNamedChange = true;
   };
 
   const clearScheduledRetry = () => {
@@ -300,6 +321,8 @@ export function startDevReloadCoordinator(
       return;
     }
     admittedSignature = episodeSignature;
+    const signatureInitializationFallbackAllAtAdmission = signatureInitializationFallbackAll;
+    const signatureInitializationDescriptorIdsAtAdmission = new Set(signatureInitializationPendingDescriptorIds);
 
     cycle += 1;
     const context = {
@@ -327,9 +350,17 @@ export function startDevReloadCoordinator(
     context.revalidateGeneration = async () => {
       if (closed || isShuttingDown?.()) return false;
       const currentSignatures = await sampleSignatures();
+      const signatureInitializationChangedSinceAdmission = (
+        (!signatureInitializationFallbackAllAtAdmission && signatureInitializationFallbackAll)
+        || Array.from(signatureInitializationPendingDescriptorIds).some((descriptorId) => (
+          !signatureInitializationDescriptorIdsAtAdmission.has(descriptorId)
+        ))
+      );
       const current = !closed
         && !isShuttingDown?.()
-        && !pending
+        && forcedTargets.size === 0
+        && !pendingNamedChange
+        && !signatureInitializationChangedSinceAdmission
         && serializeDescriptorSignatures(normalizedDescriptors, currentSignatures)
           === serializeDescriptorSignatures(normalizedDescriptors, nextSignatures);
       if (!current) {
@@ -350,6 +381,7 @@ export function startDevReloadCoordinator(
     }
 
     const supersededActivationTargets = new Set();
+    const requestedFollowupTargets = new Set();
     try {
       const restartTargets = [];
       for (const target of targets) {
@@ -357,6 +389,9 @@ export function startDevReloadCoordinator(
         const result = await executorsByTarget.get(target)?.build?.(context);
         if (target === 'daemon' && result?.allowSupersededActivation === true) {
           supersededActivationTargets.add(target);
+        }
+        if (result?.requestFollowup === true) {
+          requestedFollowupTargets.add(target);
         }
         if (result?.skipped === true) continue;
         restartTargets.push(target);
@@ -456,6 +491,10 @@ export function startDevReloadCoordinator(
     clearScheduledRetry();
     retryEpisodeSignature = null;
     retryEpisodeState = 'initial';
+    if (requestedFollowupTargets.size) {
+      for (const target of requestedFollowupTargets) forcedTargets.add(target);
+      pending = true;
+    }
   };
 
   const shouldObserve = (event) => (
@@ -469,7 +508,10 @@ export function startDevReloadCoordinator(
     if (executorsByTarget.has(event?.forcedTarget)) forcedTargets.add(event.forcedTarget);
     recordSignatureInitializationEvent(event);
     if (inFlight) {
-      if (event?.observationHandled !== true) pending = true;
+      if (event?.observationHandled !== true) {
+        recordNamedChangeObservation(event);
+        pending = true;
+      }
       return;
     }
 
@@ -478,6 +520,7 @@ export function startDevReloadCoordinator(
       try {
         do {
           pending = false;
+          pendingNamedChange = false;
           await runCycle();
         } while (pending && !closed && !isShuttingDown?.());
       } catch (error) {
@@ -496,6 +539,7 @@ export function startDevReloadCoordinator(
     if (!shouldObserve(event)) return false;
     recordSignatureInitializationEvent(event);
     if (!inFlight) return false;
+    recordNamedChangeObservation(event);
     pending = true;
     return true;
   };
@@ -514,12 +558,20 @@ export function startDevReloadCoordinator(
   });
   if (!watcher) return null;
   for (const [target, executor] of executorsByTarget) {
-    executor?.setUnexpectedExitHandler?.((event) => onChange({
-      eventType: 'active-exit',
-      filename: null,
-      forcedTarget: target,
-      activeExit: event,
-    }));
+    executor?.setUnexpectedExitHandler?.(async (event) => {
+      try {
+        await executor?.recoverUnexpectedExit?.(event);
+      } catch (error) {
+        logger.error?.(`[local] watch: ${target} prior-runtime recovery failed; continuing with source refresh.`);
+        logger.error?.(formatError(error));
+      }
+      return onChange({
+        eventType: 'active-exit',
+        filename: null,
+        forcedTarget: target,
+        activeExit: event,
+      });
+    });
   }
   return {
     ...watcher,

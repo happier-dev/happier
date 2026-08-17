@@ -26,6 +26,11 @@ import { getRuntimeDir } from './utils/paths/runtime.mjs';
 import { assertServerComponentDirMatches } from './utils/server/validate.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
+import {
+  getStackRuntimeStatePath,
+  readStackRuntimeStateFile,
+  resolveTrustedStackRuntimeServerPort,
+} from './utils/stack/runtime_state.mjs';
 import { readJsonIfExists } from './utils/fs/json.mjs';
 import { readPackageJsonVersion } from './utils/fs/package_json.mjs';
 import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
@@ -34,6 +39,7 @@ import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from './runtime/shared/borrowed_expo.mjs';
 
 /**
  * Doctor script for common happy-stacks failure modes.
@@ -119,8 +125,27 @@ async function main() {
   const runtimeMode = resolveStackRuntimeMode({ argv, env: process.env });
   const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
   const runtimeSnapshot = runtimeMode.mode === 'source' ? null : runtimeInspection.snapshot;
+  const runtimeSnapshotRequired = runtimeMode.mode === 'require' && !runtimeInspection.valid;
+  const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: stackName,
+    producerStackName: borrowedExpoProducerStackName,
+  })
+    ? await resolveBorrowedExpoRuntime({
+        rootDir,
+        producerStackName: borrowedExpoProducerStackName,
+        env: process.env,
+      })
+    : null;
 
-  const serverPort = resolveServerPortFromEnv({ defaultPort: 3005 });
+  const runtimeStatePath = process.env.HAPPIER_STACK_RUNTIME_STATE_PATH?.trim() || getStackRuntimeStatePath(stackName);
+  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
+  const runtimeServerPort = await resolveTrustedStackRuntimeServerPort(runtimeState, {
+    stackName,
+    envPath: process.env.HAPPIER_STACK_ENV_FILE,
+    cliHomeDir: process.env.HAPPIER_STACK_CLI_HOME_DIR,
+  }).catch(() => null);
+  const serverPort = runtimeServerPort ?? resolveServerPortFromEnv({ defaultPort: 3005 });
   const resolvedUrls = await resolveServerUrls({ serverPort, allowEnable: false });
   const internalServerUrl = resolvedUrls.internalServerUrl;
   const publicServerUrl = resolvedUrls.publicServerUrl;
@@ -135,7 +160,9 @@ async function main() {
     : join(autostart.baseDir, 'ui');
   const uiBuildDir = runtimeSnapshot
     ? join(runtimeSnapshot.launchPath ?? runtimeSnapshot.snapshotPath, 'ui')
-    : sourceUiBuildDir;
+    : runtimeSnapshotRequired
+      ? null
+      : sourceUiBuildDir;
 
 	  const serverComponentName = getServerComponentName({ kv: argsKv });
 	  if (serverComponentName === 'both') {
@@ -168,6 +195,7 @@ async function main() {
       valid: runtimeInspection.valid,
       errors: runtimeInspection.errors,
       components: runtimeInspection.manifest?.components ?? null,
+      borrowedExpo,
     },
     env: {
       homeEnv: join(homeDir, '.env'),
@@ -191,11 +219,14 @@ async function main() {
       kv('internal:', cyan(internalServerUrl)),
       kv('public:', publicServerUrl ? cyan(publicServerUrl) : dim('(none)')),
       kv('server:', cyan(serverComponentName)),
-      kv('uiBuild:', uiBuildDir),
+      kv('uiBuild:', uiBuildDir ?? dim('(runtime snapshot required)')),
       kv('cliHome:', cliHomeDir),
       kv('home:', homeDir),
       kv('runtime:', runtimeVersion ? `${runtimeDir} (${runtimeVersion})` : `${runtimeDir} (${yellow('not installed')})`),
       kv('stackRuntime:', runtimeSnapshot?.snapshotId ? `${runtimeSnapshot.snapshotId} (${runtimeMode.mode})` : `(${dim(runtimeMode.mode)})`),
+      ...(borrowedExpo
+        ? [kv('expoProvider:', `${borrowedExpo.producerStackName} (${borrowedExpo.status}, borrowed)`)]
+        : []),
       kv('workspace:', workspaceDir),
     ]));
     console.log('');
@@ -209,6 +240,47 @@ async function main() {
   if (!(await pathExists(cliDir))) {
     report.checks.cliDir = { ok: false, missing: cliDir };
     if (!json) console.log(`${red('x')} missing component: ${cliDir}`);
+  }
+
+  if (runtimeSnapshotRequired) {
+    const snapshotStatus = runtimeInspection.missing ? 'missing' : 'invalid';
+    report.checks.runtimeSnapshot = {
+      ok: false,
+      status: snapshotStatus,
+      activeSnapshotId: runtimeInspection.activeSnapshotId,
+      errors: runtimeInspection.errors,
+    };
+    if (!json) {
+      const runtimeRecovery = {
+        action: 'select an already-published producer runtime snapshot',
+        command: `hstack stack runtime ${stackName} select`,
+      };
+      console.log(
+        `${red('x')} runtime snapshot: ${snapshotStatus} → ${runtimeRecovery.action}: `
+          + `${cmd(runtimeRecovery.command)}`,
+      );
+    }
+  }
+
+  if (borrowedExpo) {
+    report.checks.borrowedExpo = {
+      ok: borrowedExpo.running,
+      producerStackName: borrowedExpo.producerStackName,
+      status: borrowedExpo.status,
+      port: borrowedExpo.port,
+      remoteTarget: borrowedExpo.remoteTarget,
+    };
+    if (!json) {
+      console.log(
+        `${borrowedExpo.running ? green('✓') : red('x')} borrowed Expo: ${borrowedExpo.producerStackName} `
+          + `(${borrowedExpo.status}${borrowedExpo.remoteTarget ? ` via ${borrowedExpo.remoteTarget}` : ''})`,
+      );
+      if (!borrowedExpo.running) {
+        console.log(
+          `${dim('↪ prerequisite:')} restore Expo on producer stack ${borrowedExpo.producerStackName}; this consumer does not own Expo.`,
+        );
+      }
+    }
   }
 
   // Server health / port conflicts
@@ -235,7 +307,7 @@ async function main() {
   }
 
   // UI build dir check
-  if (serveUi) {
+  if (serveUi && !runtimeSnapshotRequired) {
     if (await pathExists(uiBuildDir)) {
       const indexPath = join(uiBuildDir, 'index.html');
       if (await pathExists(indexPath)) {
@@ -251,7 +323,7 @@ async function main() {
       report.checks.uiBuildDir = { ok: false, missing: uiBuildDir };
       if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('hstack build')}`);
     }
-  } else {
+  } else if (!serveUi) {
     report.checks.uiServing = { ok: false, reason: 'disabled (HAPPIER_STACK_SERVE_UI=0)' };
     if (!json) console.log(`${dim('ℹ')} ui serving disabled (HAPPIER_STACK_SERVE_UI=0)`);
   }

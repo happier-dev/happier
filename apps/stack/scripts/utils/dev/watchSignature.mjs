@@ -2,6 +2,12 @@ import { lstatSync, readdirSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+  forgetCachedFileDigest,
+  readCachedFileDigest,
+  readCachedFileDigestSync,
+} from '../fs/cached_file_digest.mjs';
+
 const TEST_ONLY_DIRECTORY_NAMES = new Set([
   '__fixtures__',
   '__snapshots__',
@@ -40,6 +46,7 @@ export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevR
   try {
     stats = lstatSync(path, { bigint: true });
   } catch {
+    forgetCachedFileDigest(path);
     entries.push(`${path}\0missing`);
     return false;
   }
@@ -60,8 +67,13 @@ export function appendWatchSignatureEntries(path, entries, { ignorePath = isDevR
     return true;
   }
 
-  if (stats.isFile() || stats.isSymbolicLink()) {
-    entries.push(`${path}\0file\0${stats.size}\0${stats.mtimeNs}`);
+  if (stats.isFile()) {
+    entries.push(`${path}\0file\0${stats.size}\0${readCachedFileDigestSync(path, stats)}`);
+    return true;
+  }
+
+  if (stats.isSymbolicLink()) {
+    entries.push(`${path}\0symlink\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
     return true;
   }
 
@@ -84,6 +96,7 @@ export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePa
   try {
     stats = await lstat(path, { bigint: true });
   } catch {
+    forgetCachedFileDigest(path);
     entries.push(`${path}\0missing`);
     return false;
   }
@@ -104,8 +117,13 @@ export async function appendWatchSignatureEntriesAsync(path, entries, { ignorePa
     return true;
   }
 
-  if (stats.isFile() || stats.isSymbolicLink()) {
-    entries.push(`${path}\0file\0${stats.size}\0${stats.mtimeNs}`);
+  if (stats.isFile()) {
+    entries.push(`${path}\0file\0${stats.size}\0${await readCachedFileDigest(path, stats)}`);
+    return true;
+  }
+
+  if (stats.isSymbolicLink()) {
+    entries.push(`${path}\0symlink\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}`);
     return true;
   }
 

@@ -45,16 +45,22 @@ hstack wt status
 
 ## Stacks
 
-Test feature/PR work inside an isolated stack when stack services are involved:
+Do not create a dedicated stack merely because testing or QA involves stack services. When a human explicitly requests a dedicated, isolated, stable, controlled, snapshot-backed, or manual-restart QA stack, invoke `skills/happier-controlled-stack-qa`; that skill owns creation, session-wide reuse of one remembered stack, runtime selection, reload boundaries, borrowed Expo, and teardown. Additional or replacement stacks require an explicit human request.
 
-```bash
-hstack stack new exp1 --interactive
-hstack stack wt exp1 -- use <owner/branch|/abs/path>
-```
+When a human has already authorized or named a stack, use that exact stack for the session rather than creating a replacement because its identity was forgotten.
 
 Prefer stack env files and `hstack stack env ...` over hand-editing `env.local`.
 
-The default `main` stack should stay stable. Prefer creating a new stack and pointing it at the worktree under test.
+Keep the default `main` stack stable and do not commandeer a human-owned development stack or another agent's mutable QA stack.
+
+## Repo-local development database reconciliation
+
+- The deterministic `repo-<checkout>-<id>` stack resolved from the current checkout is its repo-local development stack. Resolve it from current stack metadata and verify its `repo.dir` matches the current checkout; never guess from a similar stack name or mutate every stack that references the checkout.
+- Its managed database contains retained development data and is not disposable. Never delete, reset, recreate, replace, truncate, clean, or discard it to fix migration drift.
+- When an agent edits a local-only/development-exposed migration already applied to that database, the same task automatically owns in-place reconciliation and canonical migration deployment. No separate confirmation or backup/snapshot/clone is required for this one target.
+- If its writers are running, quiesce only stack-owned processes through `hstack`, record whether the stack was running, reconcile, and restore the prior running state. Never kill by port or stop another stack.
+- Before handoff, verify current migration bytes against the ledger, run the canonical deploy twice, and run provider integrity/foreign-key checks. A later migration edit invalidates that evidence and makes the later editor responsible for reconciliation again.
+- Fail closed for ambiguous identity, `main`, shared, staging, production, external, another checkout's/named QA stack, or otherwise user-owned databases; their normal approval and backup requirements remain in force.
 
 ## Safety invariants
 
@@ -95,4 +101,4 @@ If `yarn` is not on PATH, use `corepack yarn ...`.
 
 ## Commit messages
 
-Use Conventional Commits as defined in the root `AGENTS.md` ("Commit messages").
+Use Conventional Commits as defined in the root `AGENTS.md` under **Adversarial review and handoff**.

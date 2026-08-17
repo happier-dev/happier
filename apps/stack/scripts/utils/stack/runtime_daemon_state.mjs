@@ -1,5 +1,5 @@
 import { dirname, join } from 'node:path';
-import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { resolvePidStackOwnership } from '../proc/ownership.mjs';
 import { isPidAlive, mutateStackRuntimeDaemonMembership, readStackRuntimeStateFile, recordStackRuntimeUpdate } from './runtime_state.mjs';
 

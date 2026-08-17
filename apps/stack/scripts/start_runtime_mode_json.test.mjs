@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { appendFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,4 +35,31 @@ test('hstack start --json --runtime reports runtime-backed launch paths', async 
   assert.notEqual(parsed.cliDir, join(fixture.stackDir, 'runtime', 'current', 'cli'));
   assert.notEqual(parsed.serverDir, join(fixture.stackDir, 'runtime', 'current', 'server'));
   assert.notEqual(parsed.uiBuildDir, join(fixture.stackDir, 'runtime', 'current', 'ui'));
+});
+
+test('hstack start --mobile does not request an owned Expo process when the stack borrows Expo', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'runtime-borrowed-start' });
+  await appendFile(
+    join(fixture.stackDir, 'env'),
+    'HAPPIER_STACK_EXPO_SOURCE_STACK=repo-producer\n',
+    'utf8',
+  );
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: rootDir,
+  };
+
+  const res = await runNode(
+    [join(rootDir, 'scripts', 'run.mjs'), '--json', '--runtime', '--mobile'],
+    { cwd: rootDir, env },
+  );
+  assert.equal(res.code, 0, `stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+  const parsed = JSON.parse(res.stdout);
+  assert.equal(parsed.startMobile, true);
+  assert.equal(parsed.startOwnedExpo, false);
+  assert.equal(parsed.expoOwnership, 'borrowed');
 });

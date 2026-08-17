@@ -8,6 +8,7 @@ import {
   daemonStartGate,
   formatDaemonAuthRequiredError,
   hasStackCredentials,
+  resolveDaemonStartAdmission,
   resolveStackDaemonStartRequested,
 } from './daemon_gate.mjs';
 import { resolveStackCredentialPaths } from './credentials_paths.mjs';
@@ -68,6 +69,27 @@ test('daemonStartGate blocks daemon start when missing credentials (non-auth flo
   const gate = daemonStartGate({ env: {}, cliHomeDir: dir });
   assert.equal(gate.ok, false);
   assert.equal(gate.reason, 'missing_credentials');
+});
+
+test('runtime starts skip an unavailable daemon without weakening source or interactive auth admission', async (t) => {
+  const dir = await withTempRoot(t);
+  const base = { daemonRequested: true, env: {}, cliHomeDir: dir, serverUrl: 'http://127.0.0.1:4010' };
+
+  const runtime = resolveDaemonStartAdmission({ ...base, runtimeBackedStart: true });
+  assert.equal(runtime.startDaemon, false);
+  assert.equal(runtime.skipReason, 'missing_credentials');
+
+  const source = resolveDaemonStartAdmission({ ...base, runtimeBackedStart: false });
+  assert.equal(source.startDaemon, true);
+  assert.equal(source.skipReason, null);
+
+  const interactiveRuntime = resolveDaemonStartAdmission({
+    ...base,
+    runtimeBackedStart: true,
+    terminalIsInteractive: true,
+  });
+  assert.equal(interactiveRuntime.startDaemon, true);
+  assert.equal(interactiveRuntime.skipReason, null);
 });
 
 test('daemonStartGate allows daemon start when credentials exist', async (t) => {

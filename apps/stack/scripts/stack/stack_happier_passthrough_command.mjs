@@ -1,14 +1,16 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { parseArgs } from '../utils/cli/args.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
-import { coerceHappyMonorepoRootFromPath, resolveStackEnvPath } from '../utils/paths/paths.mjs';
+import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
 
 import { withStackEnv } from './stack_environment.mjs';
 import { ensureStackDaemonPreflight, requiresStackDaemonPreflight } from './stack_happier_daemon_preflight.mjs';
+import { resolveStackHappierPassthroughEntrypoint } from './stack_happier_passthrough_entrypoint.mjs';
+
+export { resolveStackHappierPassthroughEntrypoint } from './stack_happier_passthrough_entrypoint.mjs';
 
 function stripIdentityWrapperArgs(args) {
   const stripped = [];
@@ -60,28 +62,6 @@ export function resolveStackHappierPassthroughInvocation({ passthrough = [] } = 
   return {
     identity,
     childArgs,
-  };
-}
-
-export function resolveStackHappierPassthroughEntrypoint({ rootDir, env = process.env } = {}) {
-  const launcherRoot = String(rootDir ?? '').trim();
-  const repoRoot = coerceHappyMonorepoRootFromPath(env?.HAPPIER_STACK_REPO_DIR) || '';
-  if (repoRoot) {
-    const stackRoot = join(repoRoot, 'apps', 'stack');
-    const stackWrapperEntrypoint = join(stackRoot, 'bin', 'happier.mjs');
-    if (existsSync(stackWrapperEntrypoint)) {
-      return {
-        cwd: stackRoot,
-        entrypoint: stackWrapperEntrypoint,
-        source: 'stack-repo-wrapper',
-      };
-    }
-  }
-
-  return {
-    cwd: launcherRoot,
-    entrypoint: join(launcherRoot, 'scripts', 'happier.mjs'),
-    source: 'launcher-script',
   };
 }
 

@@ -351,6 +351,19 @@ export async function ensureHappyServerSchemaReady({ serverDir, env }) {
 }
 
 export async function getAccountCountForServerComponent({ serverComponentName, serverDir, env, bestEffort = false }) {
+  if (
+    bestEffort &&
+    (serverComponentName === 'happier-server-light' || serverComponentName === 'happier-server')
+  ) {
+    // Best-effort callers use the count only as an auth-seeding heuristic after a
+    // server has already been admitted. Preparing dependencies or migrations here
+    // would put a repository build/install on the stack-availability critical path.
+    return await probeExistingAccountCountForServerComponent({
+      serverComponentName,
+      serverDir,
+      env,
+    });
+  }
   if (serverComponentName === 'happier-server-light') {
     try {
       const ready = await ensureServerLightSchemaReady({ serverDir, env, bestEffort });

@@ -896,7 +896,7 @@ test('buildTauriRuntimeEnv preserves explicit remote server selection when only 
   assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'cloud');
 });
 
-test('buildTauriRuntimeEnv prefers a matching server id from stack CLI settings over the derived stable scope', async () => {
+test('buildTauriRuntimeEnv keeps the derived stable scope when a matching settings alias exists', async () => {
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-stack-settings-${Date.now()}`, { recursive: true });
   const stackCliHome = `${realHome}/stack-cli-home`;
   const cargoBinDir = `${realHome}/.cargo/bin`;
@@ -941,7 +941,10 @@ test('buildTauriRuntimeEnv prefers a matching server id from stack CLI settings 
   });
 
   assert.equal(env.HAPPIER_SERVER_URL, 'http://127.0.0.1:3009');
-  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'custom-stack-server');
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, buildStackStableScopeId({
+    stackName: 'activity-surfaces-qa',
+    cliIdentity: 'default',
+  }));
 });
 
 test('buildTauriRuntimeEnv preserves explicit server selection instead of overwriting it from stack defaults', async () => {

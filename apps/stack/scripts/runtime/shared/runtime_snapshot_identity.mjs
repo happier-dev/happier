@@ -16,9 +16,6 @@ export function createRuntimeSnapshotId({
     .sort(([left], [right]) => left.localeCompare(right));
 
   return createRuntimeFingerprint({
-    repoDir: sourceMetadata?.repoDir,
-    commitSha: sourceMetadata?.commitSha,
-    dirtyHash: sourceMetadata?.dirtyHash,
     serverComponent: sourceMetadata?.serverComponent,
     dbProvider: sourceMetadata?.dbProvider,
     components: ['runtime-snapshot'],
@@ -29,4 +26,17 @@ export function createRuntimeSnapshotId({
       ...(Array.isArray(buildInputs) ? buildInputs : []),
     ],
   });
+}
+
+export function createRuntimeSnapshotSourceMetadata({ sourceMetadata, snapshotId } = {}) {
+  const sourceFingerprint = String(sourceMetadata?.sourceFingerprint ?? '').trim();
+  const normalizedSnapshotId = String(snapshotId ?? '').trim();
+  if (!normalizedSnapshotId) {
+    throw new Error('[runtime] snapshot source metadata requires a snapshot identity.');
+  }
+  return {
+    ...(sourceMetadata && typeof sourceMetadata === 'object' ? sourceMetadata : {}),
+    ...(sourceFingerprint ? { buildSourceFingerprint: sourceFingerprint } : {}),
+    sourceFingerprint: normalizedSnapshotId,
+  };
 }

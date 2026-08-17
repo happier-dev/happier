@@ -1235,6 +1235,47 @@ test('exclusiveDb proxy restart drains maintenance target after kill failure wit
   });
 });
 
+test('exclusiveDb proxy restart terminates through the listener identity when the wrapper leads its process group', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const killedPids = [];
+    const proxy = {
+      async enterMaintenance() {
+        return { targetHost: '127.0.0.1', targetPort: 6101 };
+      },
+      async flipUpstream() {},
+      async drainConnections() {},
+    };
+
+    const executor = createDevServerReloadExecutor(
+      executorOptions(serverDir, { proxyController: proxy }),
+      {
+        ensureSourceServerWorkspacePackagesBuiltImpl: async () => {},
+        preflightDevServerRestartImpl: async () => {},
+        killProcessGroupOwnedByStackImpl: async (pid) => {
+          killedPids.push(Number(pid));
+          return Number(pid) === 201 ? { killed: true } : { killed: false };
+        },
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        pmSpawnScriptImpl: async () => ({ pid: 202, exitCode: null, signalCode: null }),
+        waitForServerReadyImpl: async () => {},
+        listListenPidsImpl: async (port) => Number(port) === 5101 ? [201] : [302],
+        getProcessGroupIdImpl: async (pid) => {
+          if (Number(pid) === 101 || Number(pid) === 201) return 900;
+          if (Number(pid) === 202 || Number(pid) === 302) return 901;
+          return Number(pid);
+        },
+        isTcpPortFreeImpl: async () => true,
+        isPidAliveImpl: () => true,
+        logger: { log() {}, error() {} },
+      },
+    );
+
+    await executor.restart({ generation: 2, changedDescriptors: ['server:app'] });
+    assert.deepEqual(killedPids, [201]);
+  });
+});
+
 test('exclusiveDb proxy recovery remains retryable across an unchanged failure and a later edit', async (t) => {
   await withTempServerDir(t, async (serverDir) => {
     const calls = [];
@@ -1675,5 +1716,129 @@ test('exclusiveDb proxy restart keeps old backend serving when ownership proof f
         && error?.reloadRetryAfterMs === undefined,
     );
     assert.deepEqual(calls, []);
+  });
+});
+
+test('unexpected source exit restores the admitted prior runtime before the next source build', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const calls = [];
+    const exited = new EventEmitter();
+    exited.pid = 101;
+    exited.exitCode = 1;
+    const fallback = new EventEmitter();
+    fallback.pid = 202;
+    fallback.exitCode = null;
+    fallback.signalCode = null;
+    const serverProcRef = { current: exited };
+    const runtimeServerDir = join(serverDir, 'prior-runtime', 'server');
+    const executor = createDevServerReloadExecutor(
+      executorOptions(serverDir, {
+        serverProcRef,
+        serverEnv: {
+          HAPPIER_DB_PROVIDER: 'sqlite',
+          HAPPIER_SERVER_LIGHT_DATA_DIR: join(serverDir, 'data'),
+          HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS: '1200ms',
+          PORT: '5101',
+        },
+        priorRuntimeServerLaunchSpec: {
+          source: 'runtime',
+          serverDir: runtimeServerDir,
+          command: join(runtimeServerDir, 'happier-server'),
+          args: [],
+        },
+        proxyController: {
+          pid: process.pid,
+          async flipUpstream({ targetPort }) {
+            calls.push(['flip', targetPort]);
+          },
+        },
+      }),
+      {
+        pickNextFreeTcpPortImpl: async () => 5102,
+        spawnPriorRuntimeServerImpl: ({ launchSpec, env }) => {
+          calls.push(['spawn-prior', launchSpec.command, Number(env.PORT)]);
+          assert.equal(env.HAPPIER_SQLITE_AUTO_MIGRATE, '0');
+          assert.equal(env.HAPPIER_SQLITE_MIGRATIONS_DIR, join(runtimeServerDir, 'prisma', 'sqlite', 'migrations'));
+          return fallback;
+        },
+        waitForServerReadyImpl: async (url) => calls.push(['ready', url]),
+        listListenPidsImpl: async () => [302],
+        getProcessGroupIdImpl: async (pid) => Number(pid) === 302 ? 202 : Number(pid),
+        recordStackRuntimeServerActivationImpl: async (_path, activation) => calls.push(['record', activation]),
+        logger: { log() {}, warn() {}, error() {} },
+      },
+    );
+
+    const result = await executor.recoverUnexpectedExit({ child: exited, pid: 101, code: 1, signal: null });
+
+    assert.equal(result.recovered, true);
+    assert.equal(serverProcRef.current, fallback);
+    assert.deepEqual(calls.slice(0, 3), [
+      ['spawn-prior', join(runtimeServerDir, 'happier-server'), 5102],
+      ['ready', 'http://127.0.0.1:5102'],
+      ['flip', 5102],
+    ]);
+    assert.equal(calls[3][0], 'record');
+    assert.equal(calls[3][1].backendPort, 5102);
+    assert.equal(calls[3][1].listenerPid, 302);
+  });
+});
+
+test('failed destructive source replacement restores the admitted prior runtime before reporting failure', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const fallback = new EventEmitter();
+    fallback.pid = 202;
+    fallback.exitCode = null;
+    fallback.signalCode = null;
+    const oldServer = { pid: 101, exitCode: null, signalCode: null };
+    const serverProcRef = { current: oldServer };
+    const runtimeServerDir = join(serverDir, 'prior-runtime', 'server');
+    const flips = [];
+    const executor = createDevServerReloadExecutor(
+      executorOptions(serverDir, {
+        serverProcRef,
+        serverEnv: {
+          HAPPIER_DB_PROVIDER: 'sqlite',
+          HAPPIER_SERVER_LIGHT_DATA_DIR: join(serverDir, 'data'),
+          HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS: '1200ms',
+          PORT: '5101',
+        },
+        priorRuntimeServerLaunchSpec: {
+          source: 'runtime',
+          serverDir: runtimeServerDir,
+          command: join(runtimeServerDir, 'happier-server'),
+          args: [],
+        },
+        proxyController: {
+          pid: process.pid,
+          async enterMaintenance() { return { targetHost: '127.0.0.1', targetPort: 6101 }; },
+          async flipUpstream({ targetPort }) { flips.push(targetPort); },
+          async drainConnections() {},
+        },
+      }),
+      {
+        preflightDevServerRestartImpl: async () => {},
+        listListenPidsImpl: async (port) => Number(port) === 5101 ? [101] : [302],
+        getProcessGroupIdImpl: async (pid) => Number(pid) === 302 ? 202 : Number(pid),
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: true }),
+        waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+        pickNextFreeTcpPortImpl: async () => 5102,
+        pmSpawnScriptImpl: async () => { throw new Error('current source cannot start'); },
+        spawnPriorRuntimeServerImpl: async () => fallback,
+        waitForServerReadyImpl: async () => {},
+        recordStackRuntimeServerActivationImpl: async () => {},
+        isPidAliveImpl: () => true,
+        logger: { log() {}, warn() {}, error() {} },
+      },
+    );
+
+    await executor.build({ generation: 7, changedDescriptors: ['server:app'] });
+    await assert.rejects(
+      () => executor.restart({ generation: 7, changedDescriptors: ['server:app'] }),
+      (error) => error?.serverRestartFailure?.serviceRestored === true,
+    );
+
+    assert.equal(serverProcRef.current, fallback);
+    assert.deepEqual(flips, [5102]);
   });
 });

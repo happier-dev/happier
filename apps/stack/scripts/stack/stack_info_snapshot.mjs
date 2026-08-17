@@ -3,7 +3,14 @@ import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { getEnvValueAny } from '../utils/env/values.mjs';
 import { resolveLocalhostHost, preferStackLocalhostUrl } from '../utils/paths/localhost_host.mjs';
 import { worktreeSpecFromDir } from '../utils/git/worktrees.mjs';
-import { getStackRuntimeStatePath, isStackRuntimeProcessTrusted, readStackRuntimeStateFile, readStackServerLifecycle } from '../utils/stack/runtime_state.mjs';
+import {
+  getStackRuntimeStatePath,
+  hasTrustedStackRuntimeLifecycle,
+  isStackRuntimeProcessTrusted,
+  readStackRuntimeStateFile,
+  readStackServerLifecycle,
+  resolveTrustedStackRuntimeServerPort,
+} from '../utils/stack/runtime_state.mjs';
 import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveDefaultRepoEnv } from './stack_environment.mjs';
 import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
@@ -17,6 +24,8 @@ import { resolveVerifiedStackServerEndpoint, resolveVerifiedStackUiEndpoint } fr
 import { isTcpPortListening, listListenPidsWithStatus } from '../utils/net/ports.mjs';
 import { createListenerOwnershipObservationScope } from '../utils/server/listener_ownership.mjs';
 import { getProcessGroupId, isPidOwnedByStack } from '../utils/proc/ownership.mjs';
+import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
+import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../runtime/shared/borrowed_expo.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -91,7 +100,7 @@ export async function resolveStackComponentRuntime({
         : 'unverified';
   return {
     pid: ownedListenerPids[0] ?? runtimePid,
-    running: ownedListenerPids.length > 0 || (ownershipStatus === 'unknown' && runtimePidAlive && portListening),
+    running: ownedListenerPids.length > 0,
     pidAlive: Boolean(runtimePidAlive),
     portListening,
     listenerPids,
@@ -109,7 +118,8 @@ export async function readStackInfoSnapshot({
   isTcpPortListeningImpl = isTcpPortListening,
   isPidOwnedByStackImpl = isPidOwnedByStack,
   getProcessGroupIdImpl = getProcessGroupId,
-  listenerObservationTimeoutMs = 1_000,
+  listenerObservationTimeoutMs = 5_000,
+  resolveBorrowedExpoRuntimeImpl = resolveBorrowedExpoRuntime,
 }) {
   const baseDir = resolveStackEnvPath(stackName).baseDir;
   const envPath = resolveStackEnvPath(stackName).envPath;
@@ -119,6 +129,7 @@ export async function readStackInfoSnapshot({
 
   const serverComponent = getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
   const stackRemote = getEnvValueAny(stackEnv, ['HAPPIER_STACK_STACK_REMOTE']) || 'upstream';
+  const borrowedExpoProducerStackName = getEnvValueAny(stackEnv, ['HAPPIER_STACK_EXPO_SOURCE_STACK']);
 
   const pinnedServerPortRaw = getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_PORT']);
   const pinnedServerPort = pinnedServerPortRaw ? Number(pinnedServerPortRaw) : null;
@@ -132,22 +143,24 @@ export async function readStackInfoSnapshot({
     cliIdentity: 'default',
   });
   const initialRuntimeState = await readStackRuntimeStateFile(runtimeStatePath);
-  const initialRuntimePorts =
-    initialRuntimeState?.ports && typeof initialRuntimeState.ports === 'object' ? initialRuntimeState.ports : {};
-  const syncServerPort =
-    Number.isFinite(pinnedServerPort) && pinnedServerPort > 0
-      ? pinnedServerPort
-      : Number(initialRuntimePorts?.server) > 0
-        ? Number(initialRuntimePorts.server)
-        : null;
-  const runtimeState = await readStackRuntimeStateWithDaemonSync({
-    runtimeStatePath,
-    cliHomeDir: join(baseDir, 'cli'),
-    internalServerUrl: Number.isFinite(syncServerPort) && syncServerPort > 0 ? `http://127.0.0.1:${syncServerPort}` : '',
-    env: stackScopedEnv,
-  }, {
-    checkDaemonStateImpl: checkDaemonStatePingAware,
-  });
+  const runtimeProcessTrustContext = { stackName, envPath, cliHomeDir: join(baseDir, 'cli') };
+  const runtimeStatusTrustOptions = { throwOnInconclusive: false };
+  const trustedRuntimeServerPort = await resolveTrustedStackRuntimeServerPort(
+    initialRuntimeState,
+    runtimeProcessTrustContext,
+    runtimeStatusTrustOptions,
+  );
+  const initialDaemonPlacement = String(initialRuntimeState?.placement?.daemon ?? '').trim();
+  const runtimeState = initialDaemonPlacement && initialDaemonPlacement !== 'local'
+    ? initialRuntimeState
+    : await readStackRuntimeStateWithDaemonSync({
+        runtimeStatePath,
+        cliHomeDir: join(baseDir, 'cli'),
+        internalServerUrl: trustedRuntimeServerPort ? `http://127.0.0.1:${trustedRuntimeServerPort}` : '',
+        env: stackScopedEnv,
+      }, {
+        checkDaemonStateImpl: checkDaemonStatePingAware,
+      });
 
   const runtimePorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
   const serverPort =
@@ -161,6 +174,10 @@ export async function readStackInfoSnapshot({
   const serverProxy =
     runtimeState?.serverProxy && typeof runtimeState.serverProxy === 'object' ? runtimeState.serverProxy : null;
   const serverLifecycle = readStackServerLifecycle(runtimeState);
+  const runtimePublication =
+    runtimeState?.runtimePublication && typeof runtimeState.runtimePublication === 'object'
+      ? runtimeState.runtimePublication
+      : null;
   const serveUiWanted = typeof runtimeState?.serveUi === 'boolean'
     ? runtimeState.serveUi
     : String(getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVE_UI']) ?? '1').trim() !== '0';
@@ -171,7 +188,7 @@ export async function readStackInfoSnapshot({
   const uiDir = getComponentDir(rootDir, 'happier-ui', componentEnv);
   const cliDir = getComponentDir(rootDir, 'happier-cli', componentEnv);
   const serverDir = getComponentDir(rootDir, serverComponent, componentEnv);
-  const mobilePort =
+  const ownedMobilePort =
     runtimeState?.expo && typeof runtimeState.expo === 'object' && Number(runtimeState.expo.mobilePort) > 0
       ? Number(runtimeState.expo.mobilePort)
       : null;
@@ -186,10 +203,9 @@ export async function readStackInfoSnapshot({
       HAPPIER_STACK_DAEMON: getEnvValueAny(stackEnv, ['HAPPIER_STACK_DAEMON']),
     },
   });
-  const runtimeProcessTrustContext = { stackName, envPath, cliHomeDir: join(baseDir, 'cli') };
   const observedDaemon = await getObservedStackDaemonAsync({
     cliHomeDir: join(baseDir, 'cli'),
-    internalServerUrl: Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '',
+    internalServerUrl: trustedRuntimeServerPort ? `http://127.0.0.1:${trustedRuntimeServerPort}` : '',
     runtimeDaemonPid: runtimeState?.processes?.daemonPid ?? null,
     runtimeDaemonPids: runtimeState?.processes?.daemonPids ?? [],
     env: stackScopedEnv,
@@ -200,45 +216,61 @@ export async function readStackInfoSnapshot({
   const daemonPidAlive = await isStackRuntimeProcessTrusted(daemonPid, {
     ...runtimeProcessTrustContext,
     key: observedDaemon.source === 'runtime_pid' ? 'daemonPids' : 'daemonPid',
-  });
+  }, runtimeStatusTrustOptions);
   const daemonRunning = observedDaemon.running === true && daemonPidAlive;
+  const runtimePlacement = runtimeState?.placement && typeof runtimeState.placement === 'object'
+    ? runtimeState.placement
+    : {};
+  const remoteTargets = runtimeState?.remoteTargets && typeof runtimeState.remoteTargets === 'object'
+    ? runtimeState.remoteTargets
+    : {};
+  const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtimeState, 'daemon');
+  const remoteDaemonRunning = remoteDaemon.running;
+  const remoteExpo = resolveRuntimeRemoteServiceObservation(runtimeState, 'expo');
 
   const ownerAlive = await isStackRuntimeProcessTrusted(ownerPid, {
     ...runtimeProcessTrustContext,
     key: 'ownerPid',
-  });
+  }, runtimeStatusTrustOptions);
   const proxyPidAlive = await isStackRuntimeProcessTrusted(proxyPid, {
     ...runtimeProcessTrustContext,
     key: 'proxyPid',
-  });
+  }, runtimeStatusTrustOptions);
   const serverPidAlive = await isStackRuntimeProcessTrusted(serverPid, {
     ...runtimeProcessTrustContext,
     key: 'serverPid',
-  });
+  }, runtimeStatusTrustOptions);
   const serverBackendPidAlive = await isStackRuntimeProcessTrusted(serverBackendPid, {
     ...runtimeProcessTrustContext,
     key: 'serverBackendPid',
-  });
+  }, runtimeStatusTrustOptions);
   const expoPidAlive = await isStackRuntimeProcessTrusted(expoPid, {
     ...runtimeProcessTrustContext,
     key: 'expoPid',
-  });
+  }, runtimeStatusTrustOptions);
   const expoForwarderAlive = await isStackRuntimeProcessTrusted(expoTailscaleForwarderPid, {
     ...runtimeProcessTrustContext,
     key: 'expoTailscaleForwarderPid',
-  });
+  }, runtimeStatusTrustOptions);
 
   const serverRuntimePid = serverProxy?.mode === 'proxy' ? proxyPid : serverPid;
   const serverRuntimePidAlive = serverProxy?.mode === 'proxy' ? proxyPidAlive : serverPidAlive;
+  const serverEndpoint = await resolveVerifiedStackServerEndpoint({ port: trustedRuntimeServerPort });
   const listenerObservationScope = createListenerOwnershipObservationScope({
     totalTimeoutMs: listenerObservationTimeoutMs,
     attemptTimeoutMs: listenerObservationTimeoutMs,
     retryInconclusive: false,
     listListenPidsWithStatusImpl,
   });
-  const serverEndpoint = await resolveVerifiedStackServerEndpoint({ port: serverPort });
+  const recordedRuntimeServerPort = Number(runtimePorts?.server) > 0
+    ? Number(runtimePorts.server)
+    : null;
+  // The fast trust probe may be inconclusive on a loaded host. Preserve the recorded runtime port
+  // as a candidate for the bounded ownership observation below; it is projected only when that
+  // observation proves the recorded stack process owns the listener.
+  const serverObservationPort = trustedRuntimeServerPort ?? recordedRuntimeServerPort ?? serverPort;
   const serverComponentRuntime = await resolveStackComponentRuntime({
-    port: serverPort,
+    port: serverObservationPort,
     recordedPid: serverRuntimePid,
     runtimePidAlive: serverRuntimePidAlive,
     stackName,
@@ -250,32 +282,60 @@ export async function readStackInfoSnapshot({
     getProcessGroupIdImpl,
     listenerObservationScope,
   });
+  const verifiedProxyEndpoint = (
+    serverProxy?.mode === 'proxy'
+    && serverComponentRuntime.ownershipStatus === 'owned'
+    && !serverEndpoint.running
+  )
+    ? await resolveVerifiedStackServerEndpoint({ port: serverObservationPort })
+    : serverEndpoint;
   const serverPortListening = serverComponentRuntime.portListening || serverEndpoint.portListening;
   const serverRunning =
-    Number.isFinite(serverPort) && serverPort > 0
+    Number.isFinite(serverObservationPort) && serverObservationPort > 0
       ? serverComponentRuntime.running || serverEndpoint.running
       : serverPidAlive;
-  const serverBackendEndpoint = await resolveVerifiedStackServerEndpoint({ port: serverBackendPort });
-  const serverBackendRunning =
-    Number.isFinite(serverBackendPort) && serverBackendPort > 0
-      ? serverBackendEndpoint.running
-      : serverBackendPidAlive;
+  const activeServerPort = serverRunning ? serverObservationPort : null;
+  const serverBackendRuntime = await resolveStackComponentRuntime({
+    port: serverBackendPort,
+    recordedPid: serverBackendPid,
+    runtimePidAlive: serverBackendPidAlive,
+    stackName,
+    envPath,
+    cliHomeDir: join(baseDir, 'cli'),
+    listListenPidsWithStatusImpl,
+    isTcpPortListeningImpl,
+    isPidOwnedByStackImpl,
+    getProcessGroupIdImpl,
+    listenerObservationScope,
+  });
+  const serverBackendRunning = serverBackendRuntime.running;
   const uiEndpoint = await resolveVerifiedStackUiEndpoint({
     stackName,
     baseDir,
     runtimeState,
     expectedProjectDir: uiDir,
-    serverPort,
+    serverPort: activeServerPort,
     serverRunning,
     serveUiWanted,
     runtimeBackedStart,
   });
-  const uiExpected = uiEndpoint.expected;
-  const uiRunning = uiEndpoint.running;
-  const uiPortListening = uiEndpoint.running;
-  const uiPort = uiEndpoint.port;
-  const uiPid = runtimeBackedStart ? (serveUiWanted ? serverPid : null) : expoPid;
-  const uiPidAlive = runtimeBackedStart ? (serveUiWanted ? serverPidAlive : false) : expoPidAlive;
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: stackName,
+    producerStackName: borrowedExpoProducerStackName,
+  })
+    ? await resolveBorrowedExpoRuntimeImpl({
+        rootDir,
+        producerStackName: borrowedExpoProducerStackName,
+        env: componentEnv,
+      })
+    : null;
+  const uiExpected = borrowedExpo ? true : uiEndpoint.expected;
+  const uiRunning = borrowedExpo ? borrowedExpo.running : (uiEndpoint.running || remoteExpo.running);
+  const uiPortListening = borrowedExpo ? borrowedExpo.running : uiEndpoint.running;
+  const uiPort = borrowedExpo?.running ? borrowedExpo.port : borrowedExpo ? null : uiEndpoint.port;
+  const mobilePort = borrowedExpo?.running ? borrowedExpo.mobilePort : borrowedExpo ? null : ownedMobilePort;
+  const uiPid = borrowedExpo ? null : runtimeBackedStart ? (serveUiWanted ? serverPid : null) : expoPid;
+  const uiPidAlive = borrowedExpo ? false : runtimeBackedStart ? (serveUiWanted ? serverPidAlive : false) : expoPidAlive;
   const runningPid =
     [
       { pid: ownerPid, running: ownerAlive },
@@ -290,7 +350,7 @@ export async function readStackInfoSnapshot({
     ownerAlive ||
     serverRunning ||
     serverBackendRunning ||
-    uiRunning ||
+    (!borrowedExpo && uiRunning) ||
     daemonRunning ||
     daemonPidAlive ||
     proxyPidAlive ||
@@ -300,10 +360,16 @@ export async function readStackInfoSnapshot({
     expoForwarderAlive;
 
   const healthIssues = [];
+  const proxyBackendUnavailable = Boolean(
+    serverProxy?.mode === 'proxy'
+    && !serverBackendRunning
+    && !verifiedProxyEndpoint.running,
+  );
   if (serverComponentRuntime.ownershipStatus === 'unknown') {
     healthIssues.push('ownership_unknown');
   } else if (
     serverLifecycle?.phase === 'unavailable'
+    || proxyBackendUnavailable
     || (Number.isFinite(serverPort) && serverPort > 0 && !serverRunning)
   ) {
     healthIssues.push('server_down');
@@ -311,19 +377,37 @@ export async function readStackInfoSnapshot({
   if (uiExpected && !uiRunning) {
     healthIssues.push('ui_down');
   }
-  if (daemonExpected && running && !daemonRunning) {
+  if (daemonExpected && running && !daemonRunning && !remoteDaemonRunning) {
     healthIssues.push('daemon_down');
   }
   const healthStatus = !running ? 'stopped' : healthIssues.length > 0 ? 'degraded' : 'healthy';
 
   const host = resolveLocalhostHost({ stackMode: true, stackName });
-  const internalServerUrl = serverPort ? `http://127.0.0.1:${serverPort}` : null;
-  const uiUrl = uiPort ? `http://${host}:${uiPort}` : null;
+  const internalServerUrl = activeServerPort ? `http://127.0.0.1:${activeServerPort}` : null;
+  const uiUrl = borrowedExpo?.running
+    ? buildBorrowedExpoUiUrl({ consumerHost: host, expoPort: uiPort, serverPort: activeServerPort })
+    : uiPort ? `http://${host}:${uiPort}` : null;
   const mobileUrl = mobilePort ? await preferStackLocalhostUrl(`http://localhost:${mobilePort}`, { stackName }) : null;
 
   const repoWorktreeSpec = repoDir ? worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: repoDir }) || null : null;
   const runtimeMode = resolveStackRuntimeMode({ argv: [], env: stackEnv }).mode;
-  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir });
+  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir, env: process.env });
+  const selectedSnapshotId = runtimeInspection.activeSnapshotId;
+  // The state file's snapshot identity is authoritative while a recorded lifecycle
+  // process is still trusted as live. A listener is stronger evidence for endpoint
+  // projection, but it is not a prerequisite for reporting the loaded runtime.
+  const runtimeLifecycleLive = await hasTrustedStackRuntimeLifecycle(
+    runtimeState,
+    runtimeProcessTrustContext,
+    runtimeStatusTrustOptions,
+  );
+  const loadedSnapshotId = runtimeLifecycleLive ? runtimeSnapshotId || null : null;
+  const pendingManualRestart = Boolean(
+    running
+    && loadedSnapshotId
+    && selectedSnapshotId
+    && selectedSnapshotId !== loadedSnapshotId,
+  );
   const dirs = {
     repoDir,
     uiDir,
@@ -354,10 +438,11 @@ export async function readStackInfoSnapshot({
         },
         daemon: {
           pid: Number.isFinite(daemonPid) && daemonPid > 1 ? daemonPid : null,
-          running: daemonRunning,
+          running: daemonRunning || remoteDaemonRunning,
           pidAlive: daemonPidAlive,
-          status: observedDaemon.status,
-          source: observedDaemon.source,
+          status: remoteDaemon.target ? (remoteDaemon.status ?? 'unknown') : observedDaemon.status,
+          source: remoteDaemon.target ? 'remote_target' : observedDaemon.source,
+          remoteTarget: remoteDaemon.target,
         },
         server: {
           pid: Number.isFinite(serverRuntimePid) && serverRuntimePid > 1 ? serverRuntimePid : null,
@@ -374,13 +459,22 @@ export async function readStackInfoSnapshot({
           pid: Number.isFinite(serverBackendPid) && serverBackendPid > 1 ? serverBackendPid : null,
           running: serverBackendRunning,
           pidAlive: serverBackendPidAlive,
-          portListening: serverBackendEndpoint.portListening,
+          portListening: serverBackendRuntime.portListening,
+          listenerPids: serverBackendRuntime.listenerPids,
+          ownedListenerPids: serverBackendRuntime.ownedListenerPids,
+          listenerDiscoverySupported: serverBackendRuntime.listenerDiscoverySupported,
+          listenerDiscoveryStatus: serverBackendRuntime.listenerDiscoveryStatus,
+          ownershipStatus: serverBackendRuntime.ownershipStatus,
         },
         ui: {
           pid: Number.isFinite(uiPid) && uiPid > 1 ? uiPid : null,
           running: uiRunning,
           pidAlive: uiPidAlive,
           portListening: uiPortListening,
+          source: borrowedExpo ? 'borrowed_expo' : remoteExpo.running ? 'remote_target' : 'local',
+          ownership: borrowedExpo?.ownership ?? 'owned',
+          producerStackName: borrowedExpo?.producerStackName ?? null,
+          remoteTarget: borrowedExpo?.remoteTarget ?? remoteExpo.target,
         },
         expoTailscaleForwarder: {
           pid: Number.isFinite(expoTailscaleForwarderPid) && expoTailscaleForwarderPid > 1 ? expoTailscaleForwarderPid : null,
@@ -394,12 +488,20 @@ export async function readStackInfoSnapshot({
       ports: runtimePorts,
       serverProxy,
       serverLifecycle,
+      runtimePublication,
       expo: runtimeState?.expo ?? null,
+      borrowedExpo,
       processes: runtimeState?.processes ?? null,
+      placement: runtimePlacement,
+      remoteTargets,
       startedAt: runtimeState?.startedAt ?? null,
       updatedAt: runtimeState?.updatedAt ?? null,
       mode: runtimeMode,
       activeSnapshotId: runtimeInspection.activeSnapshotId,
+      selectedSnapshotId,
+      selectedProducerStackName: runtimeInspection.producerStackName,
+      loadedSnapshotId,
+      pendingManualRestart,
       snapshotPath: runtimeInspection.snapshotPath,
       sourceFingerprint: runtimeInspection.sourceFingerprint,
       valid: runtimeInspection.valid,
@@ -413,7 +515,7 @@ export async function readStackInfoSnapshot({
       mobileUrl,
     },
     ports: {
-      server: serverPort,
+      server: activeServerPort,
       backend: backendPort,
       serverBackend: serverBackendPort,
       ui: uiPort,

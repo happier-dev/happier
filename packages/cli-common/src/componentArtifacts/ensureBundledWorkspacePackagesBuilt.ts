@@ -20,6 +20,7 @@ export type EnsureWorkspacePackagesBuiltByName = (
         quiet?: boolean;
         env?: NodeJS.ProcessEnv;
         includeDevDependencies?: boolean;
+        publicationMode?: 'live' | 'artifact';
     }>,
 ) => Promise<Readonly<{
     ok: boolean;
@@ -83,7 +84,12 @@ export async function ensureBundledWorkspacePackagesBuilt(_params: Readonly<{
     await ensureWorkspacePackagesBuiltByName(
         params.repoRoot,
         [...new Set(params.bundles.map((bundle) => bundle.packageName))],
-        { quiet: false, env: process.env, includeDevDependencies: false },
+        {
+            quiet: false,
+            env: process.env,
+            includeDevDependencies: false,
+            publicationMode: 'artifact',
+        },
     );
 
     for (const bundle of params.bundles) {

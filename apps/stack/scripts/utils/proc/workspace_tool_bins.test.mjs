@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,7 +11,7 @@ async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
 }
 
-test('resolveWorkspaceToolBinDirs does not overwrite package bin targets through existing symlinks', async (t) => {
+test('resolveWorkspaceToolBinDirs publishes default shims outside Yarn-owned installed bins', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-workspace-tool-bins-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -47,10 +47,12 @@ test('resolveWorkspaceToolBinDirs does not overwrite package bin targets through
   await symlink('../typescript/bin/tsc', join(root, 'node_modules', '.bin', 'tsc'));
 
   const binDirs = await resolveWorkspaceToolBinDirs(join(root, 'apps', 'ui'));
+  const isolatedBinDir = join(root, '.project', 'tmp', 'workspace-tool-bins');
 
-  assert.ok(binDirs.includes(join(root, 'node_modules', '.bin')));
+  assert.deepEqual(binDirs, [isolatedBinDir]);
   assert.equal(await readFile(targetPath, 'utf-8'), originalTarget);
-  const shimPath = join(root, 'node_modules', '.bin', 'tsc');
+  assert.equal(await readlink(join(root, 'node_modules', '.bin', 'tsc')), '../typescript/bin/tsc');
+  const shimPath = join(isolatedBinDir, 'tsc');
   assert.match(await readFile(shimPath, 'utf-8'), new RegExp(process.execPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 
   const firstShimStat = await stat(shimPath, { bigint: true });
@@ -61,13 +63,17 @@ test('resolveWorkspaceToolBinDirs does not overwrite package bin targets through
   assert.equal(secondShimStat.mtimeNs, firstShimStat.mtimeNs, 'an identical valid shim must not be republished');
 });
 
-test('resolveWorkspaceToolBinDirs tolerates concurrent shim refreshes', async (t) => {
+test('resolveWorkspaceToolBinDirs tolerates concurrent isolated shim refreshes', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-workspace-tool-bins-concurrent-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
 
   await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
   await writeJson(join(root, 'apps', 'server', 'package.json'), {
     name: '@happier-dev/server',
     private: true,
@@ -91,7 +97,7 @@ test('resolveWorkspaceToolBinDirs tolerates concurrent shim refreshes', async (t
   await chmod(join(typescriptDir, 'bin', 'tsc'), 0o755);
   await chmod(join(typescriptDir, 'bin', 'tsserver'), 0o755);
 
-  const binDir = join(root, 'node_modules', '.bin');
+  const binDir = join(root, '.project', 'tmp', 'workspace-tool-bins');
   let removing = true;
   const removeLoop = (async () => {
     while (removing) {
@@ -156,9 +162,9 @@ test('resolveWorkspaceToolBinDirs exposes bins from workspace dependencies whose
   await writeFile(join(toolDir, 'dist', 'bin.js'), '#!/usr/bin/env node\n', 'utf-8');
 
   const binDirs = await resolveWorkspaceToolBinDirs(componentDir);
-  const binDir = join(root, 'node_modules', '.bin');
+  const binDir = join(root, '.project', 'tmp', 'workspace-tool-bins');
 
-  assert.ok(binDirs.includes(binDir));
+  assert.deepEqual(binDirs, [binDir]);
   assert.match(await readFile(join(binDir, 'workspace-tool'), 'utf-8'), /workspace-tool\/dist\/bin\.js/);
 });
 

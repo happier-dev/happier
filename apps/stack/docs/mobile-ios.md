@@ -124,6 +124,13 @@ hstack mobile --prebuild --run-ios --configuration=Release --no-metro
   - The dev-client QR uses the `HAPPIER_STACK_DEV_CLIENT_SCHEME` (default: `hstack-dev`).
   - Per-stack installs use a different per-stack scheme, so they should not intercept dev-client QR scans.
 
+- **Metro reports `Failed to get the SHA-1` after saying its configuration changed**:
+  - Re-run the owning Stack command, then reload the dev client. Stack records the loaded `metro.config.js`
+    fingerprint and replaces a Stack-owned Expo process once when that configuration changes.
+  - A borrowed-Expo stack never replaces its provider; re-run the producer stack instead.
+  - This does not require rebuilding the native dev client. If the reported file is actually absent, repair the
+    generated workspace output first; a Metro restart only fixes stale file-map configuration.
+
 - **List connected devices** (for `--device=`):
 
 ```bash

@@ -17,16 +17,16 @@ Stacks are configured via a plain env file stored under:
 
 ## Create a stack
 
-Non-interactive:
+Non-interactive (explicitly disable the TTY wizard):
 
 ```bash
-hstack stack new exp1 --port=3010 --server=happier-server-light
+hstack stack new exp1 --port=3010 --server=happier-server-light --non-interactive
 ```
 
-Auto-pick a port:
+Use an ephemeral port (selected when the stack starts):
 
 ```bash
-hstack stack new exp2
+hstack stack new exp2 --non-interactive
 ```
 
 ## Create a PR test stack (copy/paste friendly)

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { stopStackForTuiExit } from './utils/tui/cleanup.mjs';
 import { isAlive, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 
 test('a superseded TUI exit cannot stop a replacement runtime owner', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -60,6 +61,73 @@ test('a superseded TUI exit cannot stop a replacement runtime owner', async () =
     assert.equal(retained.ownerPid, 222);
     assert.equal(retained.stopRequest, null);
   } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('an explicit TUI quit stops its matching admitted detached runtime owner', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-tui-exit-admitted-owner-'));
+  const storageDir = join(tmp, 'storage');
+  const stackName = 'exp-admitted-owner';
+  const baseDir = join(storageDir, stackName);
+  const envPath = join(baseDir, 'env');
+  const runtimeStatePath = join(baseDir, 'stack.runtime.json');
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: storageDir };
+  let owner = null;
+
+  try {
+    await mkdir(baseDir, { recursive: true });
+    await writeFile(
+      envPath,
+      [
+        `HAPPIER_STACK_STACK=${stackName}`,
+        'HAPPIER_STACK_SERVER_COMPONENT=happier-server-light',
+        'HAPPIER_STACK_MANAGED_INFRA=0',
+        `HAPPIER_STACK_REPO_DIR=${dirname(rootDir)}`,
+        `HAPPIER_STACK_CLI_HOME_DIR=${join(baseDir, 'cli')}`,
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    owner = spawnOwnedSleep({
+      env: {
+        ...env,
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+        HAPPIER_STACK_PROCESS_KIND: 'server',
+      },
+    });
+    await waitForProcessAlive({ pid: owner.pid, timeoutMs: 2_000, intervalMs: 25, label: 'admitted detached owner' });
+    const runtime = await recordStackRuntimeStart(runtimeStatePath, {
+      stackName,
+      script: 'dev.mjs',
+      ephemeral: true,
+      ownerPid: owner.pid,
+      ports: {},
+    });
+
+    const actions = await stopStackForTuiExit({
+      rootDir,
+      stackName,
+      env,
+      json: true,
+      noDocker: true,
+      expectedRuntimeOwner: { ownerPid: owner.pid, startedAt: runtime.startedAt },
+    });
+
+    assert.equal(actions.stopAuthorization?.authorized, true);
+    await waitForProcessExit({ pid: owner.pid, timeoutMs: 10_000, intervalMs: 50, label: 'admitted detached owner' });
+    assert.equal(isAlive(owner.pid), false);
+  } finally {
+    if (owner?.pid && isAlive(owner.pid)) {
+      try {
+        process.kill(-owner.pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });

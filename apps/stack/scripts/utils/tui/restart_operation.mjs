@@ -15,23 +15,50 @@ function isSameRuntimeOwnerIncarnation(left, right) {
   return Boolean(left && right && left.ownerPid === right.ownerPid && left.startedAt === right.startedAt);
 }
 
+function normalizeRunnerLogPath(value) {
+  return String(value ?? '').trim();
+}
+
 export function createTuiRuntimeOwnershipTracker({ runtimeOwnerBeforeSpawn = null } = {}) {
   const baseline = normalizeRuntimeOwnerIncarnation(runtimeOwnerBeforeSpawn);
   let expectedOwner = null;
+  let detachedRunnerLogPath = '';
 
   return {
-    observe({ runtimeOwner = null, childActive = false, replacementAdmitted = false } = {}) {
+    observe({
+      runtimeOwner = null,
+      childActive = false,
+      launchRequested = false,
+      runtimeRunnerLogPath = '',
+      replacementCandidate = false,
+    } = {}) {
       const observed = normalizeRuntimeOwnerIncarnation(runtimeOwner);
       if (!observed) return false;
-      if (replacementAdmitted) {
+      const detachedRunnerMatches = Boolean(
+        launchRequested
+        && detachedRunnerLogPath
+        && detachedRunnerLogPath === normalizeRunnerLogPath(runtimeRunnerLogPath),
+      );
+      // A foreground child is direct evidence of ownership. A detached launcher is not: it
+      // becomes eligible only once its canonical runner-log announcement matches runtime state.
+      const launchOwnsRuntime = launchRequested ? detachedRunnerMatches : childActive;
+      if (replacementCandidate) {
+        const incumbent = expectedOwner ?? baseline;
+        if (!launchOwnsRuntime || isSameRuntimeOwnerIncarnation(observed, incumbent)) return false;
         expectedOwner = observed;
         return true;
       }
-      if (!expectedOwner && childActive && !isSameRuntimeOwnerIncarnation(observed, baseline)) {
+      if (!expectedOwner && launchOwnsRuntime && !isSameRuntimeOwnerIncarnation(observed, baseline)) {
         expectedOwner = observed;
         return true;
       }
       return false;
+    },
+    recordDetachedRunnerLogPath(path) {
+      detachedRunnerLogPath = normalizeRunnerLogPath(path);
+    },
+    clearDetachedRunnerLogPath() {
+      detachedRunnerLogPath = '';
     },
     getExpectedOwner() {
       return expectedOwner ? { ...expectedOwner } : null;
@@ -57,6 +84,7 @@ export function beginTuiRestartOperation({
   previousChild = null,
   previousRuntimeOwner = null,
   restartArgs = [],
+  backgroundOwner = false,
   spawnChild,
   trackChild = () => {},
   log = () => {},
@@ -86,6 +114,11 @@ export function beginTuiRestartOperation({
 
   let pending = true;
   let settled = false;
+  const isReplacementRuntimeOwner = (runtimeOwner) => {
+    if (settled) return false;
+    const observed = normalizeRuntimeOwnerIncarnation(runtimeOwner);
+    return Boolean(observed && !isSameRuntimeOwnerIncarnation(observed, incumbentRuntimeOwner));
+  };
   const operation = {
     get pending() {
       return pending;
@@ -93,10 +126,10 @@ export function beginTuiRestartOperation({
     getActiveChildren() {
       return uniqueActiveChildren([previousChild, replacementChild]);
     },
+    isReplacementRuntimeOwner,
     observeRuntimeOwner(runtimeOwner) {
-      if (settled) return false;
+      if (!isReplacementRuntimeOwner(runtimeOwner)) return false;
       const observed = normalizeRuntimeOwnerIncarnation(runtimeOwner);
-      if (!observed || isSameRuntimeOwnerIncarnation(observed, incumbentRuntimeOwner)) return false;
       settle({
         preservePrevious: false,
         message: `restart: canonical owner admitted the replacement (ownerPid=${observed.ownerPid}, startedAt=${observed.startedAt})`,
@@ -124,6 +157,11 @@ export function beginTuiRestartOperation({
     });
   });
   replacementChild.once('exit', (code, signal) => {
+    if (backgroundOwner && code === 0 && !signal) {
+      log('restart: detached background owner command completed; waiting for owner admission');
+      refresh();
+      return;
+    }
     const previousStillActive = isActiveChild(previousChild);
     settle({
       preservePrevious: previousStillActive,

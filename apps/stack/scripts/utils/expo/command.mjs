@@ -1,4 +1,7 @@
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '../proc/pm.mjs';
 import { resolveWorkspaceToolBinDirs } from '../proc/workspace_tool_bins.mjs';
@@ -17,9 +20,60 @@ import {
 } from './skiaPrebuiltBinaries.mjs';
 
 const DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE = 1;
+const CANONICAL_UI_PREFLIGHT_ERROR_CODE = 'HAPPIER_EXPO_CANONICAL_UI_PREFLIGHT_FAILED';
+
+export async function withExpoPreparationEnv(envIn, action) {
+  if (typeof action !== 'function') {
+    throw new TypeError('withExpoPreparationEnv requires an action function');
+  }
+  const env = { ...(envIn ?? process.env) };
+  const scratchBase = String(env.TMPDIR ?? env.TMP ?? env.TEMP ?? tmpdir()).trim() || tmpdir();
+  await mkdir(scratchBase, { recursive: true });
+  const scratchDir = await mkdtemp(join(scratchBase, 'happier-expo-preparation-'));
+  env.TMPDIR = scratchDir;
+  env.TMP = scratchDir;
+  env.TEMP = scratchDir;
+  try {
+    return await action(env);
+  } finally {
+    await rm(scratchDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export function isCanonicalExpoUiPreflightError(error) {
+  return error?.code === CANONICAL_UI_PREFLIGHT_ERROR_CODE;
+}
+
+async function loadCanonicalUiPreflight(projectDir) {
+  const canonicalUiPreflightPath = join(
+    projectDir,
+    'scripts',
+    'ensureWorkspacePackagesBuilt.mjs',
+  );
+  if (!(await pathExists(canonicalUiPreflightPath))) return null;
+  return {
+    module: await import(pathToFileURL(canonicalUiPreflightPath).href),
+    path: canonicalUiPreflightPath,
+  };
+}
+
+export async function hasUsableExpoWorkspaceLastGreen({ projectDir }) {
+  const canonical = await loadCanonicalUiPreflight(projectDir);
+  if (!canonical) return false;
+  return await canonical.module.hasUsableUiWorkspaceLastGreen?.({ uiPackageDir: projectDir }) === true;
+}
 
 export async function resolveExpoBin(runnerDir) {
-  await resolveWorkspaceToolBinDirs(runnerDir);
+  const workspaceToolBinDirs = await resolveWorkspaceToolBinDirs(runnerDir);
+  for (const binDir of workspaceToolBinDirs) {
+    const isolatedBin = join(binDir, 'expo');
+    const isolatedCmdBin = `${isolatedBin}.cmd`;
+    if (process.platform === 'win32' && (await pathExists(isolatedCmdBin))) return isolatedCmdBin;
+    if (await pathExists(isolatedBin)) return isolatedBin;
+  }
+
+  // Yarn owns installed package bins. They remain a read-only fallback when an installed
+  // dependency cannot be represented by Stack's deterministic shim publisher.
   const workspaceBin = join(runnerDir, 'node_modules', '.bin', 'expo');
   const workspaceCmdBin = `${workspaceBin}.cmd`;
   if (process.platform === 'win32' && (await pathExists(workspaceCmdBin))) return workspaceCmdBin;
@@ -121,6 +175,30 @@ function isAndroidRunCommand(args) {
   return Array.isArray(args) && args[0] === 'run:android';
 }
 
+export async function ensureExpoWorkspacePrepared({ projectDir, env, quiet = false }) {
+  const canonical = await loadCanonicalUiPreflight(projectDir);
+  if (canonical) {
+    try {
+      const preflightModule = canonical.module;
+      if (typeof preflightModule.ensureUiWorkspacePackagesBuilt !== 'function') {
+        throw new Error(
+          `[expo] canonical UI workspace preflight is unavailable: ${canonical.path}`,
+        );
+      }
+      return await preflightModule.ensureUiWorkspacePackagesBuilt({
+        env,
+        uiPackageDir: projectDir,
+      });
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      const error = new Error(`[expo] canonical UI workspace preflight failed: ${detail}`, { cause });
+      error.code = CANONICAL_UI_PREFLIGHT_ERROR_CODE;
+      throw error;
+    }
+  }
+  return await ensureWorkspacePackagesBuiltForComponent(projectDir, { quiet, env });
+}
+
 export async function expoExec({
   dir,
   projectDir,
@@ -131,23 +209,25 @@ export async function expoExec({
 }) {
   const runnerDir = dir;
   const cwd = projectDir ?? runnerDir;
-  await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
-  await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
-  await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
-  if (isIosRunCommand(args)) {
-    await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
-    await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
-  }
-  if (isAndroidRunCommand(args)) {
-    await ensureReactNativeSkiaAndroidBinaries({
-      runnerDir,
-      projectDir: workspaceDepsDir,
-      architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(env),
-      env,
-      quiet,
-    });
-  }
+  await withExpoPreparationEnv(env, async (preparationEnv) => {
+    await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env: preparationEnv });
+    await ensureExpoWorkspacePrepared({ projectDir: workspaceDepsDir, quiet, env: preparationEnv });
+    await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
+    if (isIosRunCommand(args)) {
+      await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+      await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+    }
+    if (isAndroidRunCommand(args)) {
+      await ensureReactNativeSkiaAndroidBinaries({
+        runnerDir,
+        projectDir: workspaceDepsDir,
+        architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(preparationEnv),
+        env: preparationEnv,
+        quiet,
+      });
+    }
+  });
   const expoBin = await resolveExpoBin(runnerDir);
   const effectiveEnv = applyExpoNodeHeapEnv(env, {
     envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
@@ -165,27 +245,46 @@ export async function expoSpawn({
   env,
   ensureDepsLabel = 'happy',
   quiet = false,
+  workspacePrepared = false,
   options,
 }) {
   const runnerDir = dir;
   const cwd = projectDir ?? runnerDir;
-  await ensureDepsInstalled(runnerDir, ensureDepsLabel, { quiet, env });
   const workspaceDepsDir = projectDir ?? runnerDir;
-  await ensureWorkspacePackagesBuiltForComponent(workspaceDepsDir, { quiet, env });
-  await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
-  if (isIosRunCommand(args)) {
-    await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
-    await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env, quiet });
-  }
-  if (isAndroidRunCommand(args)) {
-    await ensureReactNativeSkiaAndroidBinaries({
-      runnerDir,
-      projectDir: workspaceDepsDir,
-      architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(env),
-      env,
+  await withExpoPreparationEnv(env, async (preparationEnv) => {
+    await ensureDepsInstalled(runnerDir, ensureDepsLabel, {
       quiet,
+      env: preparationEnv,
+      refreshExisting: !workspacePrepared,
+      prepareComponentOutputs: !workspacePrepared,
     });
-  }
+    if (!workspacePrepared) {
+      try {
+        await ensureExpoWorkspacePrepared({ projectDir: workspaceDepsDir, quiet, env: preparationEnv });
+      } catch (error) {
+        if (isCanonicalExpoUiPreflightError(error)) throw error;
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn(
+          '[local] Expo workspace package build failed; starting the development server with the current workspace source and last-green outputs.\n'
+          + detail,
+        );
+      }
+    }
+    await repairExpoYarnPackageBinShims({ runnerDir, projectDir: workspaceDepsDir });
+    if (isIosRunCommand(args)) {
+      await ensureReactNativeSkiaIosBinaries({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+      await ensureReactNativeLibsodiumNativeBuild({ runnerDir, projectDir: workspaceDepsDir, env: preparationEnv, quiet });
+    }
+    if (isAndroidRunCommand(args)) {
+      await ensureReactNativeSkiaAndroidBinaries({
+        runnerDir,
+        projectDir: workspaceDepsDir,
+        architectures: resolveReactNativeSkiaAndroidArchitecturesFromEnv(preparationEnv),
+        env: preparationEnv,
+        quiet,
+      });
+    }
+  });
   const expoBin = await resolveExpoBin(runnerDir);
   const effectiveEnv = applyExpoNodeHeapEnv(env, {
     envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',

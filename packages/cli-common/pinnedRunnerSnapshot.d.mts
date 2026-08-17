@@ -26,18 +26,18 @@ export function isPinnedRunnerSnapshotReady(
   location: PinnedRunnerSnapshotLocation,
 ): boolean;
 
+type PinnedRunnerSnapshotReadOptions = Readonly<{
+  fingerprint?: string | null;
+  validateSnapshot?: ((location: PinnedRunnerSnapshotLocation) => boolean) | null;
+  snapshotsDir?: string | null;
+}>;
+
 export function listReadyPinnedRunnerSnapshots(
   entrypoint: string,
-  options?: Readonly<{
-    fingerprint?: string | null;
-    validateSnapshot?: ((location: PinnedRunnerSnapshotLocation) => boolean) | null;
-  }>,
+  options?: PinnedRunnerSnapshotReadOptions,
 ): ReadonlyArray<Readonly<{ location: PinnedRunnerSnapshotLocation; mtimeMs: number }>>;
 
 export function resolveNewestReadyPinnedRunnerSnapshot(
   entrypoint: string,
-  options?: Readonly<{
-    fingerprint?: string | null;
-    validateSnapshot?: ((location: PinnedRunnerSnapshotLocation) => boolean) | null;
-  }>,
+  options?: PinnedRunnerSnapshotReadOptions,
 ): PinnedRunnerSnapshotLocation | null;

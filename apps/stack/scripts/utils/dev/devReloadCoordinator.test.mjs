@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { startDevReloadCoordinator } from './devReloadCoordinator.mjs';
+import {
+  requestInitialDevRefreshes,
+  startDevReloadCoordinator,
+} from './devReloadCoordinator.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
 
 function descriptor({ id, target, signature = '0' }) {
@@ -18,6 +21,23 @@ function descriptor({ id, target, signature = '0' }) {
     },
   };
 }
+
+test('requestInitialDevRefreshes refreshes enabled server and daemon owners behind the admitted runtime', async () => {
+  const requested = [];
+  const pending = requestInitialDevRefreshes({
+    reloadWatcher: {
+      requestReload(target) {
+        requested.push(target);
+        return Promise.resolve();
+      },
+    },
+    serverReloadEnabled: true,
+    daemonReloadEnabled: true,
+  });
+
+  assert.deepEqual(requested, ['server', 'daemon']);
+  await Promise.all(pending);
+});
 
 function deferredAsyncDescriptor({ id, target, signature = '0' }) {
   let current = signature;
@@ -72,6 +92,11 @@ function executor(target, calls, overrides = {}) {
     ...(typeof overrides.emitTransitionEvent === 'function' ? {
       emitTransitionEvent(event, details) {
         return overrides.emitTransitionEvent(event, details);
+      },
+    } : {}),
+    ...(typeof overrides.recoverUnexpectedExit === 'function' ? {
+      async recoverUnexpectedExit(event) {
+        return await overrides.recoverUnexpectedExit(event);
       },
     } : {}),
     ...(typeof overrides.createPlan === 'function' ? {
@@ -812,7 +837,33 @@ test('an unexpected active-server exit re-enters the existing coordinator and cl
   assert.equal(unexpectedExitHandler, null);
 });
 
-test('an active-server exit remains forced when a no-delta observation supersedes its first cycle', async () => {
+test('an unexpected active-server exit restores admitted prior availability before source preparation', async () => {
+  const calls = [];
+  const server = descriptor({ id: 'server:app', target: 'server' });
+  let unexpectedExitHandler = null;
+  const onChange = startCoordinator({
+    descriptors: [server],
+    executors: [executor('server', calls, {
+      setUnexpectedExitHandler(handler) {
+        unexpectedExitHandler = handler;
+      },
+      async recoverUnexpectedExit() {
+        calls.push('server:recover-prior');
+      },
+    })],
+    calls,
+  });
+
+  await unexpectedExitHandler({ code: 1, signal: null });
+
+  assert.deepEqual(
+    calls.filter((call) => typeof call === 'string').slice(1),
+    ['server:recover-prior', 'server:build:1', 'server:restart:1'],
+  );
+  await onChange.watcher.close();
+});
+
+test('a pathless no-delta observation does not supersede an active forced reload', async () => {
   const calls = [];
   const server = descriptor({ id: 'server:app', target: 'server' });
   let unexpectedExitHandler = null;
@@ -838,7 +889,46 @@ test('an active-server exit remains forced when a no-delta observation supersede
 
   const recovery = unexpectedExitHandler({ code: 1, signal: null });
   await buildStarted;
-  onChange({ eventType: 'change', filename: 'unrelated-observation.tmp' });
+  assert.equal(onChange.observe({ eventType: 'change', filename: null }), true);
+  releaseBuild();
+  await recovery;
+
+  assert.deepEqual(
+    calls.filter((call) => typeof call === 'string' && /:(?:build|restart):/.test(call)),
+    ['server:build:1', 'server:restart:1'],
+  );
+
+  await onChange.watcher.close();
+});
+
+test('a pathless observation supersedes an active reload when its descriptor signature changed', async () => {
+  const calls = [];
+  const server = descriptor({ id: 'server:app', target: 'server' });
+  let unexpectedExitHandler = null;
+  let notifyBuildStarted;
+  const buildStarted = new Promise((resolve) => { notifyBuildStarted = resolve; });
+  let releaseBuild;
+  const buildBlocked = new Promise((resolve) => { releaseBuild = resolve; });
+  const onChange = startCoordinator({
+    descriptors: [server],
+    executors: [executor('server', calls, {
+      setUnexpectedExitHandler(handler) {
+        unexpectedExitHandler = handler;
+      },
+      async build(context) {
+        if (context.generation === 1) {
+          notifyBuildStarted();
+          await buildBlocked;
+        }
+      },
+    })],
+    calls,
+  });
+
+  const recovery = unexpectedExitHandler({ code: 1, signal: null });
+  await buildStarted;
+  server.set('1');
+  assert.equal(onChange.observe({ eventType: 'change', filename: null }), true);
   releaseBuild();
   await recovery;
 
@@ -1210,52 +1300,58 @@ test('terminal publication authority cannot bypass stale-generation fencing for 
   assert.deepEqual(activations, [2]);
 });
 
-test('a Prisma observation during the pre-activation sampling gap revokes the app-only generation', async () => {
-  const calls = [];
-  const app = descriptor({ id: 'server:app', target: 'server' });
-  let prismaSignature = '0';
-  let hideNextPrismaSignature = false;
-  const prisma = {
-    id: 'server:prisma',
-    target: 'server',
-    paths: ['/tmp/server:prisma'],
-    set(value) {
-      prismaSignature = value;
-    },
-    hideNextRead() {
-      hideNextPrismaSignature = true;
-    },
-    readSignature() {
-      if (hideNextPrismaSignature) {
-        hideNextPrismaSignature = false;
-        return '0';
-      }
-      return prismaSignature;
-    },
-  };
-  let observe = () => {};
-  const activations = [];
-  const onChange = startCoordinator({
-    descriptors: [app, prisma],
-    executors: [executor('server', calls, {
-      async restart(context) {
-        if (context.generation === 1) {
-          assert.equal(await context.revalidateGeneration(), true);
-          prisma.set('1');
-          prisma.hideNextRead();
-          observe({ eventType: 'change', filename: 'schema.prisma' });
-        }
-        if (await context.revalidateGeneration()) activations.push(context.generation);
+test('a named Prisma observation during the pre-activation sampling gap revokes the app-only generation', async () => {
+  for (const eventType of ['change', 'rename']) {
+    const calls = [];
+    const app = descriptor({ id: 'server:app', target: 'server' });
+    let prismaSignature = '0';
+    let hideNextPrismaSignature = false;
+    const prisma = {
+      id: 'server:prisma',
+      target: 'server',
+      paths: ['/tmp/server:prisma'],
+      set(value) {
+        prismaSignature = value;
       },
-    })],
-    calls,
-  });
-  observe = onChange.observe;
+      hideNextRead() {
+        hideNextPrismaSignature = true;
+      },
+      readSignature() {
+        if (hideNextPrismaSignature) {
+          hideNextPrismaSignature = false;
+          return '0';
+        }
+        return prismaSignature;
+      },
+    };
+    let observe = () => {};
+    const activations = [];
+    const onChange = startCoordinator({
+      descriptors: [app, prisma],
+      executors: [executor('server', calls, {
+        async restart(context) {
+          if (context.generation === 1) {
+            assert.equal(await context.revalidateGeneration(), true);
+            prisma.set('1');
+            prisma.hideNextRead();
+            observe({ eventType, filename: 'schema.prisma' });
+          }
+          if (await context.revalidateGeneration()) activations.push(context.generation);
+        },
+      })],
+      calls,
+    });
+    observe = onChange.observe;
 
-  app.set('1');
-  await onChange({ eventType: 'change', filename: 'app.ts' });
+    app.set('1');
+    await onChange({ eventType: 'change', filename: 'app.ts' });
 
-  assert.deepEqual(activations, [2]);
+    assert.deepEqual(
+      activations,
+      [2],
+      `${eventType} must revoke the stale pre-activation generation`,
+    );
+  }
 });
 
 test('an ignored test-only observation does not revoke an in-flight production generation', async () => {
@@ -1509,6 +1605,32 @@ test('changes during a running cycle collapse into one trailing cycle', async ()
 
   daemon.set('1');
   await onChange({});
+
+  assert.deepEqual(calls.slice(1), [
+    'daemon:build:1',
+    'daemon:restart:1',
+    'daemon:build:2',
+    'daemon:restart:2',
+  ]);
+});
+
+test('a successful activation can request one forced trailing build without another filesystem edit', async () => {
+  const calls = [];
+  const daemon = descriptor({ id: 'daemon:cli-publication', target: 'daemon' });
+  const onChange = startCoordinator({
+    descriptors: [daemon],
+    executors: [
+      executor('daemon', calls, {
+        build(context) {
+          return context.cycle === 1 ? { requestFollowup: true } : undefined;
+        },
+      }),
+    ],
+    calls,
+  });
+
+  daemon.set('1');
+  await onChange({ eventType: 'change', filename: '.build-manifest.json' });
 
   assert.deepEqual(calls.slice(1), [
     'daemon:build:1',

@@ -129,6 +129,12 @@ test('foreground sync start streams the canonical Mutagen monitor until it exits
   assert.deepEqual(spawned[0].env, { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' });
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), true);
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), false);
+  assert.equal(
+    spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|2||false|0' }),
+    false,
+    'a successful-cycle counter change alone must not redraw or persist another healthy status',
+  );
+  assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Scanning|2||false|0' }), true);
   assert.equal(await result.monitor.completion, await completion);
 });
 

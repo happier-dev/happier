@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildTuiAuthArgs, shouldHoldAfterAuthExit } from './actions.mjs';
+import { buildTuiAuthArgs, buildTuiAuthExitNotice } from './actions.mjs';
 
 test('buildTuiAuthArgs builds stack-scoped auth login args', () => {
   assert.deepEqual(buildTuiAuthArgs({ happysBin: 'bin/hstack.mjs', stackName: 'main', force: false }), [
@@ -21,8 +21,8 @@ test('buildTuiAuthArgs builds stack-scoped auth login args', () => {
   ]);
 });
 
-test('shouldHoldAfterAuthExit holds on failure but not on success', () => {
-  assert.equal(shouldHoldAfterAuthExit({ code: 0, signal: null }), false);
-  assert.equal(shouldHoldAfterAuthExit({ code: 1, signal: null }), true);
-  assert.equal(shouldHoldAfterAuthExit({ code: 0, signal: 'SIGINT' }), true);
+test('buildTuiAuthExitNotice reports failures in the TUI instead of holding stdin', () => {
+  assert.equal(buildTuiAuthExitNotice({ code: 0, signal: null }), null);
+  assert.match(buildTuiAuthExitNotice({ code: 1, signal: null }), /auth: failed.*code=1/);
+  assert.match(buildTuiAuthExitNotice({ code: 0, signal: 'SIGINT' }), /auth: failed.*signal=SIGINT/);
 });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -376,6 +377,179 @@ test('ensureDevExpoServer restarts mobile dev-client when running Expo state tar
     assert.equal(nextState.apiServerUrl, 'http://192.168.1.20:3014');
     assert.equal(nextState.devClientEnabled, true);
     assert.equal(await waitForPidExitForTest(previousExpoPid), true, 'expected automatic API mismatch replacement to stop prior stack-owned Expo process');
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    killProcessTreeByPid(previousExpoPid);
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ensureDevExpoServer restarts a running Expo process whose state does not prove the current Metro config', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-restart-metro-config-'));
+  const children = [];
+  let previousExpoPid = null;
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+    await writeFile(join(uiDir, 'metro.config.js'), 'module.exports = { watchFolders: [] };\n', 'utf-8');
+
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(
+      expoBin,
+      [
+        '#!/usr/bin/env node',
+        "setInterval(() => {}, 1000);",
+      ].join('\n') + '\n',
+      'utf-8'
+    );
+    await chmod(expoBin, 0o755);
+
+    const projectDir = uiDir;
+    const paths = getExpoStatePaths({
+      baseDir: tmp,
+      kind: 'expo-dev',
+      projectDir,
+      stateFileName: 'expo.state.json',
+    });
+    const priorPort = await listenEphemeralPort();
+    const stackName = 'qa-agent-metro-config';
+    const envPath = join(tmp, 'stack.env');
+    const previousExpo = await spawnOwnedMetroLikeExpoProcess({
+      port: priorPort,
+      projectDir,
+      expoHomeDir: paths.expoHomeDir,
+      stackName,
+      envPath,
+    });
+    previousExpoPid = previousExpo.pid;
+    await writePidState(paths.statePath, {
+      pid: previousExpoPid,
+      port: priorPort,
+      uiDir,
+      projectDir,
+      startedAt: new Date().toISOString(),
+      webEnabled: false,
+      devClientEnabled: true,
+      host: 'lan',
+      apiServerUrl: 'http://192.168.1.20:3014',
+    });
+
+    const result = await ensureDevExpoServer({
+      startUi: false,
+      startMobile: true,
+      uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+        HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+        HAPPIER_STACK_MOBILE_SCHEME: 'happier-dev',
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+      },
+      apiServerUrl: 'http://192.168.1.20:3014',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath: null,
+      stackName,
+      envPath,
+      children,
+      quiet: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.skipped, false);
+    assert.equal(await waitForPidExitForTest(previousExpoPid), true, 'expected stale-config Expo process to stop');
+
+    const nextState = JSON.parse(await readFile(paths.statePath, 'utf-8'));
+    assert.match(nextState.metroConfigFingerprint, /^sha256:[a-f0-9]{64}$/);
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    killProcessTreeByPid(previousExpoPid);
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ensureDevExpoServer adopts a running Expo process that loaded the current Metro config', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-adopt-metro-config-'));
+  const children = [];
+  let previousExpoPid = null;
+  try {
+    const uiDir = join(tmp, 'ui');
+    const metroConfig = 'module.exports = { watchFolders: [] };\n';
+    await mkdir(uiDir, { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+    await writeFile(join(uiDir, 'metro.config.js'), metroConfig, 'utf-8');
+
+    const projectDir = uiDir;
+    const paths = getExpoStatePaths({
+      baseDir: tmp,
+      kind: 'expo-dev',
+      projectDir,
+      stateFileName: 'expo.state.json',
+    });
+    const priorPort = await listenEphemeralPort();
+    const stackName = 'qa-agent-current-metro-config';
+    const envPath = join(tmp, 'stack.env');
+    const previousExpo = await spawnOwnedMetroLikeExpoProcess({
+      port: priorPort,
+      projectDir,
+      expoHomeDir: paths.expoHomeDir,
+      stackName,
+      envPath,
+    });
+    previousExpoPid = previousExpo.pid;
+    await writePidState(paths.statePath, {
+      pid: previousExpoPid,
+      port: priorPort,
+      uiDir,
+      projectDir,
+      startedAt: new Date().toISOString(),
+      webEnabled: false,
+      devClientEnabled: true,
+      host: 'lan',
+      apiServerUrl: 'http://192.168.1.20:3014',
+      metroConfigFingerprint: `sha256:${createHash('sha256').update(metroConfig).digest('hex')}`,
+    });
+
+    const result = await ensureDevExpoServer({
+      startUi: false,
+      startMobile: true,
+      uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+        HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+        HAPPIER_STACK_MOBILE_SCHEME: 'happier-dev',
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+      },
+      apiServerUrl: 'http://192.168.1.20:3014',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath: null,
+      stackName,
+      envPath,
+      children,
+      quiet: true,
+      prepareExpoWorkspace: async () => {},
+      hasUsableWorkspaceLastGreen: async () => true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.skipped, true);
+    assert.equal(result.pid, previousExpoPid);
+    assert.equal(isPidAliveForTest(previousExpoPid), true);
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);

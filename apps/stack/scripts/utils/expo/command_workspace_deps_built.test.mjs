@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
-import { expoExec, resolveExpoBin } from './command.mjs';
+import { expoExec, expoSpawn, resolveExpoBin } from './command.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -132,6 +132,99 @@ function applyEnvOverrides(t, vars) {
     else process.env[key] = String(value);
   }
 }
+
+test('expoExec delegates Happier UI preparation to the app-owned canonical preflight', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-canonical-ui-preflight-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const uiDir = join(root, 'apps', 'ui');
+  const markerPath = join(root, 'canonical-ui-preflight.txt');
+  await mkdir(join(uiDir, 'scripts'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(join(root, 'node_modules', '.bin'), { recursive: true });
+  await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
+  await writeFile(join(root, 'yarn.lock'), '# lock\n', 'utf-8');
+  await writeJson(join(uiDir, 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+  await writeFile(
+    join(uiDir, 'scripts', 'ensureWorkspacePackagesBuilt.mjs'),
+    [
+      "import { writeFile } from 'node:fs/promises';",
+      `export async function ensureUiWorkspacePackagesBuilt() { await writeFile(${JSON.stringify(markerPath)}, 'ready\\n'); }`,
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  const expoPath = join(root, 'node_modules', '.bin', 'expo');
+  await writeFile(
+    expoPath,
+    `#!/bin/sh\ntest -f ${JSON.stringify(markerPath)}\n`,
+    'utf-8',
+  );
+  await chmod(expoPath, 0o755);
+
+  await expoExec({
+    dir: root,
+    projectDir: uiDir,
+    args: ['--version'],
+    env: { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' },
+    quiet: true,
+  });
+
+  assert.equal(await readFile(markerPath, 'utf-8'), 'ready\n');
+});
+
+test('expoSpawn can launch last-green workspace bytes without refreshing changed dependencies', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-last-green-spawn-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const uiDir = join(root, 'apps', 'ui');
+  await mkdir(uiDir, { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(join(root, 'node_modules', '.bin'), { recursive: true });
+  await writeJson(join(root, 'package.json'), { name: 'repo', private: true });
+  await writeFile(join(root, 'yarn.lock'), '# changed lockfile\n', 'utf-8');
+  await writeJson(join(uiDir, 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnStub({ binDir, outputPath });
+  const expoPath = join(root, 'node_modules', '.bin', 'expo');
+  await writeFile(expoPath, '#!/bin/sh\nexit 0\n', 'utf-8');
+  await chmod(expoPath, 0o755);
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    npm_execpath: '',
+    HAPPIER_STACK_ENV_FILE: '',
+  };
+  const child = await expoSpawn({
+    label: 'expo-last-green',
+    dir: root,
+    projectDir: uiDir,
+    args: ['--help'],
+    env,
+    quiet: true,
+    workspacePrepared: true,
+  });
+  await new Promise((resolvePromise, rejectPromise) => {
+    child.on('exit', (code) => (code === 0 ? resolvePromise() : rejectPromise(new Error(`expo exited ${code}`))));
+    child.on('error', rejectPromise);
+  });
+
+  const argvLog = await readFile(outputPath, 'utf-8');
+  assert.doesNotMatch(argvLog, / :: install(?:\s|$)/);
+});
 
 test('expoExec builds workspace dist deps for the projectDir (not the runnerDir)', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-expo-workspace-deps-built-'));
@@ -273,8 +366,8 @@ test('expoExec falls back to the monorepo root expo bin when runnerDir lacks nod
   assert.match(argvLog, /bin=.*\/node_modules\/\.bin\/expo\b/);
 });
 
-test('resolveExpoBin repairs a missing workspace shim from the installed Expo package bin', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'hs-expo-missing-workspace-shim-'));
+test('resolveExpoBin returns a runnable isolated shim without replacing Yarn installed entries', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-expo-isolated-workspace-shim-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
@@ -291,12 +384,20 @@ test('resolveExpoBin repairs a missing workspace shim from the installed Expo pa
     version: '55.0.11',
     bin: { expo: 'bin/cli' },
   });
-  await writeFile(join(expoPackageDir, 'bin', 'cli'), '#!/usr/bin/env node\n', 'utf-8');
+  const expoTarget = join(expoPackageDir, 'bin', 'cli');
+  await writeFile(expoTarget, '#!/usr/bin/env node\nconsole.log("isolated expo");\n', 'utf-8');
+  await chmod(expoTarget, 0o755);
 
-  const expectedBin = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'expo.cmd' : 'expo');
-  assert.equal(await fileExists(expectedBin), false);
+  const installedBinDir = join(root, 'node_modules', '.bin');
+  await mkdir(installedBinDir, { recursive: true });
+  const installedBin = join(installedBinDir, 'expo');
+  await symlink('../expo/bin/cli', installedBin);
+
+  const expectedBin = join(root, '.project', 'tmp', 'workspace-tool-bins', 'expo');
   assert.equal(await resolveExpoBin(root), expectedBin);
-  assert.equal(await fileExists(expectedBin), true);
+  assert.equal(await readlink(installedBin), '../expo/bin/cli');
+  const { stdout } = await execFileAsync(expectedBin);
+  assert.equal(stdout, 'isolated expo\n');
 });
 
 test('expoExec repairs Yarn shell shims inside Expo package bin files before invoking Expo', async (t) => {

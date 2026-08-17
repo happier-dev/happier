@@ -48,7 +48,7 @@ test('resolveServerPortForPostAuthDaemonStart falls back to pinned stack env fil
   try {
     const port = await resolveServerPortForPostAuthDaemonStart({
       stackName,
-      env: { ...process.env, HAPPIER_STACK_ENV_FILE: envPath },
+      env: { ...process.env, HAPPIER_STACK_ENV_FILE: envPath, HAPPIER_STACK_SERVER_PORT: '' },
     });
     assert.equal(port, 4333);
   } finally {

@@ -1,16 +1,32 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
 
 import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { pathExists } from '../../utils/fs/fs.mjs';
 import { readJsonIfExists } from '../../utils/fs/json.mjs';
 import {
+  artifactPayloadDir,
+  readArtifactManifest,
+  resolveComponentArtifactSupportReference,
+  validateArtifactManifest,
+} from '../shared/artifact_manifest.mjs';
+import {
+  isRetainedLegacyRuntimeSnapshotComponentReference,
   readRuntimeManifest,
   readRuntimePointer,
   resolveRuntimeManifestEntrypoint,
+  validateRuntimeTarget,
   validateRuntimeManifest,
 } from '../shared/runtime_manifest.mjs';
-import { resolveStackRuntimePaths } from '../shared/runtime_paths.mjs';
+import {
+  getRuntimeSnapshotPhysicalContainmentError,
+  resolveStackComponentArtifactDir,
+  resolveStackRuntimePaths,
+  validateRuntimeSnapshotId,
+} from '../shared/runtime_paths.mjs';
+import { resolveStackBaseDir } from '../../utils/paths/paths.mjs';
+import { assertCanonicalManagedStackName } from '../../utils/stack/names.mjs';
 
 async function collectSnapshotEntrypointErrors({ snapshotPath, manifest }) {
   const missing = [];
@@ -23,6 +39,65 @@ async function collectSnapshotEntrypointErrors({ snapshotPath, manifest }) {
   return missing.length > 0
     ? [`[runtime] active runtime snapshot is incomplete: missing ${missing.join(', ')} entrypoints.`]
     : [];
+}
+
+function resolveSnapshotComponentDirectoryName(component) {
+  return component === 'web' ? 'ui' : component === 'server' ? 'server' : 'cli';
+}
+
+async function collectSnapshotComponentReferenceErrors({
+  snapshotPath,
+  producerStackBaseDir,
+  manifest,
+}) {
+  const errors = [];
+  for (const component of ['web', 'server', 'daemon']) {
+    const artifactFingerprint = String(manifest?.components?.[component]?.artifactFingerprint ?? '').trim();
+    if (!artifactFingerprint) continue;
+    const componentPath = join(snapshotPath, resolveSnapshotComponentDirectoryName(component));
+    const artifactDir = resolveStackComponentArtifactDir({
+      stackBaseDir: producerStackBaseDir,
+      component,
+      fingerprint: artifactFingerprint,
+    });
+    const artifactManifest = await readArtifactManifest({ artifactDir });
+    const artifactValidation = validateArtifactManifest(artifactManifest);
+    const componentStats = await lstat(componentPath).catch(() => null);
+    const retainedLegacyReference = componentStats?.isSymbolicLink()
+      && await isRetainedLegacyRuntimeSnapshotComponentReference({
+        producerStackBaseDir,
+        componentPath,
+        component,
+        reusedSnapshotIds: manifest?.reusedSnapshotIds,
+      });
+    if (retainedLegacyReference) continue;
+    if (!artifactValidation.ok || artifactValidation.manifest.component !== component) {
+      if (componentStats?.isSymbolicLink()) {
+        errors.push(`[runtime] active runtime snapshot ${component} artifact reference is missing or invalid.`);
+      }
+      continue;
+    }
+    // Physical component directories are the released v1 self-contained
+    // snapshot shape. Only new symlink/junction references require a live
+    // canonical artifact (and its optional owner-local support object).
+    if (!componentStats?.isSymbolicLink()) continue;
+    try {
+      await resolveComponentArtifactSupportReference({
+        stackBaseDir: producerStackBaseDir,
+        manifest: artifactValidation.manifest,
+      });
+      const [actualPath, expectedPath] = await Promise.all([
+        realpath(componentPath),
+        realpath(artifactPayloadDir(artifactDir)),
+      ]);
+      if (actualPath !== expectedPath) {
+        errors.push(`[runtime] active runtime snapshot ${component} reference does not match its canonical artifact payload.`);
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+  return errors;
 }
 
 async function collectSnapshotRuntimePayloadErrors({ snapshotPath }) {
@@ -55,11 +130,28 @@ async function inspectDaemonDistClosure({ snapshotPath }) {
   return { fingerprint, errors: [] };
 }
 
-export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
+export async function inspectActiveRuntimeSnapshot({ stackBaseDir, env = process.env }) {
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
   const pointer = await readRuntimePointer({ currentPath: runtimePaths.currentPath });
-  const activeSnapshotId = String(pointer?.snapshotId ?? '').trim() || null;
+  const snapshotIdValidation = validateRuntimeSnapshotId(pointer?.snapshotId, { allowEmpty: true });
+  const activeSnapshotId = snapshotIdValidation.snapshotId || null;
   const pointerSnapshotPath = String(pointer?.snapshotPath ?? '').trim();
+  const producerStackName = String(pointer?.producerStackName ?? '').trim() || null;
+
+  if (!snapshotIdValidation.ok) {
+    return {
+      missing: false,
+      valid: false,
+      errors: [snapshotIdValidation.error],
+      activeSnapshotId: snapshotIdValidation.snapshotId || null,
+      snapshotPath: pointerSnapshotPath ? resolve(pointerSnapshotPath) : null,
+      sourceFingerprint: String(pointer?.sourceFingerprint ?? '').trim() || null,
+      manifest: null,
+      snapshot: null,
+      producerStackName,
+      producerStackBaseDir: stackBaseDir,
+    };
+  }
 
   if (!activeSnapshotId || !pointerSnapshotPath) {
     return {
@@ -71,22 +163,57 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
       sourceFingerprint: String(pointer?.sourceFingerprint ?? '').trim() || null,
       manifest: null,
       snapshot: null,
+      producerStackName,
     };
   }
 
-  const expectedSnapshotPath = resolveStackRuntimePaths({
-    stackBaseDir,
+  let producerStackNameError = null;
+  if (producerStackName) {
+    try {
+      assertCanonicalManagedStackName(producerStackName, 'producer');
+    } catch (error) {
+      producerStackNameError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  const producerStackNameValid = producerStackNameError === null;
+  const producerStackBaseDir = producerStackName && producerStackNameValid
+    ? resolveStackBaseDir(producerStackName, env).baseDir
+    : stackBaseDir;
+  const producerSnapshotPaths = resolveStackRuntimePaths({
+    stackBaseDir: producerStackBaseDir,
     snapshotId: activeSnapshotId,
-  }).snapshotDir;
-  const normalizedExpectedSnapshotPath = resolve(expectedSnapshotPath);
+  });
+  const normalizedExpectedSnapshotPath = resolve(producerSnapshotPaths.snapshotDir);
   const normalizedPointerSnapshotPath = resolve(pointerSnapshotPath);
-  const manifestPath = resolveStackRuntimePaths({
-    stackBaseDir,
-    snapshotId: activeSnapshotId,
-  }).manifestPath;
+  const physicalSnapshotContainmentError = await getRuntimeSnapshotPhysicalContainmentError({
+    buildsDir: producerSnapshotPaths.buildsDir,
+    snapshotDir: producerSnapshotPaths.snapshotDir,
+  });
+  if (physicalSnapshotContainmentError) {
+    return {
+      missing: false,
+      valid: false,
+      errors: [physicalSnapshotContainmentError],
+      activeSnapshotId,
+      snapshotPath: normalizedPointerSnapshotPath,
+      launchPath: normalizedExpectedSnapshotPath,
+      sourceFingerprint: String(pointer?.sourceFingerprint ?? '').trim() || null,
+      daemonDistClosureFingerprint: null,
+      manifest: null,
+      snapshot: null,
+      producerStackName,
+      producerStackBaseDir,
+    };
+  }
+
+  const manifestPath = producerSnapshotPaths.manifestPath;
   const manifest = await readRuntimeManifest({ manifestPath });
   const validation = validateRuntimeManifest(manifest);
   const errors = [];
+
+  if (!producerStackNameValid) {
+    errors.push(producerStackNameError);
+  }
 
   if (Number(pointer?.version) !== 1) {
     errors.push('[runtime] active runtime pointer version must be 1.');
@@ -108,9 +235,18 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
     ) {
       errors.push('[runtime] active runtime pointer and manifest source fingerprint do not match.');
     }
+    const targetValidation = validateRuntimeTarget(validation.manifest);
+    if (!targetValidation.ok) {
+      errors.push(`[runtime] active runtime snapshot target is incompatible: ${targetValidation.errors.join('; ')}`);
+    }
     errors.push(
       ...(await collectSnapshotEntrypointErrors({
         snapshotPath: normalizedExpectedSnapshotPath,
+        manifest: validation.manifest,
+      })),
+      ...(await collectSnapshotComponentReferenceErrors({
+        snapshotPath: normalizedExpectedSnapshotPath,
+        producerStackBaseDir,
         manifest: validation.manifest,
       })),
       ...(await collectSnapshotRuntimePayloadErrors({
@@ -147,7 +283,11 @@ export async function inspectActiveRuntimeSnapshot({ stackBaseDir }) {
           sourceFingerprint,
           daemonDistClosureFingerprint: daemonDistClosure.fingerprint,
           manifest: validation.manifest,
+          producerStackName,
+          producerStackBaseDir,
         }
       : null,
+    producerStackName,
+    producerStackBaseDir,
   };
 }

@@ -5,6 +5,7 @@ import {
   buildRemoteCancelCommand,
   buildRemoteExecCommand,
   buildSshWorkerArgs,
+  requiresRemoteDependencyBootstrap,
 } from './remote_commands.mjs';
 import {
   MUTAGEN_SYNC_LIST_JSON_TEMPLATE,
@@ -124,6 +125,7 @@ export async function runDevTargetDependencyBootstrap(
     environment: {
       HAPPIER_STACK_PM_CACHE_BASE_DIR: `${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`,
     },
+    dependencyAdmission: 'skip',
     syncAlreadyVerified,
     env,
   });
@@ -138,6 +140,7 @@ export async function runDevTargetCommand(
     environment = {},
     flush = false,
     tty = false,
+    dependencyAdmission = 'auto',
     syncAlreadyVerified = false,
     env = process.env,
   },
@@ -147,6 +150,7 @@ export async function runDevTargetCommand(
     stopProcess = defaultStopProcess,
     signalSource = process,
     createExecutionId = randomUUID,
+    runDependencyBootstrap = runDevTargetDependencyBootstrap,
   } = {},
 ) {
   if (!syncAlreadyVerified) {
@@ -161,6 +165,16 @@ export async function runDevTargetCommand(
       { target, stackBaseDir, env },
       { runCaptureResult: runCaptureResultImpl },
     );
+  }
+
+  if (dependencyAdmission !== 'skip' && requiresRemoteDependencyBootstrap(commandArgs)) {
+    const bootstrap = await runDependencyBootstrap({
+      target,
+      stackBaseDir,
+      syncAlreadyVerified: true,
+      env,
+    });
+    if (bootstrap?.code !== 0) return bootstrap;
   }
 
   const executionId = createExecutionId();

@@ -1,3 +1,31 @@
+export const REMOTE_DEPENDENCY_ADMISSION = Object.freeze({
+  directCommands: Object.freeze([
+    'node',
+    'npm',
+    'npx',
+    'pnpm',
+    'tsc',
+    'vitest',
+    'yarn',
+  ]),
+  corepackSubcommands: Object.freeze(['npm', 'pnpm', 'yarn']),
+});
+
+function commandBasename(value) {
+  return String(value ?? '').trim().replaceAll('\\', '/').split('/').at(-1);
+}
+
+export function requiresRemoteDependencyBootstrap(commandArgs) {
+  if (!Array.isArray(commandArgs) || commandArgs.length === 0) return false;
+  const command = commandBasename(commandArgs[0]);
+  if (command === 'corepack') {
+    return REMOTE_DEPENDENCY_ADMISSION.corepackSubcommands.includes(
+      String(commandArgs[1] ?? '').trim(),
+    );
+  }
+  return REMOTE_DEPENDENCY_ADMISSION.directCommands.includes(command);
+}
+
 function posixQuote(value) {
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 }
@@ -255,28 +283,6 @@ export function buildRemoteDoctorCommand(target) {
       'node --version',
       'corepack --version',
     ].join('; '),
-  );
-}
-
-const REMOTE_LOAD_PROBE_SCRIPT = [
-  'const os = require("node:os")',
-  'const cpuCount = Math.max(1, os.availableParallelism())',
-  'const load1 = Number(os.loadavg()[0])',
-  'const totalMemory = Number(os.totalmem())',
-  'const freeMemory = Number(os.freemem())',
-  'process.stdout.write("__HAPPIER_LOAD__=" + JSON.stringify({ cpuCount, load1, normalizedLoad: Number.isFinite(load1) ? load1 / cpuCount : null, totalMemory, freeMemory, platform: process.platform }) + "\\n")',
-].join('; ');
-
-export function buildRemoteLoadProbeCommand(target) {
-  if (target.platform === 'windows') {
-    return wrapRemoteScript(
-      target,
-      `$ErrorActionPreference = "Stop"; node -e ${powershellNativeArgument(REMOTE_LOAD_PROBE_SCRIPT)}; exit $LASTEXITCODE`,
-    );
-  }
-  return wrapRemoteScript(
-    target,
-    `set -euo pipefail; node -e ${posixQuote(REMOTE_LOAD_PROBE_SCRIPT)}`,
   );
 }
 

@@ -38,6 +38,7 @@ async function createAuditFixture(t) {
     databaseUrl = null,
     serverComponent = 'happier-server',
     dbProvider = 'mysql',
+    extraEnv = {},
   }) {
     const baseDir = join(storageDir, stackName);
     const envPath = join(baseDir, 'env');
@@ -56,6 +57,7 @@ async function createAuditFixture(t) {
         `HAPPIER_STACK_CLI_HOME_DIR=${join(baseDir, 'cli')}`,
         `HAPPIER_STACK_REPO_DIR=${repoDir}`,
         ...(databaseUrl == null ? [] : [`DATABASE_URL=${databaseUrl}`]),
+        ...Object.entries(extraEnv).map(([key, value]) => `${key}=${value}`),
         '',
       ].join('\n'),
       'utf-8',
@@ -70,22 +72,28 @@ async function createAuditFixture(t) {
     });
   }
 
-  async function edit(stackName) {
+  async function edit(stackName, { portInput = '', remoteInput = '' } = {}) {
     return await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), 'edit', stackName, '--interactive', '--json'], {
         cwd: rootDir,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-      const prompts = ['Pick [1-2]', 'Port (empty', 'Git remote', 'Select repo'];
+      const prompts = [
+        { text: 'Pick [1-2]', answer: '' },
+        { text: 'Port (empty', answer: portInput },
+        { text: 'Git remote', answer: remoteInput },
+        { text: 'Select repo', answer: '' },
+      ];
       let promptIndex = 0;
       let stdout = '';
       let stderr = '';
       child.stdout.on('data', (chunk) => {
         stdout += String(chunk);
-        if (promptIndex < prompts.length && stdout.includes(prompts[promptIndex])) {
+        if (promptIndex < prompts.length && stdout.includes(prompts[promptIndex].text)) {
+          const { answer } = prompts[promptIndex];
           promptIndex += 1;
-          child.stdin.write('\n');
+          child.stdin.write(`${answer}\n`);
         }
       });
       child.stderr.on('data', (chunk) => {
@@ -213,4 +221,31 @@ test('hstack stack edit preserves external Postgres authority without generating
   assert.match(raw, /^HAPPIER_DB_PROVIDER=postgres$/m);
   assert.ok(raw.includes(`DATABASE_URL=${databaseUrl}\n`), raw);
   assert.doesNotMatch(raw, /^HAPPIER_STACK_PG_/m);
+});
+
+test('hstack stack edit preserves controlled-stack and unknown env keys while mutating its owned fields', async (t) => {
+  const fixture = await createAuditFixture(t);
+  const envPath = await fixture.writeStack('controlled-edit-preserve', {
+    serverComponent: 'happier-server-light',
+    dbProvider: 'pglite',
+    serverPort: 45123,
+    extraEnv: {
+      HAPPIER_STACK_RUNTIME_MODE: 'require',
+      HAPPIER_STACK_EXPO_SOURCE_STACK: 'repo-producer',
+      STACK_EDIT_UNKNOWN_KEY: 'preserve-me',
+    },
+  });
+
+  const result = await fixture.edit('controlled-edit-preserve', {
+    portInput: 'ephemeral',
+    remoteInput: 'origin',
+  });
+  assert.equal(result.code, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+  const raw = await readFile(envPath, 'utf-8');
+  assert.match(raw, /^HAPPIER_STACK_STACK_REMOTE=origin$/m);
+  assert.doesNotMatch(raw, /^HAPPIER_STACK_SERVER_PORT=/m);
+  assert.match(raw, /^HAPPIER_STACK_RUNTIME_MODE=require$/m);
+  assert.match(raw, /^HAPPIER_STACK_EXPO_SOURCE_STACK=repo-producer$/m);
+  assert.match(raw, /^STACK_EDIT_UNKNOWN_KEY=preserve-me$/m);
 });

@@ -19,6 +19,7 @@ import {
   readStackRuntimeStateFile,
   recordStackRuntimeServerPids,
   recordStackRuntimeStart,
+  recordStackRuntimeUpdate,
 } from './utils/stack/runtime_state.mjs';
 import { startStackRuntimeDaemonPidReconciler } from './utils/stack/runtime_daemon_state.mjs';
 import { startOwnerDaemonLifecycleReconciler } from './utils/dev/daemonLifecycleReconciler.mjs';
@@ -38,12 +39,22 @@ import {
   startDevServer,
 } from './utils/dev/server.mjs';
 import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
-import { resolveDevReloadPollIntervalMs, startDevReloadCoordinator } from './utils/dev/devReloadCoordinator.mjs';
+import {
+  requestInitialDevRefreshes,
+  resolveDevReloadPollIntervalMs,
+  startDevReloadCoordinator,
+} from './utils/dev/devReloadCoordinator.mjs';
+import { resolveDevPriorRuntimeServer } from './utils/dev/priorRuntimeServer.mjs';
 import { prepareDevProxyStartup, resolveDevProxyStableHost, shouldEnableStackDevProxy } from './utils/dev/devProxy.mjs';
 import { resolveDevServerConnection } from './utils/dev/resolveDevServerConnection.mjs';
 import { observeRuntimePortOwnedByStackDevProxy, selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { createListenerOwnershipCommandScope } from './utils/server/listener_ownership.mjs';
-import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
+import {
+  ensureDevExpoServer,
+  inspectExpoMetroConfigState,
+  resolveExpoDevHost,
+  resolveExpoTailscaleEnabled,
+} from './utils/dev/expo_dev.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { waitForHttpOk } from './utils/server/server.mjs';
@@ -69,9 +80,24 @@ import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog
 import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
 import { resolveTauriPaneInvocation } from './utils/tui/tauri_mode.mjs';
 import { resolveReactNativeDevtoolsUrl } from './utils/dev/react_native_devtools.mjs';
-import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
+import { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } from './utils/dev_targets/config.mjs';
+import { runDevTargetsDoctor } from './utils/dev_targets/doctor.mjs';
+import {
+  resolveDevTargetServicePlans,
+  resolveServicePlansAfterTargetPreflight,
+} from './utils/dev_targets/service_placement.mjs';
 import { startStackDevTargetsInBackground } from './utils/dev_targets/supervisor.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
+import { selectExpoDevMetroPort } from './utils/expo/metro_ports.mjs';
+import { resolveMobileReachableServerUrl } from './utils/server/mobile_api_url.mjs';
+import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
+import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
+import {
+  createRepositoryRuntimePublicationController,
+  isRepositoryRuntimePublicationOwner,
+  wrapReloadExecutorWithRuntimeSnapshotPublication,
+} from './utils/dev/runtimeSnapshotPublisher.mjs';
 
  /**
   * Dev mode stack:
@@ -87,6 +113,12 @@ async function main() {
   if (flags.has('--runtime') || flags.has('--source')) {
     throw new Error('[dev] hstack dev does not support runtime mode flags. Use hstack start for runtime snapshots.');
   }
+  if (resolveStackRuntimeMode({ argv: [], env: process.env }).mode === 'require') {
+    throw new Error(
+      '[dev] this is a controlled runtime stack (HAPPIER_STACK_RUNTIME_MODE=require). '
+      + 'Use hstack start or a runtime TUI, then restart explicitly when you want to load the selected snapshot.',
+    );
+  }
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
@@ -95,6 +127,7 @@ async function main() {
 		          '--server=happier-server|happier-server-light',
 		          '--server-flavor=light|full',
               '--server-url=http(s)://host[:port]',
+              '--server-public-url=http(s)://host[:port]',
               '--no-server',
 		          '--no-ui',
 		          '--no-daemon',
@@ -117,7 +150,7 @@ async function main() {
       },
 		      text: [
 		        '[dev] usage:',
-		        '  hstack dev [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--server-url=<http(s)://...>] [--no-server] [--restart] [--json]',
+		        '  hstack dev [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--server-url=<http(s)://...>] [--server-public-url=<http(s)://...>] [--no-server] [--restart] [--json]',
 	        '  hstack dev --watch         # rebuild/restart happier-cli daemon on file changes (TTY default)',
 	        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
           '  hstack dev --no-dev-targets # skip configured Mutagen-backed remote daemons for this run',
@@ -184,7 +217,7 @@ async function main() {
 
   const startTauri = flags.has('--tauri') || flags.has('--with-tauri');
   const startUi = !flags.has('--no-ui');
-  const startDaemon = resolveStackDaemonStartRequested({
+  const requestedStartDaemon = resolveStackDaemonStartRequested({
     env: process.env,
     noDaemon: flags.has('--no-daemon'),
   });
@@ -210,6 +243,12 @@ async function main() {
   delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
   const stackCtx = resolveStackContext({ env: baseEnv, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
+  const borrowedExpoProducerStackName = String(baseEnv.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: stackName,
+    producerStackName: borrowedExpoProducerStackName,
+  });
+  const startOwnedExpo = Boolean((startUi || startMobile) && !borrowedExpo);
   const loadedDevTargets = flags.has('--no-dev-targets')
     ? { path: null, config: { version: 1, targets: [] } }
     : await loadDevTargetsConfig({ stackName, env: baseEnv, allowMissing: true });
@@ -246,24 +285,67 @@ async function main() {
     env: baseEnv,
     resolvedLocalUrls: resolvedUrls,
   });
-  const startServer = serverConnection.startServer;
-  if (devTargets.length > 0 && !startServer) {
-    throw new Error(
-      '[dev-targets] configured dev targets require the local Stack server; ' +
-        'use --no-dev-targets when running dev with --no-server or --server-url',
-    );
-  }
+  const requestedStartServer = serverConnection.startServer;
   const localInternalServerUrl = resolvedUrls.internalServerUrl;
   const internalServerUrl = serverConnection.internalServerUrl;
   let publicServerUrl = serverConnection.publicServerUrl;
   // Expo app config: this is what both web + native app use to reach the Happy server.
   // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
-  const uiApiUrl = startServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;
+  const uiApiUrl = requestedStartServer ? resolvedUrls.defaultPublicUrl : serverConnection.uiApiUrl;
   const serverConnectionSource = serverConnection.source;
   const restart = flags.has('--restart');
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
     ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
+
+  const executionPolicy = resolveDevTargetExecutionPolicy(loadedDevTargets.config);
+  const configuredServicePlans = resolveDevTargetServicePlans({
+    targets: devTargets,
+    policy: executionPolicy,
+    requested: {
+      server: requestedStartServer,
+      expo: startOwnedExpo,
+      daemon: requestedStartDaemon,
+    },
+  });
+  if (
+    configuredServicePlans.targets.some((plan) => Object.values(plan.services).some(Boolean))
+    && !requestedStartServer
+  ) {
+    throw new Error(
+      '[dev-targets] remote runtime placement cannot currently consume an external --server-url; '
+        + 'set runtime placement to local or use --no-dev-targets for this run',
+    );
+  }
+  let servicePlans = configuredServicePlans;
+  const exclusiveTargetPlans = configuredServicePlans.targets.filter((plan) => (
+    Object.entries(plan.services).some(([service, enabled]) => enabled && !configuredServicePlans.local[service])
+  ));
+  if (!json && exclusiveTargetPlans.length > 0) {
+    const diagnosis = await runDevTargetsDoctor({
+      targets: exclusiveTargetPlans.map((plan) => plan.target),
+      env: baseEnv,
+    });
+    const reachable = new Set(diagnosis.targets.filter((target) => target.ok).map((target) => target.name));
+    const preflightPlans = resolveServicePlansAfterTargetPreflight({
+      configured: configuredServicePlans,
+      mutagenAvailable: diagnosis.mutagen.ok,
+      reachableTargets: reachable,
+    });
+    for (const fallback of preflightPlans.fallbacks) {
+      console.warn(
+        `[dev-targets] ${fallback.target} is unreachable during placement preflight; `
+          + `using sticky local fallback for ${fallback.services.join(', ')}`,
+      );
+    }
+    servicePlans = {
+      local: preflightPlans.local,
+      targets: preflightPlans.targets,
+    };
+  }
+  const startServer = servicePlans.local.server;
+  const startDaemon = servicePlans.local.daemon;
+  const startExpo = servicePlans.local.expo;
 
   if (json) {
     printResult({
@@ -281,9 +363,13 @@ async function main() {
         serverConnectionSource,
         startUi,
         startMobile,
+        startOwnedExpo,
+        expoOwnership: borrowedExpo ? 'borrowed' : 'owned',
         startTauri,
         startDaemon,
         devTargets,
+        executionPolicy,
+        servicePlans,
         openReactNativeDevtools,
         cliHomeDir,
       },
@@ -355,7 +441,6 @@ async function main() {
     : false;
 
   // Expo dev server state (worktree-scoped): single Expo process per stack/worktree.
-  const startExpo = startUi || startMobile;
   const expoPaths = getExpoStatePaths({
     baseDir: autostart.baseDir,
     kind: 'expo-dev',
@@ -364,6 +449,14 @@ async function main() {
   });
   const expoRunning = startExpo ? await isStateProcessRunning(expoPaths.statePath) : { running: false, state: null };
   let expoAlreadyRunning = Boolean(expoRunning.running);
+  if (expoAlreadyRunning) {
+    try {
+      const metroConfig = await inspectExpoMetroConfigState({ projectDir: uiDir, state: expoRunning.state });
+      expoAlreadyRunning = metroConfig.current;
+    } catch {
+      // Config inspection must not make an otherwise available Stack fail closed.
+    }
+  }
   const startupDecision = decideDevStartupTopology({
     serverRequested: startServer,
     serverTopology,
@@ -373,9 +466,15 @@ async function main() {
     expoRunning: expoAlreadyRunning,
     restart,
   });
+  const priorRuntimeServer = startServer && startupDecision.startServer && watchEnabled
+    ? await resolveDevPriorRuntimeServer({
+        stackBaseDir: autostart.baseDir,
+        serverComponentName,
+      })
+    : { admitted: false, reason: 'not_requested', detail: null };
 
   if (
-    devTargets.length === 0 &&
+    servicePlans.targets.length === 0 &&
     !restart &&
     (!startServer || startupDecision.adoptedServer) &&
     (!startDaemon || daemonAlreadyRunning) &&
@@ -398,7 +497,7 @@ async function main() {
       script: 'dev.mjs',
       ephemeral,
       ownerPid: process.pid,
-      ports: startServer ? { server: serverPort } : {},
+      ports: requestedStartServer ? { server: serverPort } : {},
       runtimeSnapshotId: null,
       serveUi: null,
     });
@@ -413,6 +512,19 @@ async function main() {
       env: baseEnv,
     });
   }
+
+  const runtimeBuildAuthority = stackMode && runtimeStatePath
+    ? resolveRuntimeBuildAuthority({
+        rootDir,
+        consumerStackName: stackName,
+        env: baseEnv,
+      })
+    : null;
+  const repositoryRuntimePublicationOwner = isRepositoryRuntimePublicationOwner({
+    stackMode,
+    stackName,
+    authority: runtimeBuildAuthority,
+  });
 
   // Start server (only if not already healthy)
   // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
@@ -442,6 +554,13 @@ async function main() {
   const serverBindPort = proxyPlan.backendPort;
   const serverBackendInternalUrl = `http://127.0.0.1:${serverBindPort}`;
 
+  if (priorRuntimeServer.admitted) {
+    console.log(
+      `[local] dev: booting prior runtime snapshot ${priorRuntimeServer.snapshotId ?? '(unknown)'}; `
+      + 'the source refresh will continue in the background.',
+    );
+  }
+
   const { serverEnv, serverScript, serverProc } = startServer && startupDecision.startServer
     ? await startDevServer({
         serverComponentName,
@@ -459,6 +578,10 @@ async function main() {
         runtimeStatePath,
         serverAlreadyRunning,
         restart,
+        admitPriorBuildsImmediately: watchEnabled,
+        priorRuntimeServerLaunchSpec: priorRuntimeServer.admitted
+          ? priorRuntimeServer.launchSpec
+          : null,
         children,
         serverProxyRuntime: proxyPlan.mode === 'proxy'
           ? {
@@ -522,7 +645,7 @@ async function main() {
     // In background/non-interactive runs, the daemon may block on auth. If we wait to start Expo web
     // until after the daemon is authenticated, guided login will have no UI origin and will fall back
     // to the server port (wrong). Start Expo web UI early when running an auth flow.
-    if (wantsAuthFlow && startUi && !expoResEarly) {
+    if (wantsAuthFlow && startExpo && startUi && !expoResEarly) {
       expoResEarly = await ensureDevExpoServer({
         startUi,
         startMobile,
@@ -552,7 +675,7 @@ async function main() {
       isInteractive,
       autoSeedEnabled,
       beforeLogin: async () => {
-        if (!startUi) {
+        if (!startExpo || !startUi) {
           throw new Error(
             `[local] auth: interactive login requires the web UI.\n` +
               `Re-run without --no-ui, or set HAPPIER_WEBAPP_URL to a reachable Happier UI for this stack.`
@@ -588,6 +711,27 @@ async function main() {
       serverDir,
       serverEnv,
       quiet: false,
+    });
+  }
+
+  // Admit the UI boundary before the daemon's potentially expensive source refresh.
+  // Existing last-green Expo output remains available while its canonical refresh runs.
+  if (startExpo && !expoResEarly) {
+    expoResEarly = await ensureDevExpoServer({
+      startUi,
+      startMobile,
+      uiDir,
+      autostart,
+      baseEnv,
+      apiServerUrl: uiApiUrl,
+      restart,
+      stackMode,
+      runtimeStatePath,
+      stackName,
+      envPath,
+      children,
+      expoTailscale,
+      isShuttingDown: () => shuttingDown,
     });
   }
 
@@ -682,12 +826,39 @@ async function main() {
     if (daemonLifecycleReconciler) watchers.push(daemonLifecycleReconciler);
   }
 
+  // Snapshot publication is background-only: an unavailable publication dependency
+  // must not revoke the source services that have already become usable.
+  let runtimePublicationController = null;
+  if (repositoryRuntimePublicationOwner) {
+    try {
+      const {
+        publishRepositoryRuntimeSnapshot,
+        resolveRepositoryRuntimePublicationComponents,
+      } = await import('./build/build_stack_artifacts.mjs');
+      runtimePublicationController = createRepositoryRuntimePublicationController({
+        rootDir,
+        authority: runtimeBuildAuthority,
+        env: baseEnv,
+        runtimeStatePath,
+        resolveRepositoryRuntimePublicationComponents,
+        publishRepositoryRuntimeSnapshot,
+        recordStackRuntimeUpdate,
+        isShuttingDown: () => shuttingDown,
+        logger: console,
+      });
+    } catch (error) {
+      console.error(
+        `[local] runtime publication setup failed; keeping the current snapshot selected. ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   const reloadDescriptors = [];
   const reloadExecutors = [];
   const daemonReloadEnabled = startDaemon && daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl }).ok;
   if (daemonReloadEnabled) {
     reloadDescriptors.push(...createHappyCliReloadDescriptors({ cliDir }));
-    reloadExecutors.push(createHappyCliReloadExecutor({
+    const daemonReloadExecutor = createHappyCliReloadExecutor({
       startDaemon: daemonReloadEnabled,
       buildCli,
       cliDir,
@@ -699,7 +870,13 @@ async function main() {
       isShuttingDown: () => shuttingDown,
       env: baseEnv,
       stackName,
-    }));
+    });
+    reloadExecutors.push(runtimePublicationController
+      ? wrapReloadExecutorWithRuntimeSnapshotPublication({
+          executor: daemonReloadExecutor,
+          publisher: runtimePublicationController,
+        })
+      : daemonReloadExecutor);
   }
 
   const serverProcRef = { current: serverProc };
@@ -721,7 +898,7 @@ async function main() {
   const serverReloadEnabled = startServer && watchEnabled && Boolean(serverProcRef.current?.pid);
   if (serverReloadEnabled) {
     reloadDescriptors.push(...createDevServerReloadDescriptors({ serverDir }));
-    reloadExecutors.push(createDevServerReloadExecutor({
+    const serverReloadExecutor = createDevServerReloadExecutor({
       enabled: true,
       stackMode,
       serverComponentName,
@@ -738,7 +915,16 @@ async function main() {
       serverProcRef,
       isShuttingDown: () => shuttingDown,
       proxyController: proxyPlan.mode === 'proxy' ? proxyPlan.proxyController : null,
-    }));
+      priorRuntimeServerLaunchSpec: priorRuntimeServer.admitted
+        ? priorRuntimeServer.launchSpec
+        : null,
+    });
+    reloadExecutors.push(runtimePublicationController
+      ? wrapReloadExecutorWithRuntimeSnapshotPublication({
+          executor: serverReloadExecutor,
+          publisher: runtimePublicationController,
+        })
+      : serverReloadExecutor);
   }
 
   const reloadWatcher = startDevReloadCoordinator({
@@ -752,6 +938,10 @@ async function main() {
   });
   if (reloadWatcher) watchers.push(reloadWatcher);
 
+  if (runtimePublicationController) {
+    void runtimePublicationController.reconcileAfterRestart();
+  }
+
   if (startServer && watchEnabled && stackMode && serverComponentName === 'happier-server' && !serverReloadEnabled) {
     console.warn(
       `[local] watch: server restart is disabled because the running server PID is unknown.\n` +
@@ -759,24 +949,110 @@ async function main() {
     );
   }
 
-  const expoRes =
-    expoResEarly ??
-    (await ensureDevExpoServer({
-      startUi,
-      startMobile,
-      uiDir,
-      autostart,
-      baseEnv,
-      apiServerUrl: uiApiUrl,
-      restart,
-      stackMode,
-      runtimeStatePath,
+  const remoteExpoPlan = servicePlans.targets.find((plan) => plan.services.expo) ?? null;
+  let remoteExpoPort = null;
+  if (remoteExpoPlan) {
+    const configuredExpoPort = Number(baseEnv.HAPPIER_STACK_EXPO_DEV_PORT);
+    remoteExpoPort = Number.isInteger(configuredExpoPort) && configuredExpoPort > 0
+      ? configuredExpoPort
+      : (await selectExpoDevMetroPort({
+          env: baseEnv,
+          stackMode,
+          stackName,
+          host: resolveExpoDevHost({ env: baseEnv }) === 'lan' ? '0.0.0.0' : '127.0.0.1',
+        })).port;
+  }
+
+  let devTargetsStartOptions = null;
+  if (servicePlans.targets.length > 0) {
+    const credentialPath = servicePlans.targets.some((plan) => plan.services.daemon)
+      ? findExistingStackCredentialPath({
+          cliHomeDir,
+          serverUrl: internalServerUrl,
+          env: baseEnv,
+        })
+      : null;
+    const remotePublicServerUrl = startMobile
+      ? resolveMobileReachableServerUrl({
+          env: baseEnv,
+          serverUrl: uiApiUrl,
+          serverPort,
+        })
+      : uiApiUrl;
+    const expoPublicUrl = remoteExpoPort
+      ? resolveMobileReachableServerUrl({
+          env: baseEnv,
+          serverUrl: `http://localhost:${remoteExpoPort}`,
+          serverPort: remoteExpoPort,
+        })
+      : '';
+    if (stackMode && runtimeStatePath) {
+      await recordStackRuntimeUpdate(runtimeStatePath, {
+        placement: {
+          server: startServer ? 'local' : servicePlans.targets.find((plan) => plan.services.server)?.target.name ?? 'external',
+          expo: startExpo ? 'local' : remoteExpoPlan?.target.name ?? 'disabled',
+          daemon: startDaemon ? 'local' : servicePlans.targets.find((plan) => plan.services.daemon)?.target.name ?? 'disabled',
+        },
+        remoteTargets: Object.fromEntries(servicePlans.targets.map((plan) => [
+          plan.target.name,
+          {
+            commands: plan.commands,
+            services: plan.services,
+            serviceStatus: Object.fromEntries(
+              Object.entries(plan.services)
+                .filter(([, enabled]) => enabled === true)
+                .map(([service]) => [service, 'starting']),
+            ),
+            status: 'starting',
+          },
+        ])),
+        ...(remoteExpoPort ? {
+          expo: {
+            port: remoteExpoPort,
+            webPort: startUi ? remoteExpoPort : null,
+            mobilePort: startMobile ? remoteExpoPort : null,
+            webEnabled: startUi,
+            devClientEnabled: startMobile,
+            host: resolveExpoDevHost({ env: baseEnv }),
+            remoteTarget: remoteExpoPlan?.target.name ?? null,
+          },
+        } : {}),
+      }).catch(() => {});
+    }
+    devTargetsStartOptions = {
       stackName,
-      envPath,
-      children,
-      expoTailscale,
-      isShuttingDown: () => shuttingDown,
-    }));
+      stackBaseDir: loadedDevTargets.path ? dirname(loadedDevTargets.path) : autostart.baseDir,
+      sourceDir: resolve(cliDir, '..', '..'),
+      localServerPort: serverPort,
+      localExpoPort: remoteExpoPort,
+      publicServerUrl: remotePublicServerUrl,
+      expoPublicUrl,
+      expoListenHost: resolveExpoDevHost({ env: baseEnv }) === 'lan' ? '0.0.0.0' : '127.0.0.1',
+      startMobile,
+      activeServerId: resolveStackActiveServerId({ env: baseEnv, stackName }),
+      credentialPath,
+      syncTargets: devTargets,
+      targetPlans: servicePlans.targets,
+      onTargetStateChange: async ({ name, ...state }) => {
+        if (!stackMode || !runtimeStatePath) return;
+        await recordStackRuntimeUpdate(runtimeStatePath, {
+          remoteTargets: { [name]: state },
+        });
+      },
+      env: baseEnv,
+    };
+  }
+
+  const expoRes = expoResEarly ?? {
+    ok: true,
+    skipped: true,
+    reason: 'remote_target',
+    port: remoteExpoPort,
+    target: remoteExpoPlan?.target.name ?? null,
+  };
+  if (devTargetsStartOptions) {
+    devTargetsController = startStackDevTargetsInBackground(devTargetsStartOptions);
+  }
   if (startUi) {
     const uiPort = expoRes?.port;
     const uiUrlRaw = uiPort ? `http://localhost:${uiPort}` : '';
@@ -828,27 +1104,11 @@ async function main() {
     console.log(`[local] mobile: metro ${metroUrl}`);
   }
 
-  if (daemonReloadEnabled && reloadWatcher?.requestReload) {
-    void reloadWatcher.requestReload('daemon');
-  }
-
-  if (devTargets.length > 0) {
-    const credentialPath = findExistingStackCredentialPath({
-      cliHomeDir,
-      serverUrl: internalServerUrl,
-      env: baseEnv,
-    });
-    devTargetsController = startStackDevTargetsInBackground({
-      stackName,
-      stackBaseDir: loadedDevTargets.path ? dirname(loadedDevTargets.path) : autostart.baseDir,
-      sourceDir: resolve(cliDir, '..', '..'),
-      localServerPort: serverPort,
-      activeServerId: resolveStackActiveServerId({ env: baseEnv, stackName }),
-      credentialPath,
-      targets: devTargets,
-      env: baseEnv,
-    });
-  }
+  for (const refresh of requestInitialDevRefreshes({
+    reloadWatcher,
+    serverReloadEnabled,
+    daemonReloadEnabled,
+  })) void refresh;
 
   if (startTauri) {
     const invocation = resolveTauriPaneInvocation({ rootDir, env: baseEnv });
@@ -871,6 +1131,7 @@ async function main() {
       return;
     }
     shuttingDown = true;
+    runtimePublicationController?.close();
     const shutdownRequest = runtimeStatePath ? (await readStackRuntimeStateFile(runtimeStatePath).catch(() => null))?.stopRequest ?? null : null;
     const expectedStopState = runtimeStatePath ? await captureStackRuntimeStopSnapshot(runtimeStatePath).catch(() => null) : null;
     const preserveDaemonOnShutdown = shutdownRequest?.preserveDaemon === true;

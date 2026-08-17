@@ -9,6 +9,7 @@ import {
 import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
 import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
 } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
@@ -378,6 +379,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
       {
         force: forceArtifactWorkspaceBuilds,
         includeDevDependencies: false,
+        publicationMode,
         quiet: true,
       },
     );
@@ -393,6 +395,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
         quiet: true,
         env: heldLockEnv,
         includeDevDependencies: false,
+        publicationMode,
         ...(forceArtifactWorkspaceBuilds
           ? { force: true }
           : {}),
@@ -418,9 +421,9 @@ export async function bundleWorkspaceDeps(opts = {}) {
         ?? baseEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD
         ?? '',
     ).trim(),
-    timeoutMs: 240_000,
+    timeoutMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
     pollIntervalMs: 250,
-    staleAfterMs: 240_000,
+    staleAfterMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   });
 }
 

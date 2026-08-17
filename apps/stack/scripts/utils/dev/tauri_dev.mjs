@@ -3,7 +3,6 @@ import * as os from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { resolvePreferredStackServerIdFromCliSettings } from '../auth/credentials_paths.mjs';
 import { applyStackActiveServerScopeEnv } from '../auth/stable_scope_id.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRepoDir } from '../paths/paths.mjs';
 import { resolveCommandInvocation } from '../process/resolveCommandInvocation.mjs';
@@ -308,16 +307,7 @@ function applyStackScopedServerDefaults(env, { preferStackDefaults = false } = {
       stackName: stackName || null,
       cliIdentity: (nextEnv.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
     });
-    const settingsServerId =
-      stackCliHomeDir && resolvedServerUrl
-        ? resolvePreferredStackServerIdFromCliSettings({
-            cliHomeDir: stackCliHomeDir,
-            serverUrl: resolvedServerUrl,
-            env: scopedEnv,
-          })
-        : '';
-    nextEnv.HAPPIER_ACTIVE_SERVER_ID =
-      settingsServerId || String(scopedEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+    nextEnv.HAPPIER_ACTIVE_SERVER_ID = String(scopedEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
   }
 
   return nextEnv;

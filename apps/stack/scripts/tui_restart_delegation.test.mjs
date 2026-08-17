@@ -97,6 +97,120 @@ test('TUI cleanup remains bound to the runtime owner admitted by its own child',
   });
 });
 
+test('TUI can admit its detached owner after the short-lived launch wrapper exits', () => {
+  const tracker = createTuiRuntimeOwnershipTracker({ runtimeOwnerBeforeSpawn: null });
+  tracker.recordDetachedRunnerLogPath('/stacks/exp1/logs/dev.202.log');
+
+  tracker.observe({
+    runtimeOwner: { ownerPid: 202, startedAt: '2026-07-21T08:00:00.000Z' },
+    childActive: false,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/dev.202.log',
+  });
+
+  assert.deepEqual(tracker.getExpectedOwner(), {
+    ownerPid: 202,
+    startedAt: '2026-07-21T08:00:00.000Z',
+  });
+});
+
+test('TUI only adopts a detached owner after its own runner log identifies the runtime', () => {
+  const tracker = createTuiRuntimeOwnershipTracker({ runtimeOwnerBeforeSpawn: null });
+  const runtimeOwner = { ownerPid: 202, startedAt: '2026-07-21T08:00:00.000Z' };
+
+  tracker.observe({
+    runtimeOwner,
+    childActive: false,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/unrelated.log',
+  });
+  assert.equal(tracker.getExpectedOwner(), null);
+
+  tracker.recordDetachedRunnerLogPath('/stacks/exp1/logs/dev.202.log');
+  tracker.observe({
+    runtimeOwner,
+    childActive: false,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/unrelated.log',
+  });
+  assert.equal(tracker.getExpectedOwner(), null);
+
+  tracker.observe({
+    runtimeOwner,
+    childActive: false,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/dev.202.log',
+  });
+  assert.deepEqual(tracker.getExpectedOwner(), runtimeOwner);
+});
+
+test('TUI does not admit a changed owner while its detached launcher is still active without matching runner evidence', () => {
+  const tracker = createTuiRuntimeOwnershipTracker({
+    runtimeOwnerBeforeSpawn: { ownerPid: 101, startedAt: '2026-07-21T07:50:00.000Z' },
+  });
+  const unrelatedOwner = { ownerPid: 202, startedAt: '2026-07-21T08:00:00.000Z' };
+
+  tracker.observe({
+    runtimeOwner: unrelatedOwner,
+    childActive: true,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/unrelated.log',
+  });
+  assert.equal(tracker.getExpectedOwner(), null);
+
+  tracker.recordDetachedRunnerLogPath('/stacks/exp1/logs/dev.303.log');
+  tracker.observe({
+    runtimeOwner: unrelatedOwner,
+    childActive: true,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/unrelated.log',
+  });
+  assert.equal(tracker.getExpectedOwner(), null);
+
+  const launchedOwner = { ownerPid: 303, startedAt: '2026-07-21T08:05:00.000Z' };
+  tracker.observe({
+    runtimeOwner: launchedOwner,
+    childActive: true,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/dev.303.log',
+  });
+  assert.deepEqual(tracker.getExpectedOwner(), launchedOwner);
+});
+
+test('TUI does not transfer restart stop authority until the replacement runner matches', () => {
+  const tracker = createTuiRuntimeOwnershipTracker({ runtimeOwnerBeforeSpawn: null });
+  const incumbentOwner = { ownerPid: 101, startedAt: '2026-07-21T07:50:00.000Z' };
+  tracker.recordDetachedRunnerLogPath('/stacks/exp1/logs/dev.101.log');
+  tracker.observe({
+    runtimeOwner: incumbentOwner,
+    childActive: false,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/dev.101.log',
+  });
+  tracker.clearDetachedRunnerLogPath();
+
+  const unrelatedReplacement = { ownerPid: 202, startedAt: '2026-07-21T08:00:00.000Z' };
+  tracker.observe({
+    runtimeOwner: unrelatedReplacement,
+    childActive: true,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/dev.101.log',
+    replacementCandidate: true,
+  });
+  assert.deepEqual(tracker.getExpectedOwner(), incumbentOwner);
+
+  const launchedReplacement = { ownerPid: 303, startedAt: '2026-07-21T08:05:00.000Z' };
+  tracker.recordDetachedRunnerLogPath('/stacks/exp1/logs/dev.303.log');
+  tracker.observe({
+    runtimeOwner: launchedReplacement,
+    childActive: true,
+    launchRequested: true,
+    runtimeRunnerLogPath: '/stacks/exp1/logs/dev.303.log',
+    replacementCandidate: true,
+  });
+  assert.deepEqual(tracker.getExpectedOwner(), launchedReplacement);
+});
+
 test('restart refuses to spawn until the incumbent runtime owner incarnation is known', () => {
   const harness = createHarness();
 
@@ -188,6 +302,30 @@ test('new runtime owner observation admits the replacement and transfers active-
   assert.equal(result.operation.pending, false);
   assert.equal(harness.tracked.at(-1), harness.replacementChild);
   assert.deepEqual(result.operation.getActiveChildren(), [harness.replacementChild]);
+});
+
+test('detached background restart waits for owner admission after its command exits successfully', () => {
+  const harness = createHarness();
+  const result = beginTuiRestartOperation({
+    previousChild: harness.previousChild,
+    previousRuntimeOwner: { ownerPid: 101, startedAt: '2026-07-21T07:50:00.000Z' },
+    restartArgs: ['stack', 'dev', 'exp1', '--background', '--restart'],
+    backgroundOwner: true,
+    spawnChild: harness.spawnChild,
+    trackChild: harness.trackChild,
+    log: harness.log,
+    refresh: harness.refresh,
+  });
+
+  harness.replacementChild.exit(0);
+
+  assert.equal(result.operation.pending, true);
+  assert.match(harness.logs.at(-1), /detached.*waiting.*owner admission/i);
+  assert.equal(
+    result.operation.observeRuntimeOwner({ ownerPid: 303, startedAt: '2026-07-21T08:00:00.000Z' }),
+    true,
+  );
+  assert.equal(result.operation.pending, false);
 });
 
 test('previous wrapper exit does not admit a replacement until a new runtime owner incarnation is observed', () => {

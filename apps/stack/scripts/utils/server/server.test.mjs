@@ -262,9 +262,9 @@ test('migration deadline stays bounded and child early exit still wins', async (
   }
 });
 
-test('resolveServerReadyTimeoutMs prefers an explicit override and otherwise gives light server more time', () => {
-  assert.equal(resolveServerReadyTimeoutMs({ serverComponentName: 'happier-server-light', env: {} }), 120_000);
-  assert.equal(resolveServerReadyTimeoutMs({ serverComponentName: 'happier-server', env: {} }), 60_000);
+test('resolveServerReadyTimeoutMs prefers an explicit override and does not over-gate a progressing default startup', () => {
+  assert.equal(resolveServerReadyTimeoutMs({ serverComponentName: 'happier-server-light', env: {} }), 600_000);
+  assert.equal(resolveServerReadyTimeoutMs({ serverComponentName: 'happier-server', env: {} }), 600_000);
   assert.equal(
     resolveServerReadyTimeoutMs({
       serverComponentName: 'happier-server-light',

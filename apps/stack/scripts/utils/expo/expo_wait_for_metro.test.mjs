@@ -48,6 +48,51 @@ test('waitForExpoMetroRunning returns a non-ok result when the timeout elapses',
   assert.equal(result.probes >= 2, true);
 });
 
+test('waitForExpoMetroRunning owns its default polling delay', async () => {
+  let probes = 0;
+  const result = await waitForExpoMetroRunning({
+    port: 8081,
+    timeoutMs: 100,
+    intervalMs: 1,
+  }, {
+    looksLikeExpoMetroImpl: async () => {
+      probes += 1;
+      return probes >= 2;
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.probes, 2);
+});
+
+test('waitForExpoMetroRunning stops before probing when its caller cancels readiness', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('replacement lifecycle won'));
+  let probes = 0;
+  const result = await waitForExpoMetroRunning({
+    port: 8081,
+    timeoutMs: 100,
+    intervalMs: 1,
+    signal: controller.signal,
+  }, {
+    looksLikeExpoMetroImpl: async () => {
+      probes += 1;
+      return false;
+    },
+    delayImpl: async () => {},
+    nowMsImpl: (() => {
+      let now = 0;
+      return () => {
+        now += 10;
+        return now;
+      };
+    })(),
+  });
+
+  assert.deepEqual(result, { ok: false, reason: 'aborted', probes: 0 });
+  assert.equal(probes, 0);
+});
+
 test('looksLikeExpoMetro falls back to the root document when /status is unavailable', async () => {
   const originalFetch = globalThis.fetch;
   const urls = [];

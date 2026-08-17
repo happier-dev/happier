@@ -38,7 +38,7 @@ async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt) {
   return snapshotDir;
 }
 
-async function writeArtifact(stackBaseDir, component, fingerprint, createdAt) {
+async function writeArtifact(stackBaseDir, component, fingerprint, createdAt, extraManifest = {}) {
   const artifactDir = join(stackBaseDir, 'artifacts', component, fingerprint);
   const payloadDir = join(artifactDir, 'payload');
   await mkdir(payloadDir, { recursive: true });
@@ -59,6 +59,7 @@ async function writeArtifact(stackBaseDir, component, fingerprint, createdAt) {
       createdAt,
       payloadDir: 'payload',
       entrypoint,
+      ...extraManifest,
     },
   });
   return artifactDir;
@@ -256,5 +257,177 @@ test('pruneComponentArtifacts keeps the newest artifacts for a component and rem
     assert.equal(await readFile(join(current, 'manifest.json'), 'utf8').then(Boolean), true);
   } finally {
     await rm(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('pruneComponentArtifacts preserves snapshot-selected component support references and later releases them', async () => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'runtime-retention-component-support-'));
+
+  try {
+    const selected = await writeRuntimeSnapshot(
+      stackBaseDir,
+      'snapshot-selected',
+      '2026-03-07T10:00:00.000Z',
+    );
+    const selectedManifestPath = join(selected, 'manifest.json');
+    const selectedManifest = JSON.parse(await readFile(selectedManifestPath, 'utf8'));
+    selectedManifest.components.server.artifactFingerprint = 'server-selected';
+    await writeFile(selectedManifestPath, JSON.stringify(selectedManifest, null, 2) + '\n', 'utf8');
+    await writeRuntimePointer({
+      currentPath: join(stackBaseDir, 'runtime', 'current.json'),
+      pointer: {
+        version: 1,
+        snapshotId: 'snapshot-selected',
+        snapshotPath: selected,
+        sourceFingerprint: 'source-snapshot-selected',
+      },
+    });
+
+    const selectedServer = await writeArtifact(
+      stackBaseDir,
+      'server',
+      'server-selected',
+      '2026-03-07T09:00:00.000Z',
+      { serverSupportArtifactFingerprint: 'server-support-selected' },
+    );
+    const newestServer = await writeArtifact(
+      stackBaseDir,
+      'server',
+      'server-newest',
+      '2026-03-07T11:00:00.000Z',
+    );
+    const selectedSupport = await writeArtifact(
+      stackBaseDir,
+      'server-support',
+      'server-support-selected',
+      '2026-03-07T09:00:00.000Z',
+    );
+    const newestSupport = await writeArtifact(
+      stackBaseDir,
+      'server-support',
+      'server-support-newest',
+      '2026-03-07T11:00:00.000Z',
+    );
+
+    const selectedServerResult = await pruneComponentArtifacts({
+      stackBaseDir,
+      component: 'server',
+      keepCount: 1,
+    });
+    const selectedSupportResult = await pruneComponentArtifacts({
+      stackBaseDir,
+      component: 'server-support',
+      keepCount: 1,
+    });
+    assert.deepEqual(selectedServerResult.keptFingerprints.sort(), ['server-newest', 'server-selected']);
+    assert.deepEqual(selectedSupportResult.keptFingerprints.sort(), ['server-support-newest', 'server-support-selected']);
+    assert.equal(await readFile(join(selectedServer, 'manifest.json'), 'utf8').then(Boolean), true);
+    assert.equal(await readFile(join(selectedSupport, 'manifest.json'), 'utf8').then(Boolean), true);
+
+    await rm(selected, { recursive: true, force: true });
+    await rm(join(stackBaseDir, 'runtime', 'current.json'), { force: true });
+
+    const releasedServerResult = await pruneComponentArtifacts({
+      stackBaseDir,
+      component: 'server',
+      keepCount: 1,
+    });
+    const releasedSupportResult = await pruneComponentArtifacts({
+      stackBaseDir,
+      component: 'server-support',
+      keepCount: 1,
+    });
+    assert.deepEqual(releasedServerResult.keptFingerprints, ['server-newest']);
+    assert.deepEqual(releasedSupportResult.keptFingerprints, ['server-support-newest']);
+    await assert.rejects(() => readFile(join(selectedServer, 'manifest.json'), 'utf8'), /ENOENT/);
+    await assert.rejects(() => readFile(join(selectedSupport, 'manifest.json'), 'utf8'), /ENOENT/);
+    assert.equal(await readFile(join(newestServer, 'manifest.json'), 'utf8').then(Boolean), true);
+    assert.equal(await readFile(join(newestSupport, 'manifest.json'), 'utf8').then(Boolean), true);
+  } finally {
+    await rm(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('external consumer selection preserves transitive component support artifacts and releases them after deselection', async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), 'runtime-retention-external-support-'));
+  const producerStackName = 'repo-happier-producer';
+  const producerStackBaseDir = join(storageRoot, producerStackName);
+  const consumerStackBaseDir = join(storageRoot, 'qa-consumer');
+
+  try {
+    const selected = await writeRuntimeSnapshot(
+      producerStackBaseDir,
+      'snapshot-selected',
+      '2026-03-07T10:00:00.000Z',
+    );
+    const selectedManifestPath = join(selected, 'manifest.json');
+    const selectedManifest = JSON.parse(await readFile(selectedManifestPath, 'utf8'));
+    selectedManifest.components.server.artifactFingerprint = 'server-selected';
+    await writeFile(selectedManifestPath, JSON.stringify(selectedManifest, null, 2) + '\n', 'utf8');
+    await writeRuntimePointer({
+      currentPath: join(consumerStackBaseDir, 'runtime', 'current.json'),
+      pointer: {
+        version: 1,
+        producerStackName,
+        snapshotId: 'snapshot-selected',
+        snapshotPath: selected,
+        sourceFingerprint: 'source-snapshot-selected',
+      },
+    });
+
+    const selectedServer = await writeArtifact(
+      producerStackBaseDir,
+      'server',
+      'server-selected',
+      '2026-03-07T09:00:00.000Z',
+      { serverSupportArtifactFingerprint: 'server-support-selected' },
+    );
+    const selectedSupport = await writeArtifact(
+      producerStackBaseDir,
+      'server-support',
+      'server-support-selected',
+      '2026-03-07T09:00:00.000Z',
+    );
+    await writeArtifact(producerStackBaseDir, 'server', 'server-newest', '2026-03-07T11:00:00.000Z');
+    await writeArtifact(producerStackBaseDir, 'server-support', 'server-support-newest', '2026-03-07T11:00:00.000Z');
+
+    const selectedServerResult = await pruneComponentArtifacts({
+      stackBaseDir: producerStackBaseDir,
+      component: 'server',
+      keepCount: 1,
+      externalReferenceStorageRoot: storageRoot,
+    });
+    const selectedSupportResult = await pruneComponentArtifacts({
+      stackBaseDir: producerStackBaseDir,
+      component: 'server-support',
+      keepCount: 1,
+      externalReferenceStorageRoot: storageRoot,
+    });
+    assert.deepEqual(selectedServerResult.keptFingerprints.sort(), ['server-newest', 'server-selected']);
+    assert.deepEqual(selectedSupportResult.keptFingerprints.sort(), ['server-support-newest', 'server-support-selected']);
+    assert.equal(await readFile(join(selectedServer, 'manifest.json'), 'utf8').then(Boolean), true);
+    assert.equal(await readFile(join(selectedSupport, 'manifest.json'), 'utf8').then(Boolean), true);
+
+    await rm(join(consumerStackBaseDir, 'runtime', 'current.json'), { force: true });
+    await rm(selected, { recursive: true, force: true });
+
+    const releasedServerResult = await pruneComponentArtifacts({
+      stackBaseDir: producerStackBaseDir,
+      component: 'server',
+      keepCount: 1,
+      externalReferenceStorageRoot: storageRoot,
+    });
+    const releasedSupportResult = await pruneComponentArtifacts({
+      stackBaseDir: producerStackBaseDir,
+      component: 'server-support',
+      keepCount: 1,
+      externalReferenceStorageRoot: storageRoot,
+    });
+    assert.deepEqual(releasedServerResult.keptFingerprints, ['server-newest']);
+    assert.deepEqual(releasedSupportResult.keptFingerprints, ['server-support-newest']);
+    await assert.rejects(() => readFile(join(selectedServer, 'manifest.json'), 'utf8'), /ENOENT/);
+    await assert.rejects(() => readFile(join(selectedSupport, 'manifest.json'), 'utf8'), /ENOENT/);
+  } finally {
+    await rm(storageRoot, { recursive: true, force: true });
   }
 });

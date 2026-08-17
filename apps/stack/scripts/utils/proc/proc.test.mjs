@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { WriteStream } from 'node:fs';
-import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { killProcessTree, markSpawnedProcessPlannedExit, run, runCapture, runCaptureResult, spawnProc } from './proc.mjs';
-import { resolveCommandInvocation } from '../process/resolveCommandInvocation.mjs';
 import { isPidAlive } from './pids.mjs';
 
 test('killProcessTree delegates Windows cleanup to the bounded async tree-termination owner', async () => {
@@ -269,6 +269,39 @@ test('runCaptureResult preserves non-tee nonzero output after child close', asyn
   assert.equal(result.timedOut, false);
   assert.equal(result.out, 'partial-out');
   assert.equal(result.err, 'partial-err');
+});
+
+test('runCapture preserves bounded redacted stdout compiler diagnostics on failure', async () => {
+  const env = { ...process.env, HAPPIER_TEST_SECRET: 'must-not-escape' };
+  let failure = null;
+  try {
+    await runCapture(
+      process.execPath,
+      [
+        '-e',
+        [
+          'process.stdout.write("x".repeat(20_000) + "error TS2554: Expected 2 arguments, but got 1.\\n");',
+          'process.stderr.write("stderr context HAPPIER_TEST_SECRET=" + process.env.HAPPIER_TEST_SECRET + "\\n");',
+          'process.exit(7);',
+        ].join(' '),
+      ],
+      { env },
+    );
+    assert.fail('expected child failure');
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.equal(failure?.code, 'EEXIT');
+  assert.equal(failure?.exitCode, 7);
+  assert.equal(failure?.signal, null);
+  assert.match(failure?.message ?? '', /failed \(code=7, sig=null\)/);
+  assert.match(failure?.message ?? '', /stderr context HAPPIER_TEST_SECRET=/);
+  assert.match(failure?.message ?? '', /\[stdout\][\s\S]*error TS2554: Expected 2 arguments, but got 1\./);
+  assert.match(failure?.message ?? '', /Child output \(tail; earlier output omitted\)/);
+  assert.match(failure?.message ?? '', /\[stderr\][\s\S]*HAPPIER_TEST_SECRET=<redacted>/);
+  assert.doesNotMatch(failure?.message ?? '', /must-not-escape/);
+  assert.ok((failure?.message.length ?? Infinity) < 20_000, 'failure diagnostic must stay bounded');
 });
 
 test('run keeps quiet child output bounded, failure-only, and redacted', async () => {
@@ -533,6 +566,103 @@ test('spawnProc can tee output to an env-scoped tee dir when no explicit teeFile
   assert.match(raw, /\[server\] oops/);
 });
 
+test('spawnProc can keep a silent transport out of the persisted Stack log', async (t) => {
+  const root = await withTempRoot(t);
+  const teeDir = join(root, 'tee');
+  const env = { ...process.env, HAPPIER_STACK_LOG_TEE_DIR: teeDir };
+
+  const child = spawnProc(
+    'remote:mac',
+    process.execPath,
+    ['-e', 'console.error("expected readiness refusal")'],
+    env,
+    { silent: true, persistOutput: false },
+  );
+  await child.completion;
+
+  await assert.rejects(stat(join(teeDir, 'remote-mac.log')), { code: 'ENOENT' });
+});
+
+test('spawnProc timestamps persisted Stack log lines without changing streamed prefixes', async (t) => {
+  const root = await withTempRoot(t);
+  const teeDir = join(root, 'tee');
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_LOG_TEE_DIR: teeDir,
+    HAPPIER_STACK_LOG_TEE_TIMESTAMPS: '1',
+  };
+
+  const child = spawnProc('remote:mac', process.execPath, ['-e', 'console.log("hello")'], env, {
+    silent: true,
+  });
+  await child.completion;
+
+  const raw = await readFile(join(teeDir, 'remote-mac.log'), 'utf-8');
+  assert.match(raw, /^\[remote:mac\] \[\d{4}-\d{2}-\d{2}T[^\]]+Z\] hello\n$/);
+});
+
+test('spawnProc can filter redraw lines before streaming and persistence', async (t) => {
+  const root = await withTempRoot(t);
+  const teeFile = join(root, 'filtered.log');
+  const emitted = [];
+  const child = spawnProc(
+    'filtered',
+    process.execPath,
+    ['-e', 'console.log("same"); console.log("same"); console.log("changed")'],
+    process.env,
+    {
+      silent: true,
+      teeFile,
+      lineFilter: ({ line }) => line !== 'same' || emitted.length === 0,
+      onLine: ({ line }) => emitted.push(line),
+    },
+  );
+  await child.completion;
+
+  assert.deepEqual(emitted, ['same', 'changed']);
+  const raw = await readFile(teeFile, 'utf8');
+  assert.equal(raw.match(/same/g)?.length, 1);
+  assert.match(raw, /changed/);
+});
+
+test('spawnProc bounds long-lived tee logs with one rotated predecessor', async (t) => {
+  const root = await withTempRoot(t);
+  const teeFile = join(root, 'bounded.log');
+  const teeMaxBytes = 256;
+  await writeFile(teeFile, 'legacy-log-line\n'.repeat(80));
+
+  const child = spawnProc(
+    'bounded',
+    process.execPath,
+    ['-e', 'for (let i = 0; i < 4; i += 1) console.log(String(i).padStart(3, "0") + "-abcdefghij")'],
+    process.env,
+    { silent: true, teeFile, teeMaxBytes },
+  );
+  await child.completion;
+
+  assert.ok((await stat(teeFile)).size <= teeMaxBytes);
+  assert.ok((await stat(`${teeFile}.1`)).size <= teeMaxBytes);
+  assert.match(await readFile(teeFile, 'utf-8'), /\[bounded\] 003-abcdefghij/);
+});
+
+test('runCaptureResult uses the same bounded tee-log owner as spawnProc', async (t) => {
+  const root = await withTempRoot(t);
+  const teeFile = join(root, 'bounded-capture.log');
+  const teeMaxBytes = 256;
+  await writeFile(teeFile, 'legacy-capture-line\n'.repeat(80));
+
+  const result = await runCaptureResult(
+    process.execPath,
+    ['-e', 'for (let i = 0; i < 40; i += 1) console.log(String(i).padStart(3, "0") + "-abcdefghij")'],
+    { teeFile, teeLabel: 'capture', teeMaxBytes },
+  );
+
+  assert.equal(result.ok, true);
+  assert.ok((await stat(teeFile)).size <= teeMaxBytes);
+  assert.ok((await stat(`${teeFile}.1`)).size <= teeMaxBytes);
+  assert.match(await readFile(teeFile, 'utf-8'), /\[capture\] 039-abcdefghij/);
+});
+
 test('spawnProc completion waits for child close, pipe drainage, and delayed tee finish', async (t) => {
   const root = await withTempRoot(t);
   const teeFile = join(root, 'delayed-spawn.log');
@@ -662,8 +792,6 @@ test('spawnProc labels planned dev-reload exits without hiding the exit code', a
 });
 
 test('runCapture resolves command-only npm through the canonical Windows command invocation', async (t) => {
-  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
-  assert.ok(originalPlatformDescriptor, 'expected process.platform descriptor');
   const root = await withTempRoot(t);
   const npmShim = join(root, 'npm.CMD');
   const commandInterpreter = join(root, 'cmd.exe');
@@ -671,25 +799,25 @@ test('runCapture resolves command-only npm through the canonical Windows command
   await writeFile(commandInterpreter, '#!/bin/sh\nprintf \"wrapped-npm\\\\n\"\n', 'utf8');
   await chmod(commandInterpreter, 0o755);
 
-  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
-  t.after(() => {
-    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  const procModuleUrl = new URL('./proc.mjs', import.meta.url).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', [
+    "Object.defineProperty(process, 'platform', { value: 'win32' });",
+    `const { runCapture } = await import(${JSON.stringify(procModuleUrl)});`,
+    "const output = await runCapture('npm', ['--version'], { env: {",
+    `  PATH: ${JSON.stringify(root)},`,
+    "  PATHEXT: '.CMD;.EXE',",
+    `  ComSpec: ${JSON.stringify(commandInterpreter)},`,
+    '} });',
+    'process.stdout.write(JSON.stringify(output));',
+  ].join('\n')], {
+    encoding: 'utf8',
   });
 
-  const output = await runCapture('npm', ['--version'], {
-    env: {
-      PATH: root,
-      PATHEXT: '.CMD;.EXE',
-      ComSpec: commandInterpreter,
-    },
-  });
-
-  assert.equal(output, 'wrapped-npm\n');
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(JSON.parse(child.stdout), 'wrapped-npm\n');
 });
 
 test('runCapture routes Windows Yarn shims with spaces and metacharacters through canonical cmd.exe args without a shell', async (t) => {
-  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
-  assert.ok(originalPlatformDescriptor, 'expected process.platform descriptor');
   const root = await withTempRoot(t);
   const shimDir = join(root, 'shim dir & tools');
   const yarnShim = join(shimDir, 'yarn.CMD');
@@ -704,20 +832,30 @@ test('runCapture routes Windows Yarn shims with spaces and metacharacters throug
   );
   await chmod(commandInterpreter, 0o755);
 
-  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
-  t.after(() => {
-    Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+  const args = ['run', 'script with spaces', 'value&next', '100%'];
+  const procModuleUrl = new URL('./proc.mjs', import.meta.url).href;
+  const invocationModuleUrl = new URL('../process/resolveCommandInvocation.mjs', import.meta.url).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', [
+    "Object.defineProperty(process, 'platform', { value: 'win32' });",
+    'const [{ runCapture }, { resolveCommandInvocation }] = await Promise.all([',
+    `  import(${JSON.stringify(procModuleUrl)}),`,
+    `  import(${JSON.stringify(invocationModuleUrl)}),`,
+    ']);',
+    `const args = ${JSON.stringify(args)};`,
+    'const env = {',
+    `  PATH: ${JSON.stringify(shimDir)},`,
+    "  PATHEXT: '.CMD;.EXE',",
+    `  ComSpec: ${JSON.stringify(commandInterpreter)},`,
+    '};',
+    "const expected = resolveCommandInvocation({ command: 'yarn', args, env });",
+    "const output = await runCapture('yarn', args, { env });",
+    'process.stdout.write(JSON.stringify({ expected, output }));',
+  ].join('\n')], {
+    encoding: 'utf8',
   });
 
-  const args = ['run', 'script with spaces', 'value&next', '100%'];
-  const env = {
-    PATH: shimDir,
-    PATHEXT: '.CMD;.EXE',
-    ComSpec: commandInterpreter,
-  };
-  const expected = resolveCommandInvocation({ command: 'yarn', args, env });
-  const output = await runCapture('yarn', args, { env });
-
+  assert.equal(child.status, 0, child.stderr);
+  const { expected, output } = JSON.parse(child.stdout);
   assert.equal(expected.command, commandInterpreter);
   assert.deepEqual(expected.args.slice(0, 3), ['/d', '/s', '/c']);
   assert.equal(expected.windowsVerbatimArguments, true);

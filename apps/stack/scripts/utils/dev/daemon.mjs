@@ -1,5 +1,9 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+
+import {
+  readCliNodeWorkspaceRuntimeIdentity,
+} from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 
 import { ensureCliBuilt } from '../proc/pm.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from '../stack/startup.mjs';
@@ -19,8 +23,14 @@ import {
   syncStackRuntimeDaemonPidFromDaemonState,
 } from '../stack/runtime_daemon_state.mjs';
 import { isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
-import { resolveHappyCliRuntimeInputGroups } from '../proc/cli_runtime_inputs.mjs';
-import { readCliDistBuildManifest } from '../cli/cliDistIntegrity.mjs';
+import {
+  readHappyCliRuntimeInputFreshness,
+  resolveHappyCliRuntimeInputGroups,
+} from '../proc/cli_runtime_inputs.mjs';
+import {
+  probeCliDistRuntimeImport,
+  readCliDistBuildManifest,
+} from '../cli/cliDistIntegrity.mjs';
 import { WORKSPACE_BUNDLE_LOCK_TIMEOUT_ERROR_CODE } from '../proc/cliDistBuildLock.mjs';
 
 const CLI_MIXED_INPUT_REJECTION_DIAGNOSTICS = [
@@ -30,6 +40,7 @@ const CLI_MIXED_INPUT_REJECTION_DIAGNOSTICS = [
     'refusing to finalize a mixed CLI closure',
 ];
 const CLI_MIXED_INPUT_RETRY_MS = 250;
+const CLI_WORKSPACE_RUNTIME_ADVANCED_ERROR_CODE = 'ECLIWORKSPACERUNTIMEADVANCED';
 const DAEMON_CONTROL_PUBLICATION_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000];
 
 function sleepMs(ms) {
@@ -44,11 +55,22 @@ function annotateTransientCliBuildRejection(error) {
 }
 
 export function createHappyCliReloadDescriptors({ cliDir, existsSyncImpl = existsSync } = {}) {
-  return resolveHappyCliRuntimeInputGroups({ cliDir, existsSyncImpl }).map((group) => ({
+  const sourceDescriptors = resolveHappyCliRuntimeInputGroups({ cliDir, existsSyncImpl }).map((group) => ({
     ...group,
     readSignature: () => readHappyCliWatchChangeSignature(group.paths),
     readSignatureAsync: () => readHappyCliWatchChangeSignatureAsync(group.paths),
   }));
+  const publicationPaths = [join(cliDir, 'dist', '.build-manifest.json')];
+  return [
+    ...sourceDescriptors,
+    {
+      id: 'daemon:cli-publication',
+      target: 'daemon',
+      paths: publicationPaths,
+      readSignature: () => readHappyCliWatchChangeSignature(publicationPaths),
+      readSignatureAsync: () => readHappyCliWatchChangeSignatureAsync(publicationPaths),
+    },
+  ];
 }
 
 function readHappyCliWatchChangeSignature(paths) {
@@ -87,6 +109,43 @@ async function hasLiveRuntimeDaemonPid({
     runtimeState = null;
   }
   return collectRuntimeDaemonPids(runtimeState).some((pid) => isPidAliveImpl(pid));
+}
+
+function normalizeDistClosureFingerprint(value) {
+  const fingerprint = String(value ?? '').trim().toLowerCase();
+  return /^[a-f0-9]{16}$/.test(fingerprint) ? fingerprint : null;
+}
+
+async function isCandidateDistAlreadyActive({
+  ping,
+  successorDistClosureFingerprint,
+  runtimeStatePath,
+}, {
+  readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
+} = {}) {
+  const candidateFingerprint = normalizeDistClosureFingerprint(successorDistClosureFingerprint);
+  const activeFingerprint = normalizeDistClosureFingerprint(ping?.distClosureFingerprint);
+  const activePid = normalizeDaemonPid(ping?.pid);
+  const statePath = String(runtimeStatePath ?? '').trim();
+  if (
+    ping?.ok !== true
+    || !candidateFingerprint
+    || activeFingerprint !== candidateFingerprint
+    || !activePid
+    || !statePath
+  ) {
+    return false;
+  }
+
+  let runtimeState = null;
+  try {
+    runtimeState = await readStackRuntimeStateFileImpl(statePath);
+  } catch {
+    return false;
+  }
+  return normalizeDaemonPid(runtimeState?.processes?.daemonPid) === activePid
+    && normalizeDistClosureFingerprint(runtimeState?.daemon?.distClosureFingerprint)
+      === candidateFingerprint;
 }
 
 async function shouldColdStartAfterDaemonControlMiss({
@@ -216,12 +275,41 @@ export function createHappyCliReloadExecutor({
   readStackRuntimeStateFileImpl = readStackRuntimeStateFile,
   isPidAliveImpl = isPidAlive,
   existsSyncImpl = existsSync,
+  probeCliDistRuntimeImportImpl = probeCliDistRuntimeImport,
+  readCliRuntimeInputFreshnessImpl = readHappyCliRuntimeInputFreshness,
+  readCliWorkspaceRuntimeIdentityImpl = readCliNodeWorkspaceRuntimeIdentity,
   sleepImpl = sleepMs,
   logger = console,
 } = {}) {
   let successorDistClosureFingerprint = null;
   let successorPublicationSuperseded = false;
   let successorActivationMayOutliveGeneration = false;
+  let successorWorkspaceRuntimeIdentity = null;
+  let activeDistClosureFingerprint = null;
+  const assertSuccessorWorkspaceRuntimeStillCurrent = () => {
+    if (!successorWorkspaceRuntimeIdentity) return;
+    let currentWorkspaceRuntimeIdentity;
+    try {
+      currentWorkspaceRuntimeIdentity = readCliWorkspaceRuntimeIdentityImpl({
+        repoRoot: resolve(cliDir, '..', '..'),
+      });
+    } catch (cause) {
+      const error = new Error(
+        '[local] watch: CLI workspace runtime could not be verified before daemon activation; retrying the shared build.',
+        { cause },
+      );
+      error.code = CLI_WORKSPACE_RUNTIME_ADVANCED_ERROR_CODE;
+      error.reloadRetryAfterMs = CLI_MIXED_INPUT_RETRY_MS;
+      throw error;
+    }
+    if (currentWorkspaceRuntimeIdentity.fingerprint === successorWorkspaceRuntimeIdentity) return;
+    const error = new Error(
+      '[local] watch: CLI workspace runtime publication changed before daemon activation; retrying the shared build.',
+    );
+    error.code = CLI_WORKSPACE_RUNTIME_ADVANCED_ERROR_CODE;
+    error.reloadRetryAfterMs = CLI_MIXED_INPUT_RETRY_MS;
+    throw error;
+  };
   return {
     target: 'daemon',
     async build(context = {}) {
@@ -229,6 +317,52 @@ export function createHappyCliReloadExecutor({
       successorDistClosureFingerprint = null;
       successorPublicationSuperseded = false;
       successorActivationMayOutliveGeneration = false;
+      successorWorkspaceRuntimeIdentity = null;
+      const publicationChanged = context.changedDescriptors?.includes('daemon:cli-publication') === true;
+      if (publicationChanged) {
+        const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+        const manifestPath = join(cliDir, 'dist', '.build-manifest.json');
+        if (!existsSyncImpl(distEntrypoint) || !existsSyncImpl(manifestPath)) {
+          throw new Error(
+            '[local] watch: an external happier-cli publication was observed without a complete dist; refusing to activate it.',
+          );
+        }
+        const distClosure = readCliDistBuildManifest(distEntrypoint);
+        if (!distClosure.ok || !distClosure.fingerprint) {
+          throw new Error(
+            `[local] watch: external happier-cli publication is invalid (${distClosure.reason}); refusing to activate it.`,
+          );
+        }
+        if (distClosure.fingerprint !== activeDistClosureFingerprint) {
+          await probeCliDistRuntimeImportImpl(distEntrypoint, { cwd: cliDir, env });
+          const currentInputs = await readCliRuntimeInputFreshnessImpl(cliDir);
+          const publishedInputFingerprint = String(
+            distClosure.manifest?.inputFingerprint ?? '',
+          ).trim().toLowerCase();
+          const currentInputFingerprint = String(
+            currentInputs?.fingerprint ?? '',
+          ).trim().toLowerCase();
+          successorDistClosureFingerprint = distClosure.fingerprint;
+          successorWorkspaceRuntimeIdentity = String(
+            distClosure.manifest?.workspaceRuntimeIdentity ?? '',
+          ).trim().toLowerCase() || null;
+          successorActivationMayOutliveGeneration = true;
+          successorPublicationSuperseded = (
+            !publishedInputFingerprint
+            || !currentInputFingerprint
+            || publishedInputFingerprint !== currentInputFingerprint
+          );
+          logger.log('[local] watch: adopting externally published happier-cli dist before any trailing rebuild.');
+          return {
+            ok: true,
+            allowSupersededActivation: true,
+            ...(successorPublicationSuperseded ? { requestFollowup: true } : {}),
+          };
+        }
+        if (context.changedDescriptors.length === 1) {
+          return { skipped: true, reason: 'cli-publication-already-active' };
+        }
+      }
       logger.log('[local] watch: happier-cli changed → rebuilding + restarting daemon...');
       let buildResult;
       for (;;) {
@@ -290,6 +424,9 @@ export function createHappyCliReloadExecutor({
         );
       }
       successorDistClosureFingerprint = distClosure.fingerprint;
+      successorWorkspaceRuntimeIdentity = String(
+        distClosure.manifest?.workspaceRuntimeIdentity ?? '',
+      ).trim().toLowerCase() || null;
       successorActivationMayOutliveGeneration = (
         publishedSuccessfulBuild
         || adoptedConcurrentPublication
@@ -324,6 +461,7 @@ export function createHappyCliReloadExecutor({
               'while the existing reload coordinator builds the trailing latest generation.'
           );
         }
+        assertSuccessorWorkspaceRuntimeStillCurrent();
         await startLocalDaemonWithAuthImpl({
           cliBin,
           cliHomeDir,
@@ -338,6 +476,7 @@ export function createHappyCliReloadExecutor({
           cliIdentity,
           admittedDistClosureFingerprint: successorDistClosureFingerprint,
         });
+        activeDistClosureFingerprint = successorDistClosureFingerprint;
         return {
           restarted: true,
           mode: 'cold-start',
@@ -374,9 +513,20 @@ export function createHappyCliReloadExecutor({
         }
       }
       if (ping?.ok === true) {
+        if (await isCandidateDistAlreadyActive(
+          { ping, successorDistClosureFingerprint, runtimeStatePath },
+          { readStackRuntimeStateFileImpl },
+        )) {
+          activeDistClosureFingerprint = successorDistClosureFingerprint;
+          logger.log(
+            '[local] watch: the healthy daemon already runs the current happier-cli dist; skipping restart.',
+          );
+          return { skipped: true, reason: 'daemon-dist-already-active' };
+        }
         if (!successorActivationMayOutliveGeneration && !await generationIsCurrent()) {
           return { skipped: true, reason: 'stale-generation' };
         }
+        assertSuccessorWorkspaceRuntimeStillCurrent();
         try {
           const replacement = await restartDaemonViaControlServerImpl({
             cliHomeDir,
@@ -420,6 +570,7 @@ export function createHappyCliReloadExecutor({
           logger.warn('[local] watch: daemon control /restart is unavailable; keeping the current daemon running.');
           return { skipped: true, reason: 'daemon-control-restart-unavailable' };
         }
+        activeDistClosureFingerprint = successorDistClosureFingerprint;
         return { restarted: true, mode: 'overlap' };
       }
 

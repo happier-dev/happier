@@ -45,6 +45,51 @@ async function pickFreeLocalPort() {
   return port;
 }
 
+async function spawnStackOwnedHealthServer(t, { stackName, envPath }) {
+  const child = spawnDetachedInlineNodeTestProcess(`
+    const http = require('node:http');
+    const server = http.createServer((req, res) => {
+      if (req.url === '/health' || req.url === '/ready') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end('not found');
+    });
+    server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'));
+    setInterval(() => {}, 1000);
+  `, {
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_PROCESS_KIND: 'server',
+    },
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  t.after(() => {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // The child may already have exited.
+    }
+  });
+  const port = await new Promise((resolve, reject) => {
+    let output = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      output += String(chunk);
+      const value = Number(output.split(/\r?\n/).find(Boolean));
+      if (Number.isInteger(value) && value > 0) resolve(value);
+    });
+    child.once('error', reject);
+    child.once('exit', (code) => reject(new Error(`runtime server exited early (${code ?? 'unknown'})`)));
+  });
+  return { child, pid: child.pid, port };
+}
+
 test('hstack stack auth <stack> login --print prefers pinned env port over stale runtime port', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
@@ -126,25 +171,16 @@ test('hstack stack auth <stack> login --print uses last runtime port when stack 
       'utf-8'
     );
 
-    const runtimeOwner = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
-      env: {
-        ...process.env,
-        HAPPIER_STACK_STACK: stackName,
-        HAPPIER_STACK_ENV_FILE: envPath,
-        HAPPIER_STACK_PROCESS_KIND: 'infra',
-      },
-    });
-    t.after(() => {
-      try {
-        runtimeOwner.kill('SIGKILL');
-      } catch {
-        // The child may already have exited.
-      }
-    });
+    const runtimeServer = await spawnStackOwnedHealthServer(t, { stackName, envPath });
 
     await writeFile(
       join(stackDir, 'stack.runtime.json'),
-      JSON.stringify({ version: 1, ownerPid: runtimeOwner.pid, ports: { server: 4999 } }, null, 2) + '\n',
+      JSON.stringify({
+        version: 1,
+        ownerPid: runtimeServer.pid,
+        processes: { serverPid: runtimeServer.pid },
+        ports: { server: runtimeServer.port },
+      }, null, 2) + '\n',
       'utf-8'
     );
 
@@ -159,7 +195,7 @@ test('hstack stack auth <stack> login --print uses last runtime port when stack 
     );
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
     const parsed = JSON.parse(res.stdout.trim());
-    assert.equal(parsed?.internalServerUrl, 'http://127.0.0.1:4999');
+    assert.equal(parsed?.internalServerUrl, `http://127.0.0.1:${runtimeServer.port}`);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

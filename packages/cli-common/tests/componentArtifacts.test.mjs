@@ -4,6 +4,13 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import cliDistBuildManifest from '../cliDistBuildManifest.cjs';
+import { readCliNodeWorkspaceRuntimeIdentity } from '../dist/componentArtifacts/copyCliNodeRuntimePayload.js';
+import {
+  bundleWorkspacePackageWithRuntimeDependencies,
+  resolveWorkspaceBundlesFromPackageJson,
+} from '../dist/workspaces/index.js';
+
 const ACTUAL_VOICE_RUNTIME_LOADER_SOURCE = readFileSync(
   new URL('../../../apps/cli/scripts/runtime/loadVoiceInferenceRuntime.mjs', import.meta.url),
   'utf8',
@@ -130,6 +137,34 @@ function writeCliRuntimePackageFixture(
   writeCliToolUnpackFixture(repoRoot);
 }
 
+function writeFixtureCliDistWorkspaceRuntimeManifest({ repoRoot, cliDistDir }) {
+  const cliDir = join(repoRoot, 'apps', 'cli');
+  const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({
+    repoRoot,
+    hostPackageDir: cliDir,
+  });
+  cliDistBuildManifest.writeCliDistBuildManifest(join(cliDistDir, 'index.mjs'), {
+    workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
+    workspaceRuntimePackages: workspaceRuntime.packageNames,
+  });
+}
+
+function materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir }) {
+  const cliDir = join(repoRoot, 'apps', 'cli');
+  for (const { packageName, srcDir } of resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: cliDir,
+  })) {
+    bundleWorkspacePackageWithRuntimeDependencies({
+      packageName,
+      srcDir,
+      destDir: join(cliDir, 'node_modules', ...packageName.split('/')),
+      dereferenceRootDir: repoRoot,
+    });
+  }
+  writeFixtureCliDistWorkspaceRuntimeManifest({ repoRoot, cliDistDir });
+}
+
 function writeCliProxyApiManagedRuntimeFixture(repoRoot, target) {
   const executablePath = join(
     repoRoot,
@@ -187,6 +222,36 @@ function writeServerPrismaEngineFixtures({
   }
   if (postgresClientDir) {
     writeFileSync(join(postgresClientDir, engineFileName), 'postgres-engine\n', 'utf8');
+  }
+}
+
+function writeServerSharpRuntimeFixture({ repoRoot, platform = 'linux', arch = 'x64' }) {
+  const packagePlatform = platform === 'windows' ? 'win32' : platform;
+  const sharpDir = join(repoRoot, 'node_modules', 'sharp');
+  const sharpPlatformDir = join(repoRoot, 'node_modules', '@img', `sharp-${packagePlatform}-${arch}`);
+  const sharpLibvipsDir = join(repoRoot, 'node_modules', '@img', `sharp-libvips-${packagePlatform}-${arch}`);
+  mkdirSync(sharpDir, { recursive: true });
+  mkdirSync(sharpPlatformDir, { recursive: true });
+  writeFileSync(
+    join(sharpDir, 'package.json'),
+    JSON.stringify({ name: 'sharp', version: '0.0.0', dependencies: {} }),
+    'utf8',
+  );
+  writeFileSync(join(sharpDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+  writeFileSync(
+    join(sharpPlatformDir, 'package.json'),
+    JSON.stringify({ name: `@img/sharp-${packagePlatform}-${arch}`, os: [packagePlatform], cpu: [arch], dependencies: {} }),
+    'utf8',
+  );
+  writeFileSync(join(sharpPlatformDir, 'binding.node'), 'sharp binding\n', 'utf8');
+  if (platform !== 'windows') {
+    mkdirSync(sharpLibvipsDir, { recursive: true });
+    writeFileSync(
+      join(sharpLibvipsDir, 'package.json'),
+      JSON.stringify({ name: `@img/sharp-libvips-${packagePlatform}-${arch}`, os: [packagePlatform], cpu: [arch], dependencies: {} }),
+      'utf8',
+    );
+    writeFileSync(join(sharpLibvipsDir, 'libvips.so'), 'libvips\n', 'utf8');
   }
 }
 
@@ -394,6 +459,7 @@ test('buildCliBinaryArtifactPayload compiles and finalizes a self-contained runt
       JSON.stringify({ name: '@homebridge/node-pty-prebuilt-multiarch', version: '1.0.0', dependencies: {} }, null, 2),
     );
     writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+    materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const compileCalls = [];
@@ -644,6 +710,7 @@ test('buildCliBinaryArtifactPayload removes compile-generated node_modules befor
       'utf8',
     );
     writeFileSync(join(chownrDir, 'index.js'), 'export const chownr = () => {};\n', 'utf8');
+    materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     await artifacts.buildCliBinaryArtifactPayload({
@@ -766,6 +833,7 @@ test('buildCliBinaryArtifactPayload snapshots CLI dist before compile/copy so la
         mkdirSync(cliDistDir, { recursive: true });
         writeFileSync(join(cliDistDir, 'index.mjs'), 'export { detect } from "./detect-BwxnBwvx.mjs";\n', 'utf8');
         writeFileSync(join(cliDistDir, 'detect-BwxnBwvx.mjs'), 'export const detect = true;\n', 'utf8');
+        writeFixtureCliDistWorkspaceRuntimeManifest({ repoRoot, cliDistDir });
       },
       compileBinary: async ({ outfile }) => {
         rmSync(cliDistDir, { recursive: true, force: true });
@@ -837,6 +905,7 @@ test('buildCliBinaryArtifactPayload derives bundled workspace packages from apps
       'utf8',
     );
     writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+    materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     await artifacts.buildCliBinaryArtifactPayload({
@@ -918,6 +987,7 @@ test('buildCliBinaryArtifactPayload restores runtime sidecars after compile rewr
       JSON.stringify({ name: '@homebridge/node-pty-prebuilt-multiarch', version: '1.0.0', dependencies: {} }, null, 2),
     );
     writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+    materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     await artifacts.buildCliBinaryArtifactPayload({
@@ -1013,6 +1083,7 @@ test('buildCliBinaryArtifactPayload stages embeddings runtime packages and exter
       JSON.stringify({ name: '@homebridge/node-pty-prebuilt-multiarch', version: '1.0.0', dependencies: {} }, null, 2),
     );
     writeFileSync(join(homebridgePtyDir, 'index.js'), 'module.exports = { spawn() {} };\n', 'utf8');
+    materializeFixtureCliWorkspaceRuntime({ repoRoot, cliDistDir });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const compileCalls = [];
@@ -1066,6 +1137,9 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     const sqliteMigrationsDir = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
     const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
     const prismaClientPackageDir = join(repoRoot, 'node_modules', '@prisma', 'client');
+    const sharpDir = join(repoRoot, 'node_modules', 'sharp');
+    const sharpLinuxX64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-linux-x64');
+    const sharpLibvipsLinuxX64Dir = join(repoRoot, 'node_modules', '@img', 'sharp-libvips-linux-x64');
 
     mkdirSync(serverSourcesDir, { recursive: true });
     mkdirSync(uiDistDir, { recursive: true });
@@ -1074,6 +1148,9 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     mkdirSync(sqliteMigrationsDir, { recursive: true });
     mkdirSync(postgresClientDir, { recursive: true });
     mkdirSync(prismaClientPackageDir, { recursive: true });
+    mkdirSync(sharpDir, { recursive: true });
+    mkdirSync(sharpLinuxX64Dir, { recursive: true });
+    mkdirSync(sharpLibvipsLinuxX64Dir, { recursive: true });
 
     writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
     writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
@@ -1087,6 +1164,20 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
       providers: ['sqlite', 'mysql'],
     });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
+    writeFileSync(join(sharpDir, 'package.json'), JSON.stringify({ name: 'sharp', version: '0.0.0', dependencies: {} }), 'utf8');
+    writeFileSync(join(sharpDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(
+      join(sharpLinuxX64Dir, 'package.json'),
+      JSON.stringify({ name: '@img/sharp-linux-x64', os: ['linux'], cpu: ['x64'], dependencies: {} }),
+      'utf8',
+    );
+    writeFileSync(join(sharpLinuxX64Dir, 'binding.node'), 'sharp binding\n', 'utf8');
+    writeFileSync(
+      join(sharpLibvipsLinuxX64Dir, 'package.json'),
+      JSON.stringify({ name: '@img/sharp-libvips-linux-x64', os: ['linux'], cpu: ['x64'], dependencies: {} }),
+      'utf8',
+    );
+    writeFileSync(join(sharpLibvipsLinuxX64Dir, 'libvips.so'), 'libvips\n', 'utf8');
     if (process.platform !== 'win32') {
       const externalBinTarget = join(tempRoot, 'external-server-bin-target.js');
       const nestedBinDir = join(prismaClientPackageDir, 'node_modules', '.bin');
@@ -1200,6 +1291,92 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
   }
 });
 
+test('buildServerBinaryArtifactPayload builds managed server code without UI or stable sidecars', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-code-only-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const serverSourcesDir = join(repoRoot, 'apps', 'server', 'sources');
+    mkdirSync(serverSourcesDir, { recursive: true });
+    writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    const runCalls = [];
+    await artifacts.buildServerBinaryArtifactPayload({
+      repoRoot,
+      payloadDir,
+      includeRuntimeSupport: false,
+      serverComponent: 'happier-server-light',
+      entrypoint: join(serverSourcesDir, 'main.light.ts'),
+      target: artifacts.resolveCurrentBinaryTarget({
+        availableTargets: artifacts.SERVER_BINARY_TARGETS,
+        platform: 'linux',
+        arch: 'x64',
+      }),
+      commandProbe: () => true,
+      runCommand: (cmd, args) => runCalls.push({ cmd, args }),
+      compileBinary: async ({ outfile }) => writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8'),
+    });
+
+    assert.deepEqual(runCalls, [{
+      cmd: process.execPath,
+      args: ['apps/server/scripts/buildSharedDeps.mjs', '--quiet'],
+    }]);
+    assert.equal(existsSync(join(payloadDir, 'happier-server')), true);
+    assert.equal(existsSync(join(payloadDir, 'ui-web')), false);
+    assert.equal(existsSync(join(payloadDir, 'generated')), false);
+    assert.equal(existsSync(join(payloadDir, 'node_modules')), false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('buildServerRuntimeSupportPayload keeps full-server Prisma migration runtime in support', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-full-support-'));
+  try {
+    const repoRoot = join(tempRoot, 'repo');
+    const payloadDir = join(tempRoot, 'payload');
+    const postgresClientDir = join(repoRoot, 'node_modules', '.prisma', 'client');
+    const mysqlClientDir = join(repoRoot, 'apps', 'server', 'generated', 'mysql-client');
+    const runtimeDir = join(repoRoot, 'apps', 'server', 'generated', 'runtime');
+    for (const dir of [postgresClientDir, mysqlClientDir, runtimeDir]) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const engineFileName = 'libquery_engine-debian-openssl-3.0.x.so.node';
+    writeFileSync(join(postgresClientDir, engineFileName), 'postgres engine\n', 'utf8');
+    writeFileSync(join(mysqlClientDir, engineFileName), 'mysql engine\n', 'utf8');
+    writeFileSync(join(runtimeDir, 'schema-engine'), 'schema engine\n', 'utf8');
+    writeFileSync(join(runtimeDir, 'prisma_schema_build_bg.wasm'), 'schema wasm\n', 'utf8');
+
+    const artifacts = await import('../dist/componentArtifacts/index.js');
+    const target = artifacts.resolveCurrentBinaryTarget({
+      availableTargets: artifacts.SERVER_BINARY_TARGETS,
+      platform: 'linux',
+      arch: 'x64',
+    });
+    await artifacts.buildServerRuntimeSupportPayload({
+      repoRoot,
+      payloadDir,
+      entries: [
+        { sourcePath: postgresClientDir, targetPath: join('node_modules', '.prisma', 'client') },
+        { sourcePath: mysqlClientDir, targetPath: join('generated', 'mysql-client') },
+        { sourcePath: runtimeDir, targetPath: 'runtime' },
+      ],
+      target,
+      buildDbProviders: 'mysql',
+      serverComponent: 'happier-server',
+      commandProbe: () => true,
+      compilePrismaBinary: async ({ outfile }) => writeFileSync(outfile, 'prisma migrate\n', 'utf8'),
+    });
+
+    assert.equal(readFileSync(join(payloadDir, 'runtime', 'prisma-migrate'), 'utf8'), 'prisma migrate\n');
+    assert.equal(readFileSync(join(payloadDir, 'runtime', 'schema-engine'), 'utf8'), 'schema engine\n');
+    assert.equal(readFileSync(join(payloadDir, 'runtime', 'prisma_schema_build_bg.wasm'), 'utf8'), 'schema wasm\n');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('buildServerBinaryArtifactPayload packages full PostgreSQL and MySQL migration capability only for full server', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-full-server-'));
   try {
@@ -1234,6 +1411,7 @@ test('buildServerBinaryArtifactPayload packages full PostgreSQL and MySQL migrat
     writeFileSync(join(repoRoot, 'node_modules', '.prisma', 'client', targetEngine), 'pg engine\n');
     writeFileSync(join(repoRoot, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = {};\n');
     writeFileSync(join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm'), 'schema wasm\n');
+    writeServerSharpRuntimeFixture({ repoRoot });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const result = await artifacts.buildServerBinaryArtifactPayload({
@@ -1344,13 +1522,16 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
       }),
       commandProbe: () => true,
       runCommand: () => {},
-      compileBinary: async ({ outfile, externals }) => {
-        compileCalls.push({ externals });
+      compileBinary: async ({ outfile, externals, buildRunnerEntrypoint }) => {
+        compileCalls.push({ externals, buildRunnerEntrypoint });
         writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
       },
     });
 
-    assert.deepEqual(compileCalls, [{ externals: ['redis'] }]);
+    assert.deepEqual(compileCalls, [{
+      externals: ['redis'],
+      buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
+    }]);
     assert.equal(readFileSync(join(payloadDir, 'node_modules', 'sharp', 'index.js'), 'utf8'), 'module.exports = {};\n');
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@img', 'sharp-linux-x64', 'binding.node'), 'utf8'),
@@ -1361,6 +1542,26 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
       'linux libvips\n',
     );
     assert.equal(existsSync(join(payloadDir, 'node_modules', '@img', 'sharp-darwin-arm64')), false);
+
+    rmSync(sharpLibvipsLinuxX64Dir, { recursive: true, force: true });
+    await assert.rejects(
+      artifacts.buildServerBinaryArtifactPayload({
+        repoRoot,
+        payloadDir: join(tempRoot, 'payload-missing-sharp'),
+        uiWebDistPath: uiDistDir,
+        entrypoint: join(serverSourcesDir, 'main.light.ts'),
+        buildDbProviders: 'sqlite',
+        target: artifacts.resolveCurrentBinaryTarget({
+          availableTargets: artifacts.SERVER_BINARY_TARGETS,
+          platform: 'linux',
+          arch: 'x64',
+        }),
+        commandProbe: () => true,
+        runCommand: () => {},
+        compileBinary: async ({ outfile }) => writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8'),
+      }),
+      /missing runtime package @img\/sharp-libvips-linux-x64/u,
+    );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -1407,6 +1608,7 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
     writeFileSync(join(postgresClientDir, 'schema.prisma'), '// stale postgres schema\n', 'utf8');
     writeFileSync(join(postgresClientDir, 'default.js'), 'module.exports = {};\n', 'utf8');
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
+    writeServerSharpRuntimeFixture({ repoRoot });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const runCalls = [];
@@ -1492,6 +1694,7 @@ test('buildServerBinaryArtifactPayload fails darwin artifacts without the darwin
       arch: 'arm64',
     });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
+    writeServerSharpRuntimeFixture({ repoRoot, platform: 'darwin', arch: 'arm64' });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     await assert.rejects(
@@ -1545,6 +1748,7 @@ test('buildServerBinaryArtifactPayload retries transient ENOENT failures while c
     writeFileSync(join(postgresClientDir, 'client.d.ts'), 'export {};\n', 'utf8');
     writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeServerSharpRuntimeFixture({ repoRoot });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     let copyAttempts = 0;
@@ -1608,6 +1812,7 @@ test('prepareUiWebDist refreshes an existing ui-web dist before server sidecars 
     writeFileSync(join(postgresClientDir, 'client.d.ts'), 'export {};\n', 'utf8');
     writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeServerSharpRuntimeFixture({ repoRoot });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const runCalls = [];

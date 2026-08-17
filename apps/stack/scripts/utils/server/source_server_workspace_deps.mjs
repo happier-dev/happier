@@ -1,14 +1,24 @@
 import { ensureWorkspacePackagesBuiltForComponent, pmSpawnScript } from '../proc/pm.mjs';
 
 export async function ensureSourceServerWorkspacePackagesBuilt(
-  { runtimeBackedStart = false, serverDir, env = process.env, quiet = false } = {},
+  {
+    runtimeBackedStart = false,
+    serverDir,
+    env = process.env,
+    quiet = false,
+    admitPriorOutputsImmediately = false,
+  } = {},
   { ensureWorkspacePackagesBuiltForComponentImpl = ensureWorkspacePackagesBuiltForComponent } = {},
 ) {
   if (runtimeBackedStart) {
     return { ran: false, reason: 'runtime-backed' };
   }
 
-  const result = await ensureWorkspacePackagesBuiltForComponentImpl(serverDir, { quiet, env });
+  const result = await ensureWorkspacePackagesBuiltForComponentImpl(serverDir, {
+    quiet,
+    env,
+    ...(admitPriorOutputsImmediately ? { admitPriorOutputsImmediately: true } : {}),
+  });
   return { ran: true, reason: 'source-server', result };
 }
 

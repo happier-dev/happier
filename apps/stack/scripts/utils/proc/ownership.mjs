@@ -3,7 +3,7 @@ import { observePidLiveness } from './pids.mjs';
 import { terminateProcessGroup, terminateProcessPid } from './terminate.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 function normalizeNeedles(needles) {
   const raw = Array.isArray(needles) ? needles : [];

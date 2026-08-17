@@ -104,6 +104,31 @@ test('stopLocalDaemon skips stop when expectedPid does not match current daemon 
   }
 });
 
+test('stopLocalDaemon does not launch the CLI when the scoped daemon is already stopped', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-daemon-already-stopped-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliHomeDir = join(tmp, 'cli-home');
+    const markerPath = join(tmp, 'marker.txt');
+    const cliBin = await writeStubHappyCli({ cliDir });
+
+    await stopLocalDaemon({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl: 'http://127.0.0.1:3005',
+      env: {
+        ...process.env,
+        HAPPIER_STACK_REPO_DIR: '',
+        MARKER_PATH: markerPath,
+      },
+    });
+
+    assert.equal(existsSync(markerPath), false);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('stopLocalDaemon stops a live daemon from daemon.state.json when cli dist is missing', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-stop-daemon-missing-dist-'));
   try {

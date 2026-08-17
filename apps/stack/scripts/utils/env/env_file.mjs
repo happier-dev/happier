@@ -20,6 +20,10 @@ export async function ensureEnvFileUpdated({ envPath, updates }) {
   if (!updates.length) {
     return;
   }
+  const current = await readText(envPath);
+  if (envContentsEqual(current, applyEnvUpdates(current, updates))) {
+    return;
+  }
   await withEnvFileLock(envPath, async () => {
     await mkdir(dirname(envPath), { recursive: true });
     const existing = await readText(envPath);
@@ -31,6 +35,12 @@ export async function ensureEnvFileUpdated({ envPath, updates }) {
 export async function ensureEnvFileMutated({ envPath, updates = [], removeKeys = [] }) {
   const keys = Array.from(new Set(removeKeys.map((key) => String(key).trim()).filter(Boolean)));
   if (!updates.length && !keys.length) return;
+  const current = await readText(envPath);
+  const currentPruned = keys.length ? pruneEnvKeys(current, keys) : current;
+  const currentNext = updates.length ? applyEnvUpdates(currentPruned, updates) : currentPruned;
+  if (envContentsEqual(current, currentNext)) {
+    return;
+  }
   await withEnvFileLock(envPath, async () => {
     await mkdir(dirname(envPath), { recursive: true });
     const existing = await readText(envPath);
@@ -45,11 +55,28 @@ export async function ensureEnvFilePruned({ envPath, removeKeys }) {
   if (!keys.length) {
     return;
   }
+  const current = await readText(envPath);
+  if (envContentsEqual(current, pruneEnvKeys(current, keys))) {
+    return;
+  }
   await withEnvFileLock(envPath, async () => {
     await mkdir(dirname(envPath), { recursive: true });
     const existing = await readText(envPath);
     const next = pruneEnvKeys(existing, keys);
     await writeFileIfChanged(existing, next, envPath);
+  });
+}
+
+export async function createEnvFileExclusive({ envPath, content }) {
+  return await withEnvFileLock(envPath, async () => {
+    await mkdir(dirname(envPath), { recursive: true });
+    try {
+      await writeFile(envPath, normalizeNextEnvContent(content), { encoding: 'utf-8', flag: 'wx' });
+      return true;
+    } catch (error) {
+      if (error?.code === 'EEXIST') return false;
+      throw error;
+    }
   });
 }
 
@@ -112,11 +139,10 @@ function pruneEnvKeys(existing, removeKeys) {
 }
 
 async function writeFileIfChanged(existingContent, nextContent, path) {
-  const normalizedNext = nextContent.endsWith('\n') ? nextContent : nextContent + '\n';
-  const normalizedExisting = existingContent.endsWith('\n') ? existingContent : existingContent + (existingContent ? '\n' : '');
-  if (normalizedExisting === normalizedNext) {
+  if (envContentsEqual(existingContent, nextContent)) {
     return;
   }
+  const normalizedNext = normalizeNextEnvContent(nextContent);
   let existingMode = null;
   try {
     existingMode = (await stat(path)).mode & 0o777;
@@ -129,4 +155,18 @@ async function writeFileIfChanged(existingContent, nextContent, path) {
     ...(existingMode == null ? {} : { mode: existingMode }),
   });
   await rename(tmp, path);
+}
+
+function normalizeExistingEnvContent(content) {
+  const value = String(content ?? '');
+  return value.endsWith('\n') ? value : value + (value ? '\n' : '');
+}
+
+function normalizeNextEnvContent(content) {
+  const value = String(content ?? '');
+  return value.endsWith('\n') ? value : `${value}\n`;
+}
+
+function envContentsEqual(existingContent, nextContent) {
+  return normalizeExistingEnvContent(existingContent) === normalizeNextEnvContent(nextContent);
 }

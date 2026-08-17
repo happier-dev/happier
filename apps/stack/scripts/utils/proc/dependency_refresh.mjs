@@ -9,6 +9,7 @@ import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './cliDistBuil
 import { withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
 
+const REFRESH_STATE_VERSION = 3;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
 
 function installDirLockKey(installDir) {
@@ -106,35 +107,71 @@ function snapshotsMatch(before, after) {
 }
 
 export async function inspectDependencyRefresh({ installDir, componentDir = installDir }) {
+  const resolvedInstallDir = resolve(installDir);
   const nodeModules = join(installDir, 'node_modules');
   const inputPaths = await collectDependencyInputPaths({ installDir, componentDir });
   const inputSnapshot = await readInputSnapshot(inputPaths);
+  // This is the admission record for the installed tree, so keep it with that
+  // tree. Warm readers can prove freshness without touching mutation-lock paths,
+  // and replacing node_modules naturally invalidates the old publication.
   const markerPath = join(nodeModules, REFRESH_MARKER);
   const markerState = await readJsonIfExists(markerPath).catch(() => null);
-  if (markerState?.version === 2 && Array.isArray(markerState.inputs)) {
-    return { required: !snapshotsMatch(markerState.inputs, inputSnapshot), inputPaths, inputSnapshot, markerPath };
+  const nodeModulesPresent = await pathExists(nodeModules);
+  if (
+    markerState?.version === REFRESH_STATE_VERSION
+    && markerState.installDir === resolvedInstallDir
+    && Array.isArray(markerState.inputs)
+  ) {
+    return {
+      required: !nodeModulesPresent || markerState.superseded === true || !snapshotsMatch(markerState.inputs, inputSnapshot),
+      inputPaths,
+      inputSnapshot,
+      markerPath,
+    };
   }
   return { required: true, inputPaths, inputSnapshot, markerPath };
 }
 
-export async function withDependencyRefresh({ installDir, componentDir = installDir, env = process.env }, refresh) {
+export async function withDependencyRefresh({
+  installDir,
+  componentDir = installDir,
+  env = process.env,
+  onDependenciesReady = null,
+}, refresh) {
   if (typeof refresh !== 'function') throw new TypeError('withDependencyRefresh requires a refresh callback');
+  if (onDependenciesReady != null && typeof onDependenciesReady !== 'function') {
+    throw new TypeError('withDependencyRefresh requires onDependenciesReady to be a function when provided');
+  }
+  const shouldRunDependencyReadyAction = onDependenciesReady !== null;
   const beforeLock = await inspectDependencyRefresh({ installDir, componentDir });
-  if (!beforeLock.required) return { refreshed: false, reason: 'up-to-date' };
+  if (!beforeLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
 
   return await withJsonOwnerFileLock(async () => {
     const afterDependencyLock = await inspectDependencyRefresh({ installDir, componentDir });
-    if (!afterDependencyLock.required) return { refreshed: false, reason: 'up-to-date' };
+    if (!afterDependencyLock.required && !shouldRunDependencyReadyAction) return { refreshed: false, reason: 'up-to-date' };
     const mutate = async (heldCliLockValue = null) => {
       const beforeMutation = await inspectDependencyRefresh({ installDir, componentDir });
-      if (!beforeMutation.required) return { refreshed: false, reason: 'up-to-date' };
-      await refresh({ heldCliLockValue });
-      const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });
-      const refreshedInputSnapshot = await readInputSnapshot(refreshedInputPaths);
-      if (snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot)) {
-        await writeJsonAtomic(beforeMutation.markerPath, { version: 2, installDir: resolve(installDir), inputs: refreshedInputSnapshot });
+      let result = { refreshed: false, reason: 'up-to-date' };
+      if (beforeMutation.required) {
+        await refresh({ heldCliLockValue });
+        const refreshedInputPaths = await collectDependencyInputPaths({ installDir, componentDir });
+        const refreshedInputSnapshot = await readInputSnapshot(refreshedInputPaths);
+        const superseded = !snapshotsMatch(beforeMutation.inputSnapshot, refreshedInputSnapshot);
+        await writeJsonAtomic(beforeMutation.markerPath, {
+          version: REFRESH_STATE_VERSION,
+          installDir: resolve(installDir),
+          // If inputs advanced during the refresh, publish the admitted generation
+          // as superseded. The next owner schedules exactly one successor instead
+          // of treating the install as an unknown/unpublished attempt forever.
+          inputs: superseded ? beforeMutation.inputSnapshot : refreshedInputSnapshot,
+          superseded,
+        });
+        result = { refreshed: true, reason: 'stale-inputs' };
       }
-      return { refreshed: true, reason: 'stale-inputs' };
+      if (onDependenciesReady) {
+        await onDependenciesReady();
+      }
+      return result;
     };
     const monorepoRoot = coerceHappyMonorepoRootFromPath(installDir);
     if (!monorepoRoot || resolve(monorepoRoot) !== resolve(installDir)) return await mutate();

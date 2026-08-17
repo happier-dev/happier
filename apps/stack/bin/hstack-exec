@@ -3,9 +3,19 @@
 # Native preferred-execution owner. Node validates configuration and publishes
 # its shell-safe projection only when configuration changes.
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 1
+case "$0" in
+  /*) launcher_path=$0 ;;
+  */*) launcher_path="$PWD/${0#./}" ;;
+  *) launcher_path=$(command -v -- "$0") || exit 1 ;;
+esac
+launcher_dir=${launcher_path%/*}
+[ "$launcher_dir" != "$launcher_path" ] || launcher_dir=.
+script_dir=$(CDPATH= cd -- "$launcher_dir" && pwd -P) || exit 1
 projection_generator="$script_dir/../scripts/utils/dev_targets/native_execution_projection.mjs"
-repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd -P) || exit 1
+repo_root=${script_dir%/apps/stack/bin}
+if [ "$repo_root" = "$script_dir" ]; then
+  repo_root=$(CDPATH= cd -- "$script_dir/../../.." && pwd -P) || exit 1
+fi
 invoked_cwd=$(pwd -P) || exit 1
 
 case "$invoked_cwd" in
@@ -56,10 +66,15 @@ else
   esac
 fi
 
-repo_token=$(basename -- "$repo_root" \
-  | LC_ALL=C tr '[:upper:]' '[:lower:]' \
-  | sed 's/[^a-z0-9-][^a-z0-9-]*/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//') || \
-  run_local "$@"
+repo_token=${repo_root##*/}
+case "$repo_token" in
+  ''|*[!a-z0-9-]*)
+    repo_token=$(printf '%s' "$repo_token" \
+      | LC_ALL=C tr '[:upper:]' '[:lower:]' \
+      | sed 's/[^a-z0-9-][^a-z0-9-]*/-/g; s/-\{1,\}/-/g; s/^-//; s/-$//') || \
+      run_local "$@"
+    ;;
+esac
 [ -n "$repo_token" ] || repo_token=repo
 
 if [ -d "$storage_root" ] && [ ! -r "$storage_root" ]; then
@@ -73,7 +88,10 @@ if [ -n "${HAPPIER_EXEC_CONFIG_PATH-}" ]; then
   candidate_projection=$(dirname -- "$candidate_config")/dev-target-exec-v1.sh
   if [ -f "$candidate_config" ] && [ -r "$candidate_projection" ] && [ ! "$candidate_config" -nt "$candidate_projection" ]; then
     . "$candidate_projection" || run_local "$@"
-    [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 1 ] || run_local "$@"
+    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" != 2 ]; then
+      node "$projection_generator" "$candidate_config" "$candidate_projection" "$repo_root" || exit $?
+      exec "$0" "$@"
+    fi
     [ "${projection_repo_root-}" = "$repo_root" ] || run_local "$@"
     config_path=$candidate_config
     projection_path=$candidate_projection
@@ -90,7 +108,7 @@ for candidate_config in "$storage_root"/repo-"$repo_token"-*/dev-targets.json; d
     # The projection is generated from the validated canonical config and is
     # private to the stack directory. It is data for this native dispatcher.
     . "$candidate_projection" || run_local "$@"
-    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 1 ] && [ "${projection_repo_root-}" = "$repo_root" ]; then
+    if [ "${HSTACK_EXEC_PROJECTION_VERSION-}" = 2 ] && [ "${projection_repo_root-}" = "$repo_root" ]; then
       config_path=$candidate_config
       projection_path=$candidate_projection
       break
@@ -142,6 +160,18 @@ case "${1-}" in
 esac
 [ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] command is required' >&2; exit 1; }
 requested_command=$1
+requested_command_name=${requested_command##*/}
+requires_remote_dependencies=0
+case " ${dependency_direct_commands-} " in
+  *" $requested_command_name "*) requires_remote_dependencies=1 ;;
+esac
+if [ "$requested_command_name" = corepack ]; then
+  case " ${dependency_corepack_subcommands-} " in
+    *" ${2-} "*) requires_remote_dependencies=1 ;;
+  esac
+fi
+preflight_command=$requested_command
+[ "$requires_remote_dependencies" -eq 1 ] && preflight_command=corepack
 relative_cwd=${invoked_cwd#"$repo_root"}
 relative_cwd=${relative_cwd#/}
 
@@ -215,9 +245,9 @@ remote_command_probe() {
   if [ -n "$remote_path" ]; then
     path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
   fi
-  case "$requested_command" in
-    */*) availability="[ -x $(quote_remote "$requested_command") ]" ;;
-    *) availability="command -v $(quote_remote "$requested_command") >/dev/null 2>&1" ;;
+  case "$preflight_command" in
+    */*) availability="[ -x $(quote_remote "$preflight_command") ]" ;;
+    *) availability="command -v $(quote_remote "$preflight_command") >/dev/null 2>&1" ;;
   esac
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability"
   if [ -n "$ssh_config" ]; then
@@ -230,7 +260,7 @@ remote_command_probe() {
 command_is_available() {
   number=$1
   name=$2
-  command_key=$(printf '%s' "$requested_command" | cksum | awk '{print $1}')
+  command_key=$(printf '%s' "$preflight_command" | cksum | awk '{print $1}')
   cache_path="$cache_dir/$name.command.$command_key.cache"
   now=$(date +%s)
   if [ -r "$cache_path" ]; then
@@ -480,8 +510,12 @@ remote_cwd=$remote_repo
 
 execution_id="native-$$-${selected_number}-$(date +%s)"
 pid_file="$remote_home/remote-exec/$execution_id.pid"
-remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; cd -- $(quote_remote "$remote_cwd"); export HAPPIER_DEV_TARGET_EXECUTION=1;"
+remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; export HAPPIER_DEV_TARGET_EXECUTION=1;"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
+if [ "$requires_remote_dependencies" -eq 1 ]; then
+  remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); corepack yarn node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs;"
+fi
+remote_script="$remote_script cd -- $(quote_remote "$remote_cwd");"
 for argument in "$@"; do remote_script="$remote_script $(quote_remote "$argument")"; done
 remote_script="$remote_script; exit \$?"
 remote_command="bash -lc $(quote_remote "$remote_script")"

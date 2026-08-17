@@ -18,14 +18,29 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
     ],
   });
   try {
-    const runtimeServer = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
+    const runtimeServer = spawn(process.execPath, ['-e', `
+      const http = require('node:http');
+      const server = http.createServer((req, res) => {
+        if (req.url === '/health' || req.url === '/ready') {
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+          return;
+        }
+        res.statusCode = 404;
+        res.end('not found');
+      });
+      server.listen(0, '127.0.0.1', () => process.stdout.write(String(server.address().port) + '\\n'));
+      setInterval(() => {}, 1000);
+    `], {
+      stdio: ['ignore', 'pipe', 'ignore'],
       env: {
         PATH: process.env.PATH ?? '',
         HOME: process.env.HOME ?? '',
         HAPPIER_STACK_STACK: 'dev-auth',
         HAPPIER_STACK_ENV_FILE: fixture.envPath,
         HAPPIER_STACK_CLI_HOME_DIR: join(fixture.storageDir, 'dev-auth', 'cli'),
+        HAPPIER_STACK_PROCESS_KIND: 'server',
       },
     });
     t.after(() => {
@@ -34,6 +49,17 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
       } catch {
         // ignore
       }
+    });
+    const runtimeServerPort = await new Promise((resolve, reject) => {
+      let output = '';
+      runtimeServer.stdout.setEncoding('utf8');
+      runtimeServer.stdout.on('data', (chunk) => {
+        output += String(chunk);
+        const value = Number(output.split(/\r?\n/).find(Boolean));
+        if (Number.isInteger(value) && value > 0) resolve(value);
+      });
+      runtimeServer.once('error', reject);
+      runtimeServer.once('exit', (code) => reject(new Error(`runtime server exited early (${code ?? 'unknown'})`)));
     });
 
     const runtimeStatePath = join(fixture.storageDir, 'dev-auth', 'stack.runtime.json');
@@ -44,7 +70,7 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
         stackName: 'dev-auth',
         ownerPid: 999_999_999,
         processes: { serverPid: runtimeServer.pid },
-        ports: { server: 3010 },
+        ports: { server: runtimeServerPort },
       }) + '\n',
       'utf-8'
     );
@@ -63,8 +89,8 @@ test('hstack auth login --print --json uses stack.runtime.json server port when 
     const parsed = JSON.parse(res.stdout.trim());
 
     assert.equal(parsed.stackName, 'dev-auth');
-    assert.equal(parsed.internalServerUrl, 'http://127.0.0.1:3010');
-    assert.equal(parsed.publicServerUrl, 'http://localhost:3010');
+    assert.equal(parsed.internalServerUrl, `http://127.0.0.1:${runtimeServerPort}`);
+    assert.equal(parsed.publicServerUrl, `http://localhost:${runtimeServerPort}`);
   } finally {
     await fixture.cleanup();
   }

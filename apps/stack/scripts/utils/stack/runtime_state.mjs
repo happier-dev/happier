@@ -6,9 +6,10 @@ import { resolveStackEnvPath } from '../paths/paths.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { isPidAlive, observePidLiveness } from '../proc/pids.mjs';
 import { isPidOwnedByStack } from '../proc/ownership.mjs';
+import { resolveStackOwnedListenPid } from '../server/listener_ownership.mjs';
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
-import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 export { isPidAlive };
 
@@ -385,6 +386,7 @@ export async function isStackRuntimeProcessTrusted(
     observePidLivenessImpl,
     isPidOwnedByStackImpl = isPidOwnedByStack,
     isRuntimeProcessTrustedImpl = null,
+    throwOnInconclusive = true,
   } = {},
 ) {
   const n = Number(pid);
@@ -392,6 +394,7 @@ export async function isStackRuntimeProcessTrusted(
   const liveness = await observeRuntimePidLiveness(n, { observePidLivenessImpl, isPidAliveImpl });
   if (liveness.status === 'dead') return false;
   if (liveness.status === 'inconclusive') {
+    if (!throwOnInconclusive) return false;
     const error = new Error(`[stack] recorded ${key || 'process'} liveness is inconclusive (pid=${n}, reason=${liveness.reason})`);
     error.code = 'ESTACKRUNTIMEPROCESSINCONCLUSIVE';
     throw error;
@@ -406,11 +409,18 @@ export async function isStackRuntimeProcessTrusted(
     return true;
   }
 
-  return await isPidOwnedByStackImpl(n, {
-    stackName: context.stackName,
-    envPath: context.envPath,
-    cliHomeDir: context.cliHomeDir,
-  });
+  try {
+    return await isPidOwnedByStackImpl(n, {
+      stackName: context.stackName,
+      envPath: context.envPath,
+      cliHomeDir: context.cliHomeDir,
+    });
+  } catch (error) {
+    if (!throwOnInconclusive && error?.code === 'EPROCESSIDENTITYINCONCLUSIVE') {
+      return false;
+    }
+    throw error;
+  }
 }
 
 export async function hasTrustedStackRuntimeProcesses(runtimeState, context = {}, options = {}) {
@@ -423,21 +433,55 @@ export async function hasTrustedStackRuntimeProcesses(runtimeState, context = {}
   return false;
 }
 
+// A runtime snapshot is current only while its recorded lifecycle still has a
+// trusted owner or child. Consumers use this instead of presenting the raw
+// state-file identity after an unowned/stale runtime has exited.
+export async function hasTrustedStackRuntimeLifecycle(runtimeState, context = {}, options = {}) {
+  const ownerPid = normalizeRuntimePid(runtimeState?.ownerPid);
+  if (ownerPid && await isStackRuntimeProcessTrusted(ownerPid, { ...context, key: 'ownerPid' }, options)) {
+    return true;
+  }
+  return await hasTrustedStackRuntimeProcesses(runtimeState, context, options);
+}
+
 export async function resolveTrustedStackRuntimeServerPort(runtimeState, context = {}, options = {}) {
   const port = Number(runtimeState?.ports?.server);
   if (!Number.isFinite(port) || port <= 0) return null;
-  const ownerTrusted = await isStackRuntimeProcessTrusted(
-    runtimeState?.ownerPid,
-    { ...context, key: 'ownerPid' },
+  const trustContext = resolveStackRuntimeProcessTrustContext(context);
+  const serverProcessKey = runtimeState?.serverProxy?.mode === 'proxy' ? 'proxyPid' : 'serverPid';
+  const serverPid = normalizeRuntimePid(runtimeState?.processes?.[serverProcessKey]);
+  if (!serverPid) return null;
+  const serverTrusted = await isStackRuntimeProcessTrusted(
+    serverPid,
+    { ...trustContext, key: serverProcessKey },
     options,
   );
-  if (ownerTrusted) return port;
-  return (await hasTrustedStackRuntimeProcesses(runtimeState, context, options)) ? port : null;
+  if (!serverTrusted) return null;
+
+  const resolveStackOwnedListenPidImpl = options.resolveStackOwnedListenPidImpl ?? resolveStackOwnedListenPid;
+  try {
+    const listenerPid = await resolveStackOwnedListenPidImpl(
+      {
+        port,
+        stackName: trustContext.stackName,
+        envPath: trustContext.envPath,
+      },
+      {
+        candidatePids: [serverPid],
+        ...(options.listenerOwnershipOptions ?? {}),
+      },
+    );
+    return Number(listenerPid) === serverPid ? port : null;
+  } catch (error) {
+    if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') return null;
+    throw error;
+  }
 }
 
 async function pruneUntrustedRuntimeProcessPids(processes, context = {}, options = {}) {
   if (!isPlainObject(processes)) return {};
   const out = { ...processes };
+  const strictTrustOptions = { ...options, throwOnInconclusive: true };
   for (const [key, value] of Object.entries(out)) {
     if (/Pids$/.test(String(key)) && Array.isArray(value)) {
       const trustedPids = [];
@@ -445,7 +489,7 @@ async function pruneUntrustedRuntimeProcessPids(processes, context = {}, options
         const pid = Number(rawPid);
         if (!Number.isFinite(pid) || pid <= 1 || trustedPids.includes(pid)) continue;
         // eslint-disable-next-line no-await-in-loop
-        if (await isStackRuntimeProcessTrusted(pid, { ...context, key: String(key) }, options)) {
+        if (await isStackRuntimeProcessTrusted(pid, { ...context, key: String(key) }, strictTrustOptions)) {
           trustedPids.push(pid);
         }
       }
@@ -456,7 +500,7 @@ async function pruneUntrustedRuntimeProcessPids(processes, context = {}, options
     if (!/Pid$/.test(String(key))) continue;
     const pid = Number(value);
     // eslint-disable-next-line no-await-in-loop
-    if (!(await isStackRuntimeProcessTrusted(pid, { ...context, key: String(key) }, options))) {
+    if (!(await isStackRuntimeProcessTrusted(pid, { ...context, key: String(key) }, strictTrustOptions))) {
       out[key] = null;
     }
   }

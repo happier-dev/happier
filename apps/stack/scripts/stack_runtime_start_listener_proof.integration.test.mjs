@@ -85,6 +85,43 @@ test('runtime start proves its spawned listener after a loaded group-filtered di
   }
 });
 
+test('runtime start retries a transient empty spawned-group listener observation', async (t) => {
+  if (process.platform === 'win32') return t.skip('process-group listener proof is POSIX-specific');
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createStartableRuntimeSnapshotFixture(t, {
+    stackName: 'runtime-spawned-listener-transient-empty',
+    listenerDiscoveryMode: 'transient-empty-then-group-proof',
+  });
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    ...fixture.listenerDiscoveryEnv,
+  };
+  const args = [
+    join(rootDir, 'bin', 'hstack.mjs'),
+    'stack', 'start', fixture.stackName, '--background', '--runtime', '--no-browser',
+  ];
+
+  const startRes = await runNode(args, { cwd: rootDir, env });
+  assert.equal(startRes.code, 0, `stdout:\n${startRes.stdout}\nstderr:\n${startRes.stderr}`);
+  try {
+    await waitForHealth(fixture.baseUrl);
+    const runtimeState = await waitForRecordedServerPids(join(fixture.stackDir, 'stack.runtime.json'));
+    assert.ok(Number(runtimeState?.processes?.serverPid) > 1);
+    const discoveryLog = await readFile(fixture.listenerDiscoveryLogPath, 'utf8');
+    assert.match(discoveryLog, /empty-group:\d+/);
+    assert.match(discoveryLog, /group:\d+/);
+  } finally {
+    await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'stop', fixture.stackName, '--yes'], {
+      cwd: rootDir,
+      env: { ...env, PATH: process.env.PATH },
+    });
+  }
+});
+
 test('runtime start fails closed and cleans up when spawned and broad listener discovery stay inconclusive', async (t) => {
   if (process.platform === 'win32') return t.skip('process-group listener proof is POSIX-specific');
   const rootDir = stackRootDirFromMeta(import.meta.url);

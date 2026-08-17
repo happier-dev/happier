@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import cliDistBuildManifest from '../cliDistBuildManifest.cjs';
+
 async function admitExistingWorkspaceBundles(_repoRoot, packageNames) {
   return { ok: true, built: [], skipped: packageNames };
 }
@@ -237,6 +239,9 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
     writeCliArtifactFixtures(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
+    const { readCliNodeWorkspaceRuntimeIdentity } = await import(
+      '../dist/componentArtifacts/copyCliNodeRuntimePayload.js'
+    );
     const target = resolveHostCliBinaryTarget(artifacts);
     const executableName = artifacts.resolveExecutableName({ baseName: 'happier', target });
     const cliProxyApiManagedRuntimeExecutablePath = writeCliProxyApiManagedRuntimeFixture(repoRoot, target);
@@ -252,7 +257,13 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
       assert.equal(runCalls.length, 1, 'concurrent artifact requests should not trigger a second CLI dist build');
       await firstBuildRelease;
       mkdirSync(cliDistDir, { recursive: true });
-      writeFileSync(join(cliDistDir, 'index.mjs'), 'console.log("cli");\n', 'utf8');
+      const entrypoint = join(cliDistDir, 'index.mjs');
+      writeFileSync(entrypoint, 'console.log("cli");\n', 'utf8');
+      const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({ repoRoot });
+      cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+        workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
+        workspaceRuntimePackages: workspaceRuntime.packageNames,
+      });
     };
 
     const compileBinary = async ({ outfile }) => {

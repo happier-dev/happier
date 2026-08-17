@@ -53,6 +53,31 @@ export function daemonStartGate({ env, cliHomeDir, serverUrl = '' }) {
   return { ok: false, reason: 'missing_credentials' };
 }
 
+/**
+ * Runtime snapshots can start a controlled server without credentials, while their daemon
+ * remains a credential-dependent consumer. Source-backed starts retain the existing
+ * fail-closed non-interactive behavior and interactive setup path.
+ */
+export function resolveDaemonStartAdmission({
+  daemonRequested,
+  runtimeBackedStart = false,
+  terminalIsInteractive = false,
+  env,
+  cliHomeDir,
+  serverUrl = '',
+} = {}) {
+  if (!daemonRequested) {
+    return { startDaemon: false, gate: null, skipReason: null };
+  }
+
+  const gate = daemonStartGate({ env, cliHomeDir, serverUrl });
+  if (runtimeBackedStart && !terminalIsInteractive && !gate.ok) {
+    return { startDaemon: false, gate, skipReason: gate.reason };
+  }
+
+  return { startDaemon: true, gate, skipReason: null };
+}
+
 export function formatDaemonAuthRequiredError({ stackName, cliHomeDir, serverUrl = '' }) {
   const name = (stackName ?? '').toString().trim() || 'main';
   const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl });

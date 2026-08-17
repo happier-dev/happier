@@ -9,7 +9,7 @@ export function hasExplicitStackRuntimeModeArg(args = []) {
   return Array.isArray(args) && (args.includes('--runtime') || args.includes('--source'));
 }
 
-export function resolveStackRuntimeMode({ argv = [], env = process.env } = {}) {
+export function resolveStackRuntimeMode({ argv = [], env = process.env, activeRuntimeState = null } = {}) {
   const args = Array.isArray(argv) ? argv : [];
   const wantsRuntime = args.includes('--runtime');
   const wantsSource = args.includes('--source');
@@ -23,6 +23,15 @@ export function resolveStackRuntimeMode({ argv = [], env = process.env } = {}) {
   }
   if (wantsSource) {
     return { mode: 'source', source: 'flag' };
+  }
+
+  if (
+    activeRuntimeState &&
+    typeof activeRuntimeState === 'object' &&
+    Object.prototype.hasOwnProperty.call(activeRuntimeState, 'runtimeSnapshotId') &&
+    activeRuntimeState.runtimeSnapshotId === null
+  ) {
+    return { mode: 'source', source: 'active-runtime' };
   }
 
   if (Object.prototype.hasOwnProperty.call(env ?? {}, 'HAPPIER_STACK_RUNTIME_MODE')) {

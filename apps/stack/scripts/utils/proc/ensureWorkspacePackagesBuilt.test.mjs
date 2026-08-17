@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ensureWorkspacePackagesBuiltForComponent } from './pm.mjs';
+import {
+  ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentCanonical,
+} from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { buildBundledWorkspaceDependenciesForCli } from '../../../../cli/scripts/buildSharedDeps.mjs';
 
 async function waitForFile(path, { timeoutMs = 5_000 } = {}) {
@@ -156,6 +159,121 @@ function captureStderr(t) {
   return chunks;
 }
 
+async function writeQuietWorkspaceBuildFailurePackageManager({ binDir, name, buildArgs }) {
+  await mkdir(binDir, { recursive: true });
+  const entrypointPath = join(binDir, `${name}-quiet-workspace-build-failure.cjs`);
+  const commandPath = join(binDir, process.platform === 'win32' ? `${name}.cmd` : name);
+  await writeFile(
+    entrypointPath,
+    [
+      'const args = process.argv.slice(2);',
+      `const expectedBuildArgs = ${JSON.stringify(buildArgs)};`,
+      "if (args.length === 1 && args[0] === '--version') { process.stdout.write('quiet-version-output\\n'); process.exit(0); }",
+      'if (JSON.stringify(args) !== JSON.stringify(expectedBuildArgs)) process.exit(91);',
+      "process.stdout.write('stdout-head\\n' + 'x'.repeat(10_000) + 'stdout-tail\\n');",
+      "process.stderr.write('stderr-head\\n' + 'y'.repeat(10_000) + 'stderr-tail\\nHAPPIER_STACK_WORKSPACE_TEST_SECRET=' + process.env.HAPPIER_STACK_WORKSPACE_TEST_SECRET + '\\n');",
+      'process.exit(37);',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await writeFile(
+    commandPath,
+    process.platform === 'win32'
+      ? `@${JSON.stringify(process.execPath)} ${JSON.stringify(entrypointPath)} %*\r\n`
+      : `#!${process.execPath}\nrequire(${JSON.stringify(entrypointPath)});\n`,
+    'utf-8',
+  );
+  await chmod(commandPath, 0o755);
+}
+
+async function createQuietWorkspaceBuildFailureFixture(t, { packageManager }) {
+  const root = await mkdtemp(join(tmpdir(), `hs-quiet-${packageManager}-workspace-build-failure-`));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  for (const appName of ['ui', 'cli', 'server']) {
+    const appDir = join(root, 'apps', appName);
+    await mkdir(appDir, { recursive: true });
+    await writeJson(join(appDir, 'package.json'), {
+      name: `@fixture/${appName}`,
+      private: true,
+      ...(appName === 'ui' ? {
+        dependencies: { '@happier-dev/quiet-workspace-build-failure': '0.0.0' },
+      } : {}),
+    });
+  }
+  await writeJson(join(root, 'package.json'), {
+    private: true,
+    workspaces: ['apps/*', 'packages/*'],
+  });
+
+  const packageDir = join(root, 'packages', 'quiet-workspace-build-failure');
+  await mkdir(join(packageDir, 'src'), { recursive: true });
+  await writeFile(join(packageDir, 'src', 'index.ts'), 'export const value = true;\n', 'utf-8');
+  await writeJson(join(packageDir, 'package.json'), {
+    name: '@happier-dev/quiet-workspace-build-failure',
+    type: 'module',
+    main: './dist/index.js',
+    scripts: { build: 'fixture-build' },
+  });
+
+  const binDir = join(root, 'bin');
+  await writeQuietWorkspaceBuildFailurePackageManager({
+    binDir,
+    name: packageManager,
+    buildArgs: packageManager === 'yarn' ? ['-s', 'build'] : ['run', '-s', 'build'],
+  });
+
+  const env = {
+    ...process.env,
+    PATH: binDir,
+    HAPPIER_STACK_BINARY_MODE: packageManager === 'npm' ? '1' : '0',
+    HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_WORKSPACE_TEST_SECRET: 'must-not-escape',
+  };
+  if (packageManager === 'npm') {
+    const originalExecPath = process.execPath;
+    process.execPath = join(root, 'fake-node-bin', process.platform === 'win32' ? 'node.exe' : 'node');
+    t.after(() => {
+      process.execPath = originalExecPath;
+    });
+  }
+
+  return { root, env };
+}
+
+async function assertQuietStackWorkspaceBuildFailureDiagnostics(t, packageManager) {
+  const { root, env } = await createQuietWorkspaceBuildFailureFixture(t, { packageManager });
+  let failure = null;
+  await assert.rejects(
+    ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), {
+      quiet: true,
+      env,
+    }),
+    (error) => {
+      failure = error;
+      return error?.code === 'EEXIT';
+    },
+  );
+
+  assert.match(failure?.message ?? '', /failed \(code=37, sig=null\)/);
+  assert.match(failure?.message ?? '', /Child output \(tail; earlier output omitted\):/);
+  assert.match(failure?.message ?? '', /\[stdout\]\n[\s\S]*stdout-tail/);
+  assert.match(failure?.message ?? '', /\[stderr\]\n[\s\S]*stderr-tail/);
+  assert.match(failure?.message ?? '', /HAPPIER_STACK_WORKSPACE_TEST_SECRET=<redacted>/);
+  assert.doesNotMatch(failure?.message ?? '', /stdout-head|stderr-head|must-not-escape/);
+  assert.ok((failure?.message.length ?? 0) < 17_000, 'expected a bounded failure diagnostic');
+}
+
+test('Stack Yarn workspace build failures retain bounded child diagnostics', async (t) => {
+  await assertQuietStackWorkspaceBuildFailureDiagnostics(t, 'yarn');
+});
+
+test('Stack binary npm workspace build failures retain bounded child diagnostics', async (t) => {
+  await assertQuietStackWorkspaceBuildFailureDiagnostics(t, 'npm');
+});
+
 test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based workspaces when export targets are missing', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-'));
   t.after(async () => {
@@ -204,7 +322,11 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
     HAPPIER_STACK_ENV_FILE: null,
   });
 
-  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), {
+    quiet: true,
+    env: process.env,
+    admitPriorOutputsImmediately: true,
+  });
 
   const out = await readFile(outputPath, 'utf-8');
   assert.match(out, /packages\/protocol :: -s build/);
@@ -250,6 +372,69 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
   const finalOut = await readFile(outputPath, 'utf-8');
   const finalOccurrences = finalOut.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
   assert.equal(finalOccurrences, 4, 'source/config/package changes rebuild, while test-only source does not');
+});
+
+test('ensureWorkspacePackagesBuiltForComponent builds unscoped internal workspace dependencies', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-unscoped-workspace-built-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await writeJson(join(root, 'package.json'), {
+    private: true,
+    workspaces: ['apps/*', 'packages/*'],
+  });
+  for (const appName of ['ui', 'cli']) {
+    const appDir = join(root, 'apps', appName);
+    await mkdir(appDir, { recursive: true });
+    await writeJson(join(appDir, 'package.json'), {
+      name: `@happier-dev/${appName}`,
+      private: true,
+    });
+  }
+
+  const serverDir = join(root, 'apps', 'server');
+  await mkdir(serverDir, { recursive: true });
+  await writeJson(join(serverDir, 'package.json'), {
+    name: '@happier-dev/server',
+    private: true,
+    dependencies: {
+      'privacy-kit': '^0.0.25',
+    },
+  });
+
+  const privacyKitDir = join(root, 'packages', 'privacy-kit');
+  await mkdir(privacyKitDir, { recursive: true });
+  await writeJson(join(privacyKitDir, 'package.json'), {
+    name: 'privacy-kit',
+    version: '0.0.25',
+    type: 'module',
+    main: './dist/index.js',
+    exports: './dist/index.js',
+    scripts: { build: 'fixture-build' },
+  });
+  await mkdir(join(privacyKitDir, 'src'), { recursive: true });
+  await writeFile(join(privacyKitDir, 'src', 'index.ts'), 'export const privacy = true;\n', 'utf-8');
+
+  const buildCalls = [];
+  const result = await ensureWorkspacePackagesBuiltForComponentCanonical(serverDir, {
+    quiet: true,
+    env: process.env,
+    workspaceBuildBoundary: {
+      prepareEnv: async (_packageDir, env) => ({ ...env }),
+      runPackageBuild: async (packageDir, { env }) => {
+        buildCalls.push(packageDir);
+        const outputDir = env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+        assert.ok(outputDir);
+        await mkdir(outputDir, { recursive: true });
+        await writeFile(join(outputDir, 'index.js'), 'export const privacy = true;\n', 'utf-8');
+      },
+    },
+  });
+
+  assert.deepEqual(buildCalls, [privacyKitDir]);
+  assert.deepEqual(result.built, ['privacy-kit']);
+  assert.equal(await readFile(join(privacyKitDir, 'dist', 'index.js'), 'utf-8'), 'export const privacy = true;\n');
 });
 
 test('ensureWorkspacePackagesBuiltForComponent uses inherited Yarn JS entrypoint when PATH has no Yarn shim', async (t) => {
@@ -678,7 +863,11 @@ test('ensureWorkspacePackagesBuiltForComponent resolves TypeScript bin shims whe
     HAPPIER_STACK_ENV_FILE: null,
   });
 
-  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), {
+    quiet: true,
+    env: process.env,
+    admitPriorOutputsImmediately: true,
+  });
 
   const out = await readFile(outputPath, 'utf-8');
   assert.match(out, /packages\/protocol :: -s build/);
@@ -834,7 +1023,6 @@ test('CLI shared dependency preparation waits for the canonical workspace packag
     cliPreparation = buildBundledWorkspaceDependenciesForCli({
       repoRoot: root,
       workspaceNames: ['protocol'],
-      syncWorkspaceBundledDependenciesForBuildImpl: () => {},
       runWorkspaceArtifactBuildImpl: () => false,
       runTscImpl: () => {
         bypassCompileStarted = true;
@@ -918,11 +1106,73 @@ test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when
     HAPPIER_STACK_ENV_FILE: null,
   });
 
-  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), {
+    quiet: true,
+    env: process.env,
+    admitPriorOutputsImmediately: true,
+  });
 
   const out = await readFile(outputPath, 'utf-8');
   assert.match(out, /packages\/protocol :: -s build/);
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'utf-8')), true);
+});
+
+test('ensureWorkspacePackagesBuiltForComponent admits structurally runnable prior outputs before refreshing stale inputs', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-prior-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: { '@happier-dev/protocol': '0.0.0' },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(join(protocolDir, 'src'), { recursive: true });
+  await mkdir(join(protocolDir, 'dist'), { recursive: true });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeFile(join(protocolDir, 'dist', 'index.js'), 'export const prior = true;\n', 'utf-8');
+  await writeFile(join(protocolDir, 'dist', 'index.d.ts'), 'export declare const prior: boolean;\n', 'utf-8');
+  await writeFile(join(protocolDir, 'src', 'index.ts'), 'export const current = true;\n', 'utf-8');
+  const baseTime = Date.now();
+  await utimes(join(protocolDir, 'dist', 'index.js'), new Date(baseTime - 20_000), new Date(baseTime - 20_000));
+  await utimes(join(protocolDir, 'dist', 'index.d.ts'), new Date(baseTime - 20_000), new Date(baseTime - 20_000));
+  await utimes(join(protocolDir, 'src', 'index.ts'), new Date(baseTime), new Date(baseTime));
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnWorkspaceBuildStub({ binDir, outputPath });
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  const admitted = await ensureWorkspacePackagesBuiltForComponentCanonical(
+    join(root, 'apps', 'ui'),
+    {
+      quiet: true,
+      env: process.env,
+      admitPriorOutputsImmediately: true,
+    },
+  );
+
+  assert.deepEqual(admitted.built, []);
+  assert.equal(await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8'), 'export const prior = true;\n');
+  assert.doesNotMatch(await readFile(outputPath, 'utf-8'), /packages\/protocol :: -s build/);
 });
 
 test('ensureWorkspacePackagesBuiltForComponent tolerates transient missing local imports while another local build finishes', async (t) => {

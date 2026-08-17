@@ -2,9 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { ensureDepsInstalled, pmExecBin, pmSpawnScript } from '../proc/pm.mjs';
-import { killProcessTree, markSpawnedProcessPlannedExit } from '../proc/proc.mjs';
+import { killProcessTree, markSpawnedProcessPlannedExit, spawnProc } from '../proc/proc.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import { applyServerLightEnvDefaults } from '../server/apply_server_light_env_defaults.mjs';
+import { applyRuntimeServerLightSqliteEnv } from '../server/apply_runtime_server_light_sqlite_env.mjs';
 import { applyEffectiveDbProviderEnv, resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
 import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
@@ -376,8 +377,26 @@ async function isServerPortOwnedByProcessGroup({
   getProcessGroupIdImpl = getProcessGroupId,
   listenerObservationScope,
 }) {
+  return Boolean(await resolveServerPortListenerPidInProcessGroup({
+    serverPort,
+    rootPid,
+    listListenPidsImpl,
+    listListenPidsWithStatusImpl,
+    getProcessGroupIdImpl,
+    listenerObservationScope,
+  }));
+}
+
+async function resolveServerPortListenerPidInProcessGroup({
+  serverPort,
+  rootPid,
+  listListenPidsImpl = listListenPids,
+  listListenPidsWithStatusImpl = listListenPidsWithStatus,
+  getProcessGroupIdImpl = getProcessGroupId,
+  listenerObservationScope,
+}) {
   try {
-    await assertServerPortOwnedBySpawnedProcessGroup({
+    return await assertServerPortOwnedBySpawnedProcessGroup({
       serverPort,
       spawnedPid: rootPid,
       listListenPidsImpl,
@@ -385,10 +404,9 @@ async function isServerPortOwnedByProcessGroup({
       getProcessGroupIdImpl,
       listenerObservationScope,
     });
-    return true;
   } catch (error) {
     if (error?.code === 'ELISTENERDISCOVERYINCONCLUSIVE') throw error;
-    return false;
+    return null;
   }
 }
 
@@ -447,6 +465,7 @@ function createServerProvisioningCleanupIncompleteError(error, child) {
 async function killServerProcessGroupForPlannedReload({
   child,
   pid,
+  terminationPid = pid,
   stackName,
   envPath,
   serverEnv,
@@ -457,7 +476,7 @@ async function killServerProcessGroupForPlannedReload({
   let result = null;
   try {
     onTerminationRequested?.();
-    result = await killProcessGroupOwnedByStackImpl(pid, {
+    result = await killProcessGroupOwnedByStackImpl(terminationPid, {
       stackName,
       envPath,
       label: 'server',
@@ -492,18 +511,18 @@ export async function resolveStackOwnedServerRuntimePid(
   const candidatePid = Number(runtimeServerPid ?? state?.processes?.serverPid);
   if (Number.isFinite(candidatePid) && candidatePid > 1 && isPidAliveImpl(candidatePid)) {
     const owned = await isPidOwnedByStackImpl(candidatePid, { stackName, envPath }).catch(() => false);
-    if (
-      owned &&
-      (await isServerPortOwnedByProcessGroup({
+    if (owned) {
+      const listenerPid = await resolveServerPortListenerPidInProcessGroup({
         serverPort,
         rootPid: candidatePid,
         listListenPidsImpl,
         listListenPidsWithStatusImpl,
         getProcessGroupIdImpl,
         listenerObservationScope: ownershipScope,
-      }))
-    ) {
-      return candidatePid;
+      });
+      if (Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1) {
+        return Number(listenerPid);
+      }
     }
   }
 
@@ -541,14 +560,19 @@ export async function stopStackOwnedServerForRestart(
 
   if (Number.isFinite(recordedPid) && recordedPid > 1 && isPidAliveImpl(recordedPid)) {
     recordedPidAliveAndOwned = await isPidOwnedByStackImpl(recordedPid, { stackName, envPath }).catch(() => false);
-    if (recordedPidAliveAndOwned && await isServerPortOwnedByProcessGroup({
-      serverPort,
-      rootPid: recordedPid,
-      listListenPidsImpl,
-      listListenPidsWithStatusImpl,
-      getProcessGroupIdImpl,
-      listenerObservationScope: observationScope,
-    })) stopPid = recordedPid;
+    if (recordedPidAliveAndOwned) {
+      const listenerPid = await resolveServerPortListenerPidInProcessGroup({
+        serverPort,
+        rootPid: recordedPid,
+        listListenPidsImpl,
+        listListenPidsWithStatusImpl,
+        getProcessGroupIdImpl,
+        listenerObservationScope: observationScope,
+      });
+      if (Number.isFinite(Number(listenerPid)) && Number(listenerPid) > 1) {
+        stopPid = Number(listenerPid);
+      }
+    }
   }
 
   if (!stopPid) {
@@ -684,6 +708,8 @@ export async function startDevServer({
   runtimeStatePath,
   serverAlreadyRunning,
   restart,
+  admitPriorBuildsImmediately = false,
+  priorRuntimeServerLaunchSpec = null,
   children,
   spawnOptions = {},
   quiet = false,
@@ -702,6 +728,13 @@ export async function startDevServer({
   applyHappyServerMigrationsImpl = applyHappyServerMigrations,
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
   killSpawnedChildImpl = killProcessTree,
+  spawnPriorRuntimeServerImpl = ({ launchSpec, env, options }) => spawnProc(
+    'server',
+    launchSpec.command,
+    Array.isArray(launchSpec.args) ? launchSpec.args : [],
+    env,
+    { ...options, cwd: launchSpec.serverDir },
+  ),
 } = {}) {
   const bindPort = Number(serverBindPort || serverPort);
   const backendInternalServerUrl = `http://127.0.0.1:${bindPort}`;
@@ -720,10 +753,26 @@ export async function startDevServer({
   if (serverComponentName === 'happier-server-light') {
     applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
   }
+  let usePriorRuntime = Boolean(
+    serverComponentName === 'happier-server-light'
+    && priorRuntimeServerLaunchSpec?.source === 'runtime'
+    && String(priorRuntimeServerLaunchSpec?.command ?? '').trim(),
+  );
 
   // Dependency preparation owns the tools used by infrastructure and migrations.
   // Keep it after provider/topology admission so invalid configurations remain side-effect free.
-  await ensureDepsInstalledImpl(serverDir, serverComponentName, { quiet, env: serverEnv });
+  const prepareDependencies = async ({ admitPrior }) => {
+    await ensureDepsInstalledImpl(serverDir, serverComponentName, {
+      quiet,
+      env: serverEnv,
+      ...(admitPrior
+        ? { refreshExisting: false, prepareComponentOutputs: false }
+        : {}),
+    });
+  };
+  if (!usePriorRuntime) {
+    await prepareDependencies({ admitPrior: admitPriorBuildsImmediately });
+  }
 
   if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
@@ -750,21 +799,26 @@ export async function startDevServer({
   const prismaPush = (baseEnv.HAPPIER_STACK_PRISMA_PUSH ?? '1').toString().trim() !== '0';
   const serverScript = resolveServerDevScript({ serverComponentName, serverDir, prismaPush });
 
-  const ensureWorkspacePackagesBuiltBeforeSpawn = async () => {
+  const ensureWorkspacePackagesBuiltBeforeSpawn = async ({
+    admitPrior = admitPriorBuildsImmediately,
+  } = {}) => {
     await ensureSourceServerWorkspacePackagesBuiltImpl({
       runtimeBackedStart: false,
       serverDir,
       quiet,
       env: serverEnv,
+      admitPriorOutputsImmediately: admitPrior,
     });
   };
 
   // Restart behavior (stack-safe): only kill when we can prove ownership via runtime state
   // or a stale listener that is still bound to this stack.
   if (restart && stackMode && runtimeStatePath) {
-    const preflightResult = await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: console });
-    if (preflightResult?.ran !== true) {
-      await ensureWorkspacePackagesBuiltBeforeSpawn();
+    if (!usePriorRuntime) {
+      const preflightResult = await preflightDevServerRestartImpl({ serverDir, serverComponentName, serverEnv, consoleImpl: console });
+      if (preflightResult?.ran !== true) {
+        await ensureWorkspacePackagesBuiltBeforeSpawn();
+      }
     }
   }
 
@@ -783,63 +837,109 @@ export async function startDevServer({
     return { serverEnv, serverScript, serverProc: null };
   }
 
-  if (!(restart && stackMode && runtimeStatePath)) {
+  if (!usePriorRuntime && !(restart && stackMode && runtimeStatePath)) {
     await ensureWorkspacePackagesBuiltBeforeSpawn();
   }
 
-  const readinessTimeoutMs = resolveServerReadyTimeoutMs({ serverComponentName, env: serverEnv });
-  const startupDeadline = createServerReadinessDeadline({
-    readinessTimeoutMs,
-    migrationTimeoutMs: resolveServerMigrationTimeoutMs({ env: serverEnv }),
-  });
-  const existingOnLine = spawnOptions?.onLine;
-  const server = await pmSpawnScriptImpl({
-    label: 'server',
-    dir: serverDir,
-    script: serverScript,
-    env: serverEnv,
-    options: {
+  const provisionServer = async () => {
+    const launchEnv = usePriorRuntime ? { ...serverEnv } : serverEnv;
+    if (usePriorRuntime) {
+      applyRuntimeServerLightSqliteEnv({
+        env: launchEnv,
+        serverDir: priorRuntimeServerLaunchSpec.serverDir,
+      });
+      // A last-known-good runtime must not replay its older migration ledger against a database
+      // that may already have advanced. The current source refresh remains the migration owner.
+      launchEnv.HAPPIER_SQLITE_AUTO_MIGRATE = '0';
+    }
+    const readinessTimeoutMs = resolveServerReadyTimeoutMs({ serverComponentName, env: launchEnv });
+    const startupDeadline = createServerReadinessDeadline({
+      readinessTimeoutMs,
+      migrationTimeoutMs: resolveServerMigrationTimeoutMs({ env: launchEnv }),
+    });
+    const existingOnLine = spawnOptions?.onLine;
+    const options = {
       ...spawnOptions,
       onLine(lineEvent) {
         startupDeadline.observeLine(lineEvent);
         existingOnLine?.(lineEvent);
       },
-    },
-    quiet,
-  });
-  children.push(server);
-  let listenerPid = null;
-  try {
-    startupDeadline.startReadiness();
-    await waitForServerReadyImpl(backendInternalServerUrl, {
-      timeoutMs: readinessTimeoutMs,
-      childProcess: server,
-      startupDeadline,
-    });
-    if (backendInternalServerUrl !== internalServerUrl) {
-      await waitForServerReadyImpl(internalServerUrl, {
+    };
+    const server = usePriorRuntime
+      ? await spawnPriorRuntimeServerImpl({
+          launchSpec: priorRuntimeServerLaunchSpec,
+          env: launchEnv,
+          options,
+        })
+      : await pmSpawnScriptImpl({
+        label: 'server',
+        dir: serverDir,
+        script: serverScript,
+        env: launchEnv,
+        options: {
+          ...spawnOptions,
+          onLine(lineEvent) {
+            startupDeadline.observeLine(lineEvent);
+            existingOnLine?.(lineEvent);
+          },
+        },
+        quiet,
+      });
+    children.push(server);
+    let listenerPid = null;
+    try {
+      startupDeadline.startReadiness();
+      await waitForServerReadyImpl(backendInternalServerUrl, {
         timeoutMs: readinessTimeoutMs,
         childProcess: server,
+        startupDeadline,
       });
+      if (backendInternalServerUrl !== internalServerUrl) {
+        await waitForServerReadyImpl(internalServerUrl, {
+          timeoutMs: readinessTimeoutMs,
+          childProcess: server,
+        });
+      }
+      listenerPid = await assertServerPortOwnedBySpawnedProcessGroupImpl({
+        serverPort: bindPort,
+        spawnedPid: server.pid,
+      });
+      if (hasChildExited(server)) {
+        throw new Error(`[local] server process exited after readiness check (pid=${server.pid}, code=${server.exitCode})`);
+      }
+      return { server, listenerPid };
+    } catch (error) {
+      const cleanupConfirmed = await cleanupProvisionalServerChild({
+        child: server,
+        children,
+        stackName: autostart.stackName,
+        envPath,
+        killProcessGroupOwnedByStackImpl,
+        killSpawnedChildImpl,
+      });
+      if (!cleanupConfirmed) {
+        throw createServerProvisioningCleanupIncompleteError(error, server);
+      }
+      throw error;
     }
-    listenerPid = await assertServerPortOwnedBySpawnedProcessGroupImpl({ serverPort: bindPort, spawnedPid: server.pid });
-    if (hasChildExited(server)) {
-      throw new Error(`[local] server process exited after readiness check (pid=${server.pid}, code=${server.exitCode})`);
-    }
+  };
+
+  let provisioned;
+  try {
+    provisioned = await provisionServer();
   } catch (error) {
-    const cleanupConfirmed = await cleanupProvisionalServerChild({
-      child: server,
-      children,
-      stackName: autostart.stackName,
-      envPath,
-      killProcessGroupOwnedByStackImpl,
-      killSpawnedChildImpl,
-    });
-    if (!cleanupConfirmed) {
-      throw createServerProvisioningCleanupIncompleteError(error, server);
+    if (!admitPriorBuildsImmediately || error?.code === 'ESERVERPROVISIONINGCLEANUPINCOMPLETE') {
+      throw error;
     }
-    throw error;
+    if (!quiet) {
+      console.warn('[local] prior server generation could not start; refreshing once before retrying.');
+    }
+    await prepareDependencies({ admitPrior: false });
+    await ensureWorkspacePackagesBuiltBeforeSpawn({ admitPrior: false });
+    usePriorRuntime = false;
+    provisioned = await provisionServer();
   }
+  const { server, listenerPid } = provisioned;
   if (stackMode && runtimeStatePath) {
     const activationMode = serverProxyRuntime?.mode === 'proxy'
       ? 'proxy'
@@ -860,7 +960,12 @@ export async function startDevServer({
       clearProxyState: activationMode === 'direct',
     });
   }
-  return { serverEnv, serverScript, serverProc: server };
+  return {
+    serverEnv,
+    serverScript,
+    serverProc: server,
+    bootstrapSource: usePriorRuntime ? 'runtime' : 'source',
+  };
 }
 
 function localServerUrlForPort(port) {
@@ -901,6 +1006,7 @@ export function createDevServerReloadExecutor({
   serverProcRef,
   isShuttingDown,
   proxyController = null,
+  priorRuntimeServerLaunchSpec = null,
 }, {
   preflightDevServerRestartImpl = preflightDevServerRestart,
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
@@ -909,6 +1015,13 @@ export function createDevServerReloadExecutor({
   waitForPgliteDirLockReleaseImpl = waitForPgliteDirLockRelease,
   pickNextFreeTcpPortImpl = pickNextFreeTcpPort,
   pmSpawnScriptImpl = pmSpawnScript,
+  spawnPriorRuntimeServerImpl = ({ launchSpec, env, options }) => spawnProc(
+    'server',
+    launchSpec.command,
+    Array.isArray(launchSpec.args) ? launchSpec.args : [],
+    env,
+    { ...options, cwd: launchSpec.serverDir },
+  ),
   waitForServerReadyImpl = waitForServerReady,
   listListenPidsImpl = listListenPids,
   listListenPidsWithStatusImpl = listListenPidsWithStatus,
@@ -923,6 +1036,8 @@ export function createDevServerReloadExecutor({
   sleepImpl = sleepMs,
 } = {}) {
   let activeBackendPort = Number(serverBindPort || serverPort);
+  let activeReloadGeneration = null;
+  let availabilityRecoveryPromise = null;
   let unresolvedProvisional = null;
   const restartFailureTracker = createServerRestartFailureTracker({ policy: restartFailurePolicy, nowImpl });
   let unexpectedExitHandler = null;
@@ -1074,8 +1189,23 @@ export function createDevServerReloadExecutor({
     unresolvedProvisional = { child, ...details };
   };
 
-  const spawnServerBackend = async ({ port, recentLineBuffer, envOverrides = {}, reloadPlan, purpose = 'replacement' }) => {
+  const spawnServerBackend = async ({
+    port,
+    recentLineBuffer,
+    envOverrides = {},
+    reloadPlan,
+    purpose = 'replacement',
+    launchSource = 'source',
+  }) => {
     const nextEnv = { ...serverEnv, ...envOverrides, PORT: String(port) };
+    const usePriorRuntime = launchSource === 'prior-runtime';
+    if (usePriorRuntime) {
+      applyRuntimeServerLightSqliteEnv({
+        env: nextEnv,
+        serverDir: priorRuntimeServerLaunchSpec.serverDir,
+      });
+      nextEnv.HAPPIER_SQLITE_AUTO_MIGRATE = '0';
+    }
     let next = null;
     const transition = {
       generation: reloadPlan?.generation,
@@ -1104,13 +1234,19 @@ export function createDevServerReloadExecutor({
       }
     };
     try {
-      next = await pmSpawnScriptImpl({
-        label: 'server',
-        dir: serverDir,
-        script: serverScript,
-        env: nextEnv,
-        options: { onLine },
-      });
+      next = usePriorRuntime
+        ? await spawnPriorRuntimeServerImpl({
+            launchSpec: priorRuntimeServerLaunchSpec,
+            env: nextEnv,
+            options: { onLine },
+          })
+        : await pmSpawnScriptImpl({
+            label: 'server',
+            dir: serverDir,
+            script: serverScript,
+            env: nextEnv,
+            options: { onLine },
+          });
       children.push(next);
       emitTransitionEvent('replacement_spawned', { ...transition, pid: next.pid });
       const readyUrl = localServerUrlForPort(port);
@@ -1209,6 +1345,74 @@ export function createDevServerReloadExecutor({
       restartMode: reloadPlan.mode,
       reloadGeneration: reloadPlan.generation,
     });
+    if (Number.isInteger(reloadPlan.generation) && reloadPlan.generation >= 0) {
+      activeReloadGeneration = reloadPlan.generation;
+    }
+  };
+
+  const recoverUnexpectedExit = async (event = {}) => {
+    const recoverySupported = Boolean(
+      proxyController
+      && serverComponentName === 'happier-server-light'
+      && priorRuntimeServerLaunchSpec?.source === 'runtime'
+      && String(priorRuntimeServerLaunchSpec?.command ?? '').trim(),
+    );
+    if (!recoverySupported || isShuttingDown?.()) return { recovered: false, reason: 'unavailable' };
+    if (availabilityRecoveryPromise) return await availabilityRecoveryPromise;
+
+    const exitedChild = event?.child ?? serverProcRef?.current;
+    if (serverProcRef?.current && serverProcRef.current !== exitedChild && !hasChildExited(serverProcRef.current)) {
+      return { recovered: false, reason: 'replacement-active' };
+    }
+
+    availabilityRecoveryPromise = (async () => {
+      const exitedPid = Number(event?.pid ?? exitedChild?.pid);
+      const reloadPlan = {
+        mode: 'exclusiveDb',
+        migrationMode: 'skip',
+        generation: activeReloadGeneration,
+        reason: 'prior_runtime_availability_recovery',
+      };
+      removeChildFromChildren(children, exitedChild);
+      await observePortAndDatabaseRelease({
+        port: activeBackendPort,
+        pid: exitedPid,
+        scope: 'exited server backend port',
+        reloadPlan,
+      });
+      const fallbackPort = await pickNextFreeTcpPortImpl(activeBackendPort + 1, {
+        host: '127.0.0.1',
+        reservedPorts: new Set([Number(serverPort), activeBackendPort]),
+      });
+      const fallback = await spawnServerBackend({
+        port: fallbackPort,
+        recentLineBuffer: createRecentLineBuffer(restartFailureTracker.policy.recentLineLimit),
+        envOverrides: { HAPPIER_SQLITE_AUTO_MIGRATE: '0' },
+        reloadPlan,
+        purpose: 'prior-runtime-fallback',
+        launchSource: 'prior-runtime',
+      });
+      await proxyController.flipUpstream?.({ targetPort: fallbackPort });
+      serverProcRef.current = fallback.child;
+      activeBackendPort = fallbackPort;
+      observeActiveChildExit(fallback.child);
+      await recordProxyBackend({
+        backendPort: fallbackPort,
+        listenerPid: fallback.listenerPid,
+        wrapperPid: fallback.child.pid,
+        reloadPlan,
+      });
+      logger.warn?.(
+        `[local] watch: restored prior runtime after active server exit ` +
+          `(pid=${fallback.child.pid}, backendPort=${fallbackPort}); refreshing source in the background.`,
+      );
+      return { recovered: true, pid: fallback.child.pid, backendPort: fallbackPort };
+    })();
+    try {
+      return await availabilityRecoveryPromise;
+    } finally {
+      availabilityRecoveryPromise = null;
+    }
   };
 
   const backendDrainTarget = (port) => ({
@@ -1277,8 +1481,8 @@ export function createDevServerReloadExecutor({
           listListenPidsWithStatusImpl,
         })
       : null;
-    const ownsCurrentListener = currentPidWasAlive
-      ? await isServerPortOwnedByProcessGroup({
+    const currentListenerPid = currentPidWasAlive
+      ? await resolveServerPortListenerPidInProcessGroup({
           serverPort: oldBackendPort,
           rootPid: pid,
           listListenPidsImpl,
@@ -1286,7 +1490,8 @@ export function createDevServerReloadExecutor({
           getProcessGroupIdImpl,
           listenerObservationScope: precheckObservationScope,
         })
-      : false;
+      : null;
+    const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
     if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
     if (!ownsCurrentListener && currentPidWasAlive) {
       const availability = await waitForTcpPortFreeImpl(oldBackendPort, {
@@ -1357,6 +1562,7 @@ export function createDevServerReloadExecutor({
       const killResult = await killServerProcessGroupForPlannedReload({
         child: currentServerProc,
         pid,
+        terminationPid: Number(currentListenerPid),
         stackName,
         envPath,
         serverEnv,
@@ -1574,6 +1780,32 @@ export function createDevServerReloadExecutor({
           );
         });
       }
+      let priorRuntimeRestored = false;
+      if (
+        oldServerStopped
+        && error?.code !== 'ESERVERBACKENDPORTRELEASEINCONCLUSIVE'
+        && error?.code !== 'ESERVERBACKENDPORTOCCUPIED'
+      ) {
+        try {
+          const recovery = await recoverUnexpectedExit({
+            child: currentServerProc,
+            pid,
+            code: currentServerProc?.exitCode,
+            signal: currentServerProc?.signalCode,
+          });
+          priorRuntimeRestored = recovery?.recovered === true;
+          if (priorRuntimeRestored) {
+            await drainProxyTargets([maintenanceTarget, attemptedReplacementTarget], {
+              graceMs: resolveDevProxyDrainMs(serverEnv),
+            });
+          }
+        } catch (recoveryError) {
+          logger.error?.(
+            `[local] watch: prior-runtime recovery after replacement failure was unavailable: ` +
+              `${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+          );
+        }
+      }
       if (oldServerStopped) requestSafePostStopRetry(error);
       throw annotateServerRestartError(
         error,
@@ -1582,6 +1814,7 @@ export function createDevServerReloadExecutor({
           stage: oldServerStopped ? 'readiness' : 'restart',
           child: replacement?.child ?? null,
           oldServerStopped,
+          serviceRestored: priorRuntimeRestored,
           recentLines: recentLineBuffer.snapshot(),
         }),
       );
@@ -1602,8 +1835,8 @@ export function createDevServerReloadExecutor({
           listListenPidsWithStatusImpl,
         })
       : null;
-    const ownsCurrentListener = currentPidWasAlive
-      ? await isServerPortOwnedByProcessGroup({
+    const currentListenerPid = currentPidWasAlive
+      ? await resolveServerPortListenerPidInProcessGroup({
           serverPort,
           rootPid: pid,
           listListenPidsImpl,
@@ -1611,13 +1844,15 @@ export function createDevServerReloadExecutor({
           getProcessGroupIdImpl,
           listenerObservationScope: precheckObservationScope,
         })
-      : false;
+      : null;
+    const ownsCurrentListener = Number.isFinite(Number(currentListenerPid)) && Number(currentListenerPid) > 1;
     if (typeof context.revalidateGeneration === 'function' && !await context.revalidateGeneration()) return false;
     if (ownsCurrentListener) {
       disarmActiveChildExit(currentServerProc);
       const killResult = await killServerProcessGroupForPlannedReload({
         child: currentServerProc,
         pid,
+        terminationPid: Number(currentListenerPid),
         stackName,
         envPath,
         serverEnv,
@@ -1777,6 +2012,9 @@ export function createDevServerReloadExecutor({
 
   return {
     target: 'server',
+    async recoverUnexpectedExit(event) {
+      return await recoverUnexpectedExit(event);
+    },
     setUnexpectedExitHandler(handler) {
       disarmActiveChildExit();
       unexpectedExitHandler = typeof handler === 'function' ? handler : null;

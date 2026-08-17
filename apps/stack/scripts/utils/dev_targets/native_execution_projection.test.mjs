@@ -25,8 +25,10 @@ test('native execution projection contains only normalized command policy and se
     },
   });
 
-  assert.match(output, /^HSTACK_EXEC_PROJECTION_VERSION='1'$/m);
+  assert.match(output, /^HSTACK_EXEC_PROJECTION_VERSION='2'$/m);
   assert.match(output, /^command_mode='auto'$/m);
+  assert.match(output, /^dependency_direct_commands='node npm npx pnpm tsc vitest yarn'$/m);
+  assert.match(output, /^dependency_corepack_subcommands='npm pnpm yarn'$/m);
   assert.match(output, /^target_count='1'$/m);
   assert.match(output, /^target_1_name='mac'$/m);
   assert.match(output, /^target_1_ssh_config='\/tmp\/it'"'"'s\.conf'$/m);

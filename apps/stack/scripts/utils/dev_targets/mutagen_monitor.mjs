@@ -17,8 +17,12 @@ export function createMutagenMonitorLineFilter() {
     const separator = line.indexOf('|');
     if (separator <= 0) return line.trim().length > 0;
     const session = line.slice(0, separator);
-    if (latestBySession.get(session) === line) return false;
-    latestBySession.set(session, line);
+    const fields = line.slice(separator + 1).split('|');
+    const semanticState = fields.length >= 5
+      ? [fields[0], ...fields.slice(2)].join('|')
+      : line.slice(separator + 1);
+    if (latestBySession.get(session) === semanticState) return false;
+    latestBySession.set(session, semanticState);
     return true;
   };
 }

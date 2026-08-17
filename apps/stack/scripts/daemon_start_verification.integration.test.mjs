@@ -175,6 +175,7 @@ function createFixtureStackEnv(repoDir, baseEnv = process.env) {
   return {
     ...baseEnv,
     HAPPIER_STACK_REPO_DIR: repoDir,
+    HAPPIER_STACK_TUI: '0',
   };
 }
 
@@ -217,9 +218,10 @@ process.exit(0);
   });
   await mkdir(join(cliDir, 'node_modules'), { recursive: true });
   const dependencyRefresh = await inspectDependencyRefresh({ installDir: cliDir, componentDir: cliDir });
+  await mkdir(dirname(dependencyRefresh.markerPath), { recursive: true });
   await writeFile(
     dependencyRefresh.markerPath,
-    `${JSON.stringify({ version: 2, installDir: cliDir, inputs: dependencyRefresh.inputSnapshot })}\n`,
+    `${JSON.stringify({ version: 3, installDir: cliDir, inputs: dependencyRefresh.inputSnapshot, superseded: false })}\n`,
     'utf-8',
   );
   return join(cliBinDir, 'happier.mjs');
@@ -462,6 +464,7 @@ test('startLocalDaemonWithAuth fails fast when stack-scoped auth is stale and on
       await assert.rejects(
         startLocalDaemonWithAuth({
           cliBin,
+          cliEntrypoint: join(cliDir, 'dist', 'index.mjs'),
           cliHomeDir,
           internalServerUrl: serverUrl,
           publicServerUrl: serverUrl,
@@ -525,6 +528,7 @@ test('startLocalDaemonWithAuth does not backfill legacy access.key from main whe
       await assert.rejects(
         startLocalDaemonWithAuth({
           cliBin,
+          cliEntrypoint: join(cliDir, 'dist', 'index.mjs'),
           cliHomeDir,
           internalServerUrl: serverUrl,
           publicServerUrl: serverUrl,
@@ -539,6 +543,79 @@ test('startLocalDaemonWithAuth does not backfill legacy access.key from main whe
       await assert.rejects(stat(join(cliHomeDir, 'access.key')), { code: 'ENOENT' });
       const activeCredential = JSON.parse(await readFile(targetPaths.serverScopedPath, 'utf-8'));
       assert.equal(activeCredential.token, currentToken);
+    });
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('startLocalDaemonWithAuth seeds the current server credential when the stack only has an unrelated server credential', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-unrelated-credential-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    await writeStubHappyCli({ cliDir });
+    const cliBin = join(cliDir, 'bin', 'happier.mjs');
+    const storageDir = join(tmp, 'storage');
+    const stackName = 'dev';
+    const cliHomeDir = join(storageDir, stackName, 'cli');
+    const mainCliHomeDir = join(storageDir, 'main', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await mkdir(mainCliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const env = {
+      ...createFixtureStackEnv(tmp),
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '1',
+      HAPPIER_STACK_CLI_BUILD: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '20',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      HAPPIER_ACTIVE_SERVER_ID: `stack_${stackName}__id_default`,
+    };
+
+    const currentToken = createTestJwt({ sub: 'current-account', jti: 'current' });
+    const unrelatedToken = createTestJwt({ sub: 'other-account', jti: 'unrelated' });
+
+    await withAuthServer({ goodToken: currentToken }, async ({ serverUrl }) => {
+      const targetPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
+      const mainPaths = resolveStackCredentialPaths({
+        cliHomeDir: mainCliHomeDir,
+        serverUrl,
+        env: {
+          ...env,
+          HAPPIER_STACK_STACK: 'main',
+          HAPPIER_ACTIVE_SERVER_ID: 'stack_main__id_default',
+        },
+      });
+      const unrelatedPath = join(cliHomeDir, 'servers', 'qa-deep-local', 'access.key');
+
+      await writeAccessKeyFile(unrelatedPath, unrelatedToken);
+      await writeAccessKeyFile(mainPaths.serverScopedPath, currentToken);
+
+      await assert.rejects(
+        startLocalDaemonWithAuth({
+          cliBin,
+          cliEntrypoint: join(cliDir, 'dist', 'index.mjs'),
+          cliHomeDir,
+          internalServerUrl: serverUrl,
+          publicServerUrl: serverUrl,
+          isShuttingDown: () => false,
+          forceRestart: true,
+          env,
+          stackName,
+        }),
+        /Failed to auto re-seed daemon credentials|Failed to start daemon|credentials were rejected by the server/i,
+      );
+
+      const seededLegacyCredential = JSON.parse(await readFile(targetPaths.legacyPath, 'utf-8'));
+      const seededServerCredential = JSON.parse(await readFile(targetPaths.serverScopedPath, 'utf-8'));
+      const unrelatedCredential = JSON.parse(await readFile(unrelatedPath, 'utf-8'));
+      assert.equal(seededLegacyCredential.token, currentToken);
+      assert.equal(seededServerCredential.token, currentToken);
+      assert.equal(unrelatedCredential.token, unrelatedToken);
     });
   } finally {
     await rm(tmp, { recursive: true, force: true });

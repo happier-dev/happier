@@ -94,6 +94,38 @@ test('buildIntoTempThenReplace replaces dir on success', async (t) => {
   assert.equal(after, 'new\n');
 });
 
+test('buildIntoTempThenReplace keeps a live resolver tree mounted and retains prior targets', async (t) => {
+  const root = await withTempRoot(t);
+  const outDir = join(root, 'ui');
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, 'entry.mjs'), 'export const generation = "old";\n', 'utf-8');
+  await writeFile(join(outDir, 'old.chunk.bundle'), 'old chunk\n', 'utf-8');
+  const before = await stat(outDir);
+
+  await buildIntoTempThenReplace(
+    outDir,
+    async (tmp) => {
+      await writeFile(join(tmp, 'entry.mjs'), 'export const generation = "new";\n', 'utf-8');
+      await writeFile(join(tmp, 'new.chunk.bundle'), 'new chunk\n', 'utf-8');
+    },
+    {
+      preserveDestinationPath: true,
+      pruneStale: false,
+    },
+  );
+
+  const after = await stat(outDir);
+  assert.equal(after.dev, before.dev);
+  assert.equal(after.ino, before.ino);
+  assert.equal(await readFile(join(outDir, 'entry.mjs'), 'utf-8'), 'export const generation = "new";\n');
+  assert.equal(await readFile(join(outDir, 'new.chunk.bundle'), 'utf-8'), 'new chunk\n');
+  assert.equal(
+    await readFile(join(outDir, 'old.chunk.bundle'), 'utf-8'),
+    'old chunk\n',
+    'an in-flight Metro graph must retain the prior content-addressed target',
+  );
+});
+
 test('buildIntoTempThenReplace retries transient Windows rename locks', async (t) => {
   const root = await withTempRoot(t);
   const outDir = join(root, 'ui');

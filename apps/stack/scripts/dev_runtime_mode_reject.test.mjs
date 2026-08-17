@@ -20,3 +20,17 @@ test('hstack dev rejects runtime mode flags', async () => {
   assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.match(res.stderr + res.stdout, /does not support runtime mode/i);
 });
+
+test('hstack dev rejects a stack persisted in controlled runtime require mode', async () => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const res = await runNode([join(rootDir, 'scripts', 'dev.mjs'), '--json'], {
+    cwd: rootDir,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_RUNTIME_MODE: 'require',
+    },
+  });
+
+  assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.match(res.stderr + res.stdout, /controlled runtime.*hstack start/i);
+});

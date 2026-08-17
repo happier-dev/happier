@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -131,4 +131,55 @@ test('sync and async signatures distinguish same-size edits within one milliseco
   assert.equal(beforeSync, beforeAsync);
   assert.equal(afterSync, afterAsync);
   assert.notEqual(afterSync, beforeSync);
+});
+
+test('sync and async signatures detect a same-size replacement whose mtime is preserved', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-watch-signature-preserved-mtime-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const watchedFile = join(root, 'runtime.ts');
+  await writeFile(watchedFile, 'export const value = 1;\n', 'utf-8');
+  await utimes(watchedFile, 1, 1);
+  const beforeStat = await stat(watchedFile, { bigint: true });
+  const beforeSync = readDevReloadWatchChangeSignature([root]);
+  const beforeAsync = await readDevReloadWatchChangeSignatureAsync([root]);
+
+  await writeFile(watchedFile, 'export const value = 2;\n', 'utf-8');
+  await utimes(watchedFile, 1, 1);
+  const afterStat = await stat(watchedFile, { bigint: true });
+  const afterSync = readDevReloadWatchChangeSignature([root]);
+  const afterAsync = await readDevReloadWatchChangeSignatureAsync([root]);
+
+  assert.equal(afterStat.size, beforeStat.size);
+  assert.equal(afterStat.mtimeNs, beforeStat.mtimeNs);
+  assert.notEqual(afterStat.ctimeNs, beforeStat.ctimeNs);
+  assert.equal(beforeSync, beforeAsync);
+  assert.equal(afterSync, afterAsync);
+  assert.notEqual(afterSync, beforeSync);
+});
+
+test('sync and async signatures ignore an identical replacement with different filesystem metadata', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hstack-dev-watch-signature-identical-replacement-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const watchedFile = join(root, 'generated.ts');
+  const content = 'export const generated = true;\n';
+  await writeFile(watchedFile, content, 'utf-8');
+  const beforeStat = await stat(watchedFile, { bigint: true });
+  const beforeSync = readDevReloadWatchChangeSignature([root]);
+  const beforeAsync = await readDevReloadWatchChangeSignatureAsync([root]);
+
+  await writeFile(watchedFile, content, 'utf-8');
+  const afterStat = await stat(watchedFile, { bigint: true });
+  const afterSync = readDevReloadWatchChangeSignature([root]);
+  const afterAsync = await readDevReloadWatchChangeSignatureAsync([root]);
+
+  assert.notEqual(afterStat.ctimeNs, beforeStat.ctimeNs);
+  assert.equal(beforeSync, beforeAsync);
+  assert.equal(afterSync, beforeSync);
+  assert.equal(afterAsync, beforeAsync);
 });

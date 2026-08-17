@@ -7,8 +7,14 @@ import { join, resolve, sep } from 'node:path';
 import { printResult } from './utils/cli/cli.mjs';
 import { resolveCommandInvocation } from './utils/process/resolveCommandInvocation.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
-import { getComponentDir, getRepoDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
-import { getStackRuntimeStatePath, readStackRuntimeStateFile, readStackServerLifecycle } from './utils/stack/runtime_state.mjs';
+import { getComponentDir, getRepoDir, getRootDir, resolveStackBaseDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { resolveLocalhostHost } from './utils/paths/localhost_host.mjs';
+import {
+  getStackRuntimeStatePath,
+  hasTrustedStackRuntimeLifecycle,
+  readStackRuntimeStateFile,
+  readStackServerLifecycle,
+} from './utils/stack/runtime_state.mjs';
 import { getEnvValueAny } from './utils/env/values.mjs';
 import { padRight, parsePrefixedLabel, stripAnsi } from './utils/ui/text.mjs';
 import { formatBoxLine } from './utils/ui/box_line.mjs';
@@ -25,22 +31,30 @@ import {
   isTuiStartLikeForwardedArgs,
 } from './utils/tui/args.mjs';
 import {
+  buildTuiBackgroundOwnerArgs,
   buildTuiChildArgs,
   buildTuiRestartChildArgs,
+  extractTuiBackgroundOwnerRunnerLogPath,
   resolveTauriPaneSpawnConfig,
   shouldStartTauriPane,
   waitForTauriPaneExpoReady,
 } from './utils/tui/tauri_mode.mjs';
 import { killProcessGroupOwnedByStack } from './utils/proc/ownership.mjs';
-import { readProcessInstanceFingerprintSync } from '../../../packages/cli-common/processInstance.mjs';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { mergeEnvForTuiSummary } from './utils/tui/summary_env.mjs';
+import {
+  formatRuntimeExpoDevClientLines,
+  formatRuntimePlacementSummaryLines,
+  resolveRuntimeRemoteServiceObservation,
+  shouldPresentRuntimeServiceEndpoint,
+} from './utils/tui/runtime_placement_summary.mjs';
 import { hasStackCredentials } from './utils/auth/daemon_gate.mjs';
 import { applyTuiStackAuthScopeEnv } from './utils/tui/stack_scope_env.mjs';
 import { buildDaemonAuthNotice, parseStartDaemonFlagFromEnv } from './utils/tui/daemon_auth_notice.mjs';
-import { detachTuiStdinForChild, waitForEnter } from './utils/tui/stdin_handoff.mjs';
+import { ensureTuiStdinMode, runWithTuiStdinHandoff } from './utils/tui/stdin_handoff.mjs';
 import { waitForHappierHealthOk } from './utils/server/server.mjs';
-import { buildTuiAuthArgs, shouldHoldAfterAuthExit } from './utils/tui/actions.mjs';
+import { buildTuiAuthArgs, buildTuiAuthExitNotice } from './utils/tui/actions.mjs';
 import { reconcileDaemonPaneAfterDaemonStarts } from './utils/tui/daemon_pane_reconcile.mjs';
 import { buildScriptPtyArgs } from './utils/tui/script_pty_command.mjs';
 import { resolveTuiChildTerminationPlan } from './utils/tui/child_termination_plan.mjs';
@@ -53,11 +67,20 @@ import {
 } from './utils/tui/restart_operation.mjs';
 import { checkDaemonStatePingAware } from './daemon.mjs';
 import { getObservedStackDaemonAsync } from './utils/stack/runtime_daemon_state.mjs';
-import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
+import { loadDevTargetsConfig, resolveDevTargetExecutionPolicy } from './utils/dev_targets/config.mjs';
+import { resolveDevTargetServicePlans } from './utils/dev_targets/service_placement.mjs';
 import {
   createDevTargetPaneSpecs,
   routeDevTargetLogPaneId,
+  routeRemoteServiceLogPaneId,
 } from './utils/tui/dev_target_panes.mjs';
+import { inspectActiveRuntimeSnapshot } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
+import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoLogPath, resolveBorrowedExpoRuntime } from './runtime/shared/borrowed_expo.mjs';
+import { followLogFile } from './utils/tui/follow_log_file.mjs';
+import { resolveTuiRuntimeLogAttachments } from './utils/tui/runtime_log_attachments.mjs';
+import { applyTuiExitPolicy, resolveTuiExitPolicy } from './utils/tui/exit_semantics.mjs';
+import { formatTuiRuntimePublicationSummaryLines } from './utils/tui/runtime_publication_summary.mjs';
 
 const tuiChildProcessInstances = new WeakMap();
 
@@ -373,6 +396,19 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const authScopeEnv = applyTuiStackAuthScopeEnv({ env, stackName });
   const runtimePath = getStackRuntimeStatePath(stackName);
   const runtime = await readStackRuntimeStateFile(runtimePath);
+  const runtimeInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir: baseDir, env });
+  const selectedSnapshotId = runtimeInspection.activeSnapshotId;
+  const runtimeLifecycleLive = await hasTrustedStackRuntimeLifecycle(runtime, {
+    stackName,
+    envPath,
+    cliHomeDir: join(baseDir, 'cli'),
+  }, {
+    throwOnInconclusive: false,
+  });
+  const loadedSnapshotId = runtimeLifecycleLive
+    ? String(runtime?.runtimeSnapshotId ?? '').trim() || null
+    : null;
+  const runtimeMode = resolveStackRuntimeMode({ argv: [], env }).mode;
 
   const serverComponent =
     getEnvValueAny(env, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
@@ -381,6 +417,21 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const expo = runtime?.expo && typeof runtime.expo === 'object' ? runtime.expo : {};
   const expoPort = expo?.port ?? expo?.webPort ?? expo?.mobilePort ?? null;
   const expoDevClientEnabled = Boolean(expo?.devClientEnabled);
+  const borrowedExpoProducerStackName = getEnvValueAny(env, ['HAPPIER_STACK_EXPO_SOURCE_STACK']);
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: stackName,
+    producerStackName: borrowedExpoProducerStackName,
+  })
+    ? await resolveBorrowedExpoRuntime({
+        rootDir,
+        producerStackName: borrowedExpoProducerStackName,
+        env,
+      }).catch(() => null)
+    : null;
+  const presentedExpoPort = borrowedExpo?.running ? borrowedExpo.port : expoPort;
+  const presentedExpoDevClientEnabled = borrowedExpo
+    ? borrowedExpo.devClientEnabled
+    : expoDevClientEnabled;
   const processes = runtime?.processes && typeof runtime.processes === 'object' ? runtime.processes : {};
   const serverLifecycle = readStackServerLifecycle(runtime);
 
@@ -391,7 +442,8 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const authed = internalServerUrl
     ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: authScopeEnv })
     : hasStackCredentials({ cliHomeDir, serverUrl: '', env: authScopeEnv });
-  const startDaemon = parseStartDaemonFlagFromEnv(env);
+  const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtime, 'daemon');
+  const startDaemon = parseStartDaemonFlagFromEnv(env) && !remoteDaemon.target;
   const observedDaemon = await getObservedStackDaemonAsync({
     cliHomeDir,
     internalServerUrl,
@@ -408,9 +460,28 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   lines.push(`baseDir: ${baseDir}`);
   lines.push(`env: ${envPath}`);
   lines.push(`runtime: ${runtimePath}${runtime ? '' : ' (missing)'}`);
+  lines.push(`runtimeMode: ${runtimeMode}`);
+  if (selectedSnapshotId) {
+    lines.push(`selectedSnapshot: ${selectedSnapshotId}${runtimeInspection.producerStackName ? ` (${runtimeInspection.producerStackName})` : ''}`);
+  }
+  if (loadedSnapshotId) lines.push(`loadedSnapshot: ${loadedSnapshotId}`);
+  if (runtimeLifecycleLive && selectedSnapshotId && selectedSnapshotId !== loadedSnapshotId) {
+    lines.push('runtimeUpdate: pending manual restart');
+  }
+  if (borrowedExpo) {
+    lines.push(
+      `expoProvider: borrowed from ${borrowedExpo.producerStackName} `
+        + `(${borrowedExpo.status}${borrowedExpo.remoteTarget ? ` via ${borrowedExpo.remoteTarget}` : ''})`,
+    );
+  }
   if (runtime?.startedAt) lines.push(`startedAt: ${runtime.startedAt}`);
   if (runtime?.updatedAt) lines.push(`updatedAt: ${runtime.updatedAt}`);
   if (runtime?.ownerPid) lines.push(`ownerPid: ${runtime.ownerPid}`);
+  const runtimePublicationLines = formatTuiRuntimePublicationSummaryLines(runtime);
+  if (runtimePublicationLines.length > 0) {
+    lines.push('');
+    lines.push(...runtimePublicationLines);
+  }
 
   // Make daemon auth issues obvious even if the user never focuses the daemon pane.
   const notice = buildDaemonAuthNotice({
@@ -426,11 +497,17 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
     for (const l of styleDaemonNoticeLines(notice.summaryLines)) lines.push(l);
   }
 
+  const placementLines = formatRuntimePlacementSummaryLines(runtime);
+  if (placementLines.length > 0) {
+    lines.push('');
+    lines.push(...placementLines);
+  }
+
   lines.push('');
   lines.push('ports:');
   lines.push(`  server: ${ports?.server ?? '(unknown)'}`);
   if (ports?.serverBackend) lines.push(`  serverBackend: ${ports.serverBackend}`);
-  if (expoPort) lines.push(`  expo: ${expoPort}`);
+  if (presentedExpoPort) lines.push(`  expo: ${presentedExpoPort}${borrowedExpo ? ' (borrowed)' : ''}`);
   if (ports?.backend) lines.push(`  backend: ${ports.backend}`);
 
   if (runtime?.serverProxy) {
@@ -443,7 +520,7 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
 
   if (serverLifecycle) {
     lines.push('');
-    lines.push('server lifecycle:');
+    lines.push('server refresh:');
     lines.push(`  phase: ${serverLifecycle.phase}`);
     if (serverLifecycle.planned) {
       lines.push(
@@ -459,14 +536,29 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
     }
     if (serverLifecycle.retry) lines.push(`  retryAfterMs: ${serverLifecycle.retry.afterMs}`);
     if (serverLifecycle.disposition) lines.push(`  disposition: ${serverLifecycle.disposition.code}`);
+    if (serverLifecycle.phase === 'blocked') {
+      lines.push('  running service: unchanged by failed refresh');
+    }
   }
 
-  if (expoPort && expoDevClientEnabled) {
-    const payload = resolveMobileQrPayload({ env: process.env, port: Number(expoPort) });
+  if (presentedExpoPort && presentedExpoDevClientEnabled) {
+    const payload = resolveMobileQrPayload({ env: process.env, port: Number(presentedExpoPort) });
+    const borrowedWebUrl = borrowedExpo
+      ? buildBorrowedExpoUiUrl({
+          consumerHost: resolveLocalhostHost({ stackMode: true, stackName }),
+          expoPort: presentedExpoPort,
+          serverPort,
+        })
+      : null;
     lines.push('');
-    lines.push('expo dev-client links:');
-    if (payload.metroUrl) lines.push(`  metro: ${payload.metroUrl}`);
-    if (payload.scheme && payload.deepLink) lines.push(`  link:  ${payload.deepLink}`);
+    lines.push(...(borrowedExpo
+      ? [
+          'expo dev-client links (borrowed):',
+          ...(borrowedWebUrl ? [`  web:   ${borrowedWebUrl}`] : []),
+          ...(payload?.metroUrl ? [`  metro: ${payload.metroUrl}`] : []),
+          ...(payload?.scheme && payload?.deepLink ? [`  link:  ${payload.deepLink}`] : []),
+        ]
+      : formatRuntimeExpoDevClientLines(runtime, payload)));
   }
 
   lines.push('');
@@ -499,16 +591,29 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   return lines;
 }
 
-async function buildExpoQrPaneLines({ stackName }) {
+async function buildExpoQrPaneLines({ rootDir, stackName }) {
   if (!stackName) {
     return { visible: false, lines: [] };
   }
+  const { envPath } = resolveStackEnvPath(stackName);
+  const stackEnvFromFile = await readEnvObject(envPath);
+  const env = mergeEnvForTuiSummary({ stackEnvFromFile, processEnv: process.env });
+  const producerStackName = getEnvValueAny(env, ['HAPPIER_STACK_EXPO_SOURCE_STACK']);
+  const borrowedExpo = isBorrowedExpoConsumer({
+    consumerStackName: stackName,
+    producerStackName,
+  })
+    ? await resolveBorrowedExpoRuntime({ rootDir, producerStackName, env }).catch(() => null)
+    : null;
   const runtimePath = getStackRuntimeStatePath(stackName);
   const runtime = await readStackRuntimeStateFile(runtimePath);
   const expo = runtime?.expo && typeof runtime.expo === 'object' ? runtime.expo : {};
-  const port = Number(expo?.port ?? expo?.mobilePort ?? expo?.webPort);
-  const enabled = Boolean(expo?.devClientEnabled);
+  const port = Number(borrowedExpo?.mobilePort ?? expo?.port ?? expo?.mobilePort ?? expo?.webPort);
+  const enabled = borrowedExpo ? borrowedExpo.running && borrowedExpo.devClientEnabled : Boolean(expo?.devClientEnabled);
   if (!enabled || !Number.isFinite(port) || port <= 0) {
+    return { visible: false, lines: [] };
+  }
+  if (!borrowedExpo && !shouldPresentRuntimeServiceEndpoint(runtime, 'expo')) {
     return { visible: false, lines: [] };
   }
 
@@ -529,7 +634,6 @@ async function main() {
   const argvRaw = process.argv.slice(2);
   const { forwardedArgs: rawForwardedArgs, withTauri } = extractTuiLaunchOptions(argvRaw);
   const forwarded = rawForwardedArgs;
-  const childForwarded = buildTuiChildArgs({ forwardedArgs: forwarded, withTauri });
 
   if (isTuiHelpRequest(argvRaw)) {
     printResult({
@@ -540,9 +644,10 @@ async function main() {
         '  hstack tui [<hstack args...>] [--tauri]',
         '',
         'defaults:',
-        '  hstack tui                 => hstack tui dev',
+        '  hstack tui                 => hstack tui dev --mobile',
         '  hstack tui --tauri         => hstack tui dev with a Tauri pane',
         '  hstack tui --tauri --mobile => hstack tui dev --mobile with a Tauri pane',
+        '  hstack tui --no-mobile     => hstack tui dev --no-mobile (web only)',
         '',
         'examples:',
         '  hstack tui stack dev resume-upstream',
@@ -566,7 +671,7 @@ async function main() {
         '  a               : run stack auth login (when stack context exists)',
         '  A               : run stack auth login --force',
         '  r               : restart stack processes (dev/start only)',
-        '  q / Ctrl+C      : quit (sends SIGINT to child)',
+        '  q / Ctrl+C      : quit (stops a runtime owner admitted by this TUI)',
         '',
         'panes (default):',
         '  orchestration | summary | local | server | expo | daemon | stack logs',
@@ -582,13 +687,26 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
   const happysBin = join(rootDir, 'bin', 'hstack.mjs');
   const stackName = inferTuiStackName(forwarded, process.env);
+  const childForwarded = buildTuiBackgroundOwnerArgs({
+    childArgs: buildTuiChildArgs({ forwardedArgs: forwarded, withTauri }),
+    stackName,
+  });
+  const detachedBackgroundOwner = childForwarded.includes('--background') || childForwarded.includes('--bg');
   const stackEnvPath = stackName ? resolveStackEnvPath(stackName).envPath : null;
   const stackCliHomeDir = stackName ? join(resolveStackEnvPath(stackName).baseDir, 'cli') : '';
   const summaryTitle = stackName ? `stack summary (${stackName})` : 'session summary (stackless)';
-  const configuredDevTargets =
-    stackName && !forwarded.includes('--no-dev-targets')
-      ? (await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true })).config.targets
-      : [];
+  let configuredDevTargetPlans = [];
+  let configuredDevTargets = [];
+  if (stackName && !forwarded.includes('--no-dev-targets')) {
+    const { config } = await loadDevTargetsConfig({ stackName, env: process.env, allowMissing: true });
+    const configuredPlans = resolveDevTargetServicePlans({
+      targets: config.targets,
+      policy: resolveDevTargetExecutionPolicy(config),
+      requested: { server: true, expo: true, daemon: true },
+    });
+    configuredDevTargetPlans = configuredPlans.targets;
+    configuredDevTargets = configuredPlans.targets.map((plan) => plan.target);
+  }
 
   const panes = [
     mkPane('orch', 'orchestration', { visible: true, kind: 'log' }),
@@ -613,7 +731,10 @@ async function main() {
     const label = parsePrefixedLabel(line);
     const normalized = label ? label.toLowerCase() : '';
 
-    let paneId = routeDevTargetLogPaneId(normalized, configuredDevTargetNames) ?? 'local';
+    let paneId =
+      routeRemoteServiceLogPaneId(line, configuredDevTargetPlans)
+      ?? routeDevTargetLogPaneId(normalized, configuredDevTargetNames)
+      ?? 'local';
     if (paneId !== 'local') {
       // Already routed by the dev-target lifecycle owner.
     } else if (normalized.includes('server')) paneId = 'server';
@@ -671,6 +792,73 @@ async function main() {
   // Mark the child env so dependency installers can auto-approve safe prompts (Corepack yarn downloads).
   const stackEnvFromFile = stackEnvPath ? await readEnvObject(stackEnvPath) : {};
   const childEnv = resolveTuiChildEnv({ stackEnvFromFile, processEnv: process.env });
+  const borrowedExpoProducerStackName = String(childEnv.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
+  let borrowedExpoLogFollower = null;
+  let borrowedExpoLogPath = '';
+  const runtimeLogFollowers = new Map();
+  const refreshRuntimeLogFollowers = (runtimeState) => {
+    if (!stackName) return;
+    const { baseDir } = resolveStackBaseDir(stackName, childEnv);
+    const attachments = resolveTuiRuntimeLogAttachments({
+      stackBaseDir: baseDir,
+      runtimeState,
+      remoteTargetNames: configuredDevTargets,
+    });
+    const attachmentIds = new Set(attachments.map((attachment) => attachment.id));
+    for (const [id, current] of runtimeLogFollowers) {
+      if (!attachmentIds.has(id) || attachments.find((attachment) => attachment.id === id)?.path !== current.path) {
+        current.follower.close();
+        runtimeLogFollowers.delete(id);
+      }
+    }
+    for (const attachment of attachments) {
+      if (runtimeLogFollowers.has(attachment.id)) continue;
+      const follower = followLogFile({
+        path: attachment.path,
+        onLine: (line) => {
+          routeLine(attachment.id === 'runner' ? `[stack] ${line}` : line);
+          scheduleRender();
+        },
+      });
+      runtimeLogFollowers.set(attachment.id, { path: attachment.path, follower });
+    }
+  };
+  const closeRuntimeLogFollowers = () => {
+    for (const { follower } of runtimeLogFollowers.values()) follower.close();
+    runtimeLogFollowers.clear();
+  };
+  const refreshBorrowedExpoLogFollower = async () => {
+    if (!isBorrowedExpoConsumer({
+      consumerStackName: stackName,
+      producerStackName: borrowedExpoProducerStackName,
+    })) return;
+    const borrowedExpo = await resolveBorrowedExpoRuntime({
+      rootDir,
+      producerStackName: borrowedExpoProducerStackName,
+      env: childEnv,
+    }).catch(() => null);
+    const { baseDir: producerStackBaseDir } = resolveStackBaseDir(borrowedExpoProducerStackName, childEnv);
+    const nextLogPath = resolveBorrowedExpoLogPath({
+      producerStackBaseDir,
+      remoteTarget: borrowedExpo?.remoteTarget ?? null,
+    });
+    if (!nextLogPath || nextLogPath === borrowedExpoLogPath) return;
+
+    borrowedExpoLogFollower?.close();
+    borrowedExpoLogPath = nextLogPath;
+    const expoPane = panes[paneIndexById.get('expo')];
+    expoPane.visible = true;
+    expoPane.title = `expo (borrowed: ${borrowedExpoProducerStackName})`;
+    pushLine(expoPane, `[expo] borrowing logs from ${nextLogPath}`);
+    borrowedExpoLogFollower = followLogFile({
+      path: nextLogPath,
+      onLine: (line) => {
+        routeLine(`[expo] [borrowed:${borrowedExpoProducerStackName}] ${line}`);
+        scheduleRender();
+      },
+    });
+  };
+  await refreshBorrowedExpoLogFollower();
   let child = null;
 
   const spawnForwardedChild = (forwardedArgs = childForwarded) => {
@@ -710,6 +898,13 @@ async function main() {
         if (idx < 0) break;
         const line = b.slice(0, idx);
         b = consumeLineBreak(b.slice(idx));
+        if (detachedBackgroundOwner) {
+          const runnerLogPath = extractTuiBackgroundOwnerRunnerLogPath({
+            line: stripAnsi(line),
+            stackName,
+          });
+          if (runnerLogPath) runtimeOwnershipTracker.recordDetachedRunnerLogPath(runnerLogPath);
+        }
         routeLine(line);
       }
       buf[key] = b;
@@ -844,17 +1039,24 @@ async function main() {
   void spawnTauriChild();
 
   async function refreshSummary() {
+    await refreshBorrowedExpoLogFollower();
     if (stackName) {
       const runtime = await readStackRuntimeStateFile(getStackRuntimeStatePath(stackName)).catch(() => null);
       observedRuntimeOwner = runtime
         ? { ownerPid: runtime.ownerPid, startedAt: runtime.startedAt }
         : null;
-      const replacementAdmitted = restartOperation?.observeRuntimeOwner?.(observedRuntimeOwner) === true;
-      runtimeOwnershipTracker.observe({
+      const replacementCandidate = restartOperation?.isReplacementRuntimeOwner?.(observedRuntimeOwner) === true;
+      const ownershipAdmitted = runtimeOwnershipTracker.observe({
         runtimeOwner: observedRuntimeOwner,
         childActive: Boolean(child && child.exitCode == null && child.signalCode == null),
-        replacementAdmitted,
+        launchRequested: detachedBackgroundOwner,
+        runtimeRunnerLogPath: runtime?.logs?.runner,
+        replacementCandidate,
       });
+      if (replacementCandidate && ownershipAdmitted) {
+        restartOperation?.observeRuntimeOwner?.(observedRuntimeOwner);
+      }
+      refreshRuntimeLogFollowers(runtime);
     }
     const idx = paneIndexById.get('summary');
     try {
@@ -864,73 +1066,75 @@ async function main() {
       panes[idx].lines = [`summary error: ${e instanceof Error ? e.message : String(e)}`];
     }
 
-	    // Daemon pane (best-effort): show sign-in guidance when credentials are missing,
-	    // and clear stale guidance once the daemon starts.
-	    try {
-	      const daemonIdx = paneIndexById.get('daemon');
-		      if (stackName) {
-		        const runtimePath = getStackRuntimeStatePath(stackName);
-		        const runtime = await readStackRuntimeStateFile(runtimePath);
+    // Daemon pane (best-effort): show sign-in guidance when credentials are missing,
+    // and clear stale guidance once either the local or target-hosted daemon starts.
+    try {
+      const daemonIdx = paneIndexById.get('daemon');
+      if (stackName) {
+        const runtimePath = getStackRuntimeStatePath(stackName);
+        const runtime = await readStackRuntimeStateFile(runtimePath);
 
-		        const { baseDir } = resolveStackEnvPath(stackName);
-		        const serverPort = Number(runtime?.ports?.server);
-		        const internalServerUrl =
-		          Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
-	        const cliHomeDir = join(baseDir, 'cli');
+        const { baseDir } = resolveStackEnvPath(stackName);
+        const serverPort = Number(runtime?.ports?.server);
+        const internalServerUrl =
+          Number.isFinite(serverPort) && serverPort > 0 ? `http://127.0.0.1:${serverPort}` : '';
+        const cliHomeDir = join(baseDir, 'cli');
 
-	        const scopedEnv = applyTuiStackAuthScopeEnv({ env: process.env, stackName });
-		        const authed = internalServerUrl
-		          ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv })
-		          : hasStackCredentials({ cliHomeDir, serverUrl: '', env: scopedEnv });
-			        const observedDaemon = await getObservedStackDaemonAsync({
-		          cliHomeDir,
-		          internalServerUrl,
-		          runtimeDaemonPid: runtime?.processes?.daemonPid ?? null,
-		          runtimeDaemonPids: runtime?.processes?.daemonPids ?? [],
-		          env: scopedEnv,
-		        }, {
-			          checkDaemonStateImpl: checkDaemonStatePingAware,
-		        });
+        const scopedEnv = applyTuiStackAuthScopeEnv({ env: process.env, stackName });
+        const authed = internalServerUrl
+          ? hasStackCredentials({ cliHomeDir, serverUrl: internalServerUrl, env: scopedEnv })
+          : hasStackCredentials({ cliHomeDir, serverUrl: '', env: scopedEnv });
+        const observedDaemon = await getObservedStackDaemonAsync({
+          cliHomeDir,
+          internalServerUrl,
+          runtimeDaemonPid: runtime?.processes?.daemonPid ?? null,
+          runtimeDaemonPids: runtime?.processes?.daemonPids ?? [],
+          env: scopedEnv,
+        }, {
+          checkDaemonStateImpl: checkDaemonStatePingAware,
+        });
 
-		        const startDaemon = parseStartDaemonFlagFromEnv(process.env);
-		        const notice = buildDaemonAuthNotice({
-		          stackName,
-		          internalServerUrl,
-		          daemonPid: observedDaemon.pid,
-		          daemonRunning: observedDaemon.running,
-		          authed,
-		          startDaemon,
-		        });
+        const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtime, 'daemon');
+        const startDaemon = parseStartDaemonFlagFromEnv(process.env) && !remoteDaemon.target;
+        const daemonRunning = observedDaemon.running || remoteDaemon.running;
+        const notice = buildDaemonAuthNotice({
+          stackName,
+          internalServerUrl,
+          daemonPid: observedDaemon.pid,
+          daemonRunning,
+          authed,
+          startDaemon,
+        });
 
-	        if (notice.show) {
-	          panes[daemonIdx].visible = true;
-	          panes[daemonIdx].title = notice.paneTitle || panes[daemonIdx].title;
-	          panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
-	          if (!sawDaemonAuthRequired && notice.paneTitle === 'daemon (SIGN-IN REQUIRED)') {
-	            sawDaemonAuthRequired = true;
-	            if (focused === paneIndexById.get('local')) {
-	              focused = daemonIdx;
-	            }
-	          }
-	        } else {
-		          const reconciled = reconcileDaemonPaneAfterDaemonStarts({
-		            title: panes[daemonIdx].title,
-		            lines: panes[daemonIdx].lines,
-		            daemonPid: observedDaemon.pid,
-		            daemonRunning: observedDaemon.running,
-		          });
-		          panes[daemonIdx].title = reconciled.title;
-		          panes[daemonIdx].lines = reconciled.lines;
-	        }
-	      }
-	    } catch {
-	      // ignore
-	    }
+        if (notice.show) {
+          panes[daemonIdx].visible = true;
+          panes[daemonIdx].title = notice.paneTitle || panes[daemonIdx].title;
+          panes[daemonIdx].lines = styleDaemonNoticeLines(notice.paneLines || panes[daemonIdx].lines);
+          if (!sawDaemonAuthRequired && notice.paneTitle === 'daemon (SIGN-IN REQUIRED)') {
+            sawDaemonAuthRequired = true;
+            if (focused === paneIndexById.get('local')) {
+              focused = daemonIdx;
+            }
+          }
+        } else {
+          const reconciled = reconcileDaemonPaneAfterDaemonStarts({
+            title: panes[daemonIdx].title,
+            lines: panes[daemonIdx].lines,
+            daemonPid: observedDaemon.pid,
+            daemonRunning,
+          });
+          panes[daemonIdx].title = reconciled.title;
+          panes[daemonIdx].lines = reconciled.lines;
+        }
+      }
+    } catch {
+      // ignore
+    }
 
     // QR pane: driven by runtime state (expo port) and rendered independently of logs.
     try {
       const qrIdx = paneIndexById.get('qr');
-      const qr = await buildExpoQrPaneLines({ stackName });
+      const qr = await buildExpoQrPaneLines({ rootDir, stackName });
       // Data-only pane (kept hidden): rendered inside the expo pane.
       panes[qrIdx].visible = false;
       panes[qrIdx].lines = qr.lines;
@@ -945,8 +1149,10 @@ async function main() {
   let summaryTimer = null;
   const startSummaryTimer = () => {
     if (summaryTimer) clearInterval(summaryTimer);
+    borrowedExpoLogFollower?.close();
     summaryTimer = setInterval(() => {
       if (!paused) {
+        ensureTuiStdinMode(process.stdin);
         void refreshSummary();
       }
     }, 1000);
@@ -988,22 +1194,9 @@ async function main() {
     }
     process.stdout.write('\n');
     if (!internalServerUrl) {
-      process.stdout.write(
-        `[auth] waiting for the stack server timed out (${Math.round((Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 45_000) / 1000)}s).\n` +
-          `[auth] The stack may still be starting. Check the "local" / "server" panes, then press "a" again.\n\n` +
-          `Press Enter to return to TUI...`
+      logOrch(
+        `auth: waiting for the stack server timed out (${Math.round((Number.isFinite(waitTimeoutMs) ? waitTimeoutMs : 45_000) / 1000)}s); check local/server, then press a again`,
       );
-      try {
-        process.stdin.setRawMode(false);
-      } catch {
-        // ignore
-      }
-      try {
-        process.stdin.resume();
-      } catch {
-        // ignore
-      }
-      await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
       paused = false;
       startSummaryTimer();
       await refreshSummary();
@@ -1015,22 +1208,7 @@ async function main() {
     const healthOk = await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 45_000, intervalMs: 300 });
     process.stdout.write(healthOk ? ' ✓\n' : ' (timeout)\n');
     if (!healthOk) {
-      process.stdout.write(
-        `[auth] server did not become healthy in time.\n` +
-          `[auth] Check the "local" / "server" panes, then press "a" again.\n\n` +
-          `Press Enter to return to TUI...`
-      );
-      try {
-        process.stdin.setRawMode(false);
-      } catch {
-        // ignore
-      }
-      try {
-        process.stdin.resume();
-      } catch {
-        // ignore
-      }
-      await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
+      logOrch('auth: server did not become healthy in time; check local/server, then press a again');
       paused = false;
       startSummaryTimer();
       await refreshSummary();
@@ -1038,40 +1216,25 @@ async function main() {
       return;
     }
 
-    const handoff = detachTuiStdinForChild({ stdin: process.stdin, onData });
-
-    const authResult = await new Promise((resolvePromise) => {
-      const proc = spawn(process.execPath, authArgs, { cwd: rootDir, env: process.env, stdio: 'inherit' });
-      proc.on('exit', (code, signal) => resolvePromise({ code, signal }));
-      proc.on('error', () => resolvePromise({ code: 1, signal: null }));
-    });
-
-    const hold = shouldHoldAfterAuthExit(authResult);
-
-    if (hold) {
-      try {
-        process.stdout.write(
-          `\n[auth] finished (code=${authResult?.code ?? 'null'}, sig=${authResult?.signal ?? 'null'}). Press Enter to return to TUI...`
-        );
-        // Re-enable stdin reads (in cooked mode) for the one-line prompt.
-        try {
-          process.stdin.setRawMode(false);
-        } catch {
-          // ignore
-        }
-        try {
-          process.stdin.resume();
-        } catch {
-          // ignore
-        }
-        await waitForEnter({ stdin: process.stdin, timeoutMs: 120_000 });
-      } catch {
-        // ignore
-      }
+    let authResult;
+    try {
+      authResult = await runWithTuiStdinHandoff({
+        stdin: process.stdin,
+        onData,
+        run: () => new Promise((resolvePromise) => {
+          const proc = spawn(process.execPath, authArgs, { cwd: rootDir, env: process.env, stdio: 'inherit' });
+          proc.on('exit', (code, signal) => resolvePromise({ code, signal }));
+          proc.on('error', () => resolvePromise({ code: 1, signal: null }));
+        }),
+      });
+    } catch (error) {
+      authResult = { code: 1, signal: null };
+      logOrch(`auth: failed to start (${error instanceof Error ? error.message : String(error)})`);
     }
 
     paused = false;
-    handoff.restoreForTui();
+    const authExitNotice = buildTuiAuthExitNotice(authResult);
+    if (authExitNotice) logOrch(authExitNotice);
 
     // Restart summary refresh.
     startSummaryTimer();
@@ -1093,6 +1256,7 @@ async function main() {
       previousChild: child,
       previousRuntimeOwner: observedRuntimeOwner,
       restartArgs: restartChildArgs,
+      backgroundOwner: restartChildArgs.includes('--background') || restartChildArgs.includes('--bg'),
       spawnChild: spawnForwardedChild,
       trackChild: (nextChild) => {
         child = nextChild;
@@ -1105,6 +1269,9 @@ async function main() {
     });
     restartOperation = result.operation;
     if (result.started) {
+      // The incumbent runner log cannot authorize the replacement. Wait for the new canonical
+      // background wrapper to announce the runner path it recorded in runtime state.
+      runtimeOwnershipTracker.clearDetachedRunnerLogPath();
       logOrch(`restart: delegated to canonical stack owner (${restartChildArgs.join(' ')})`);
     }
   }
@@ -1115,7 +1282,11 @@ async function main() {
     renderScheduled = true;
     setTimeout(() => {
       renderScheduled = false;
-      render();
+      try {
+        render();
+      } catch (error) {
+        void shutdownAfterUnexpectedTuiFailure(error);
+      }
     }, 16);
   }
 
@@ -1426,7 +1597,7 @@ async function main() {
   }
 
   let exiting = false;
-  async function shutdownAndExit(code = 0) {
+  async function shutdownAndExit(code = 0, exitPolicy = resolveTuiExitPolicy({ explicit: true })) {
     if (exiting) return;
     exiting = true;
 
@@ -1442,35 +1613,45 @@ async function main() {
       // ignore
     }
     cancelPendingTauriLaunch();
-    const shutdownChildren = resolveTuiShutdownChildren({ trackedChild: child, restartOperation });
-    for (const shutdownChild of shutdownChildren) {
-      const childPid = Number(shutdownChild?.pid);
-      if (shutdownChild.exitCode != null || shutdownChild.signalCode != null || !Number.isFinite(childPid) || childPid <= 1) {
-        continue;
-      }
-      // Ensure the child is actually gone before stack infra cleanup, otherwise a still-running
-      // watch process can immediately respawn server/daemon and re-lock the DB.
-      await terminateTuiChildProcessTree(shutdownChild, {
-        stackName,
-        envPath: stackEnvPath,
-        cliHomeDir: stackCliHomeDir,
-      });
-    }
-    const tauriPid = Number(tauriChild?.pid);
-    if (tauriChild && tauriChild.exitCode == null && Number.isFinite(tauriPid) && tauriPid > 1) {
-      await terminateTuiChildProcessTree(tauriChild, {
-        stackName,
-        envPath: stackEnvPath,
-        cliHomeDir: stackCliHomeDir,
-      });
-    }
-
-    // Best-effort cleanup: when the TUI runs a long-lived `dev/start` command, ensure all
-    // stack-owned infra processes are stopped (server/expo/daemon) even if the child exits early.
+    borrowedExpoLogFollower?.close();
+    closeRuntimeLogFollowers();
     let cleanupError = null;
-    if (stackName && isTuiStartLikeForwardedArgs(forwarded)) {
-      const expectedRuntimeOwner = runtimeOwnershipTracker.getExpectedOwner();
-      if (expectedRuntimeOwner) {
+    await applyTuiExitPolicy({
+      exitPolicy,
+      terminateChildren: async () => {
+        const shutdownChildren = resolveTuiShutdownChildren({ trackedChild: child, restartOperation });
+        for (const shutdownChild of shutdownChildren) {
+          const childPid = Number(shutdownChild?.pid);
+          if (shutdownChild.exitCode != null || shutdownChild.signalCode != null || !Number.isFinite(childPid) || childPid <= 1) {
+            continue;
+          }
+          // Ensure the child is actually gone before stack infra cleanup, otherwise a still-running
+          // watch process can immediately respawn server/daemon and re-lock the DB.
+          await terminateTuiChildProcessTree(shutdownChild, {
+            stackName,
+            envPath: stackEnvPath,
+            cliHomeDir: stackCliHomeDir,
+          });
+        }
+      },
+      terminateTauri: async () => {
+        const tauriPid = Number(tauriChild?.pid);
+        if (!tauriChild || tauriChild.exitCode != null || !Number.isFinite(tauriPid) || tauriPid <= 1) return;
+        await terminateTuiChildProcessTree(tauriChild, {
+          stackName,
+          envPath: stackEnvPath,
+          cliHomeDir: stackCliHomeDir,
+        });
+      },
+      // Explicit TUI quit stops only the runtime owner that this TUI admitted. The launch command
+      // may already have exited because the persistent dev/start owner runs in the background.
+      stopRuntime: async () => {
+        if (!stackName || !isTuiStartLikeForwardedArgs(forwarded)) return;
+        const expectedRuntimeOwner = runtimeOwnershipTracker.getExpectedOwner();
+        if (!expectedRuntimeOwner) {
+          logOrch('stop skipped: this TUI did not admit a runtime owner');
+          return;
+        }
         try {
           await stopStackForTuiExit({
             rootDir,
@@ -1483,10 +1664,8 @@ async function main() {
           cleanupError = e;
           logOrch(`stop failed: ${e instanceof Error ? e.message : String(e)}`);
         }
-      } else {
-        logOrch('stop skipped: this TUI did not admit a runtime owner');
-      }
-    }
+      },
+    });
 
     process.stdout.write('\x1b[2J\x1b[H\x1b[?25h');
     if (cleanupError) {
@@ -1497,19 +1676,42 @@ async function main() {
   }
 
   function shutdown() {
-    shutdownAndExit(0).catch((err) => {
+    shutdownAndExit(0, resolveTuiExitPolicy({ explicit: true })).catch((err) => {
       // eslint-disable-next-line no-console
       console.error(`[tui] shutdown error: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     });
   }
 
-  // Ensure we still clean up if the process receives an actual signal (e.g. watch reload / external stop).
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  function detach() {
+    shutdownAndExit(0, resolveTuiExitPolicy()).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`[tui] detach error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    });
+  }
 
-  process.stdin.setRawMode(true);
-  process.stdin.resume();
+  async function shutdownAfterUnexpectedTuiFailure(error) {
+    // A renderer/terminal failure must detach from the persistent Stack owner just like an
+    // external terminal signal; the Tauri pane remains TUI-owned and is cleaned up.
+    // eslint-disable-next-line no-console
+    console.error(`[tui] failed: ${error instanceof Error ? error.message : String(error)}`);
+    try {
+      await shutdownAndExit(1, resolveTuiExitPolicy());
+    } catch (shutdownError) {
+      // eslint-disable-next-line no-console
+      console.error(`[tui] unexpected detach error: ${shutdownError instanceof Error ? shutdownError.message : String(shutdownError)}`);
+      process.exit(1);
+    }
+  }
+
+  // Keyboard quit is handled in raw mode below. External terminal/process termination detaches
+  // from the stack's persistent owner instead of turning an unexpected TUI failure into a stop.
+  process.on('SIGINT', detach);
+  process.on('SIGTERM', detach);
+  process.on('SIGHUP', detach);
+
+  ensureTuiStdinMode(process.stdin);
   const onData = (d) => {
     const s = d.toString('utf-8');
     if (s === '\u0003' || s === 'q') {
@@ -1569,9 +1771,13 @@ async function main() {
   };
   process.stdin.on('data', onData);
 
-  await refreshSummary();
-  render();
-  await new Promise(() => {});
+  try {
+    await refreshSummary();
+    render();
+    await new Promise(() => {});
+  } catch (error) {
+    await shutdownAfterUnexpectedTuiFailure(error);
+  }
 }
 
 main().catch((err) => {

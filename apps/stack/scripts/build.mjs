@@ -3,7 +3,6 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir, resolveStackBaseDir } from './utils/paths/paths.mjs';
 import {
   ensureDepsInstalled,
-  ensureWorkspacePackagesBuiltForComponent,
   pmExecBin,
   requireDir,
 } from './utils/proc/pm.mjs';
@@ -21,10 +20,7 @@ import { pathExists } from './utils/fs/fs.mjs';
 import { buildStackTauriExportEnv, buildStackWebExportEnv } from './utils/ui/ui_export_env.mjs';
 import { parseBuildSelection } from './build/build_targets.mjs';
 import { shouldBuildStackArtifacts } from './build/build_mode.mjs';
-import { resolveStackRuntimePaths } from './runtime/shared/runtime_paths.mjs';
 import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
-import { refreshLocalBundledWorkspacePackages } from '../bin/localBundledWorkspacePreflight.mjs';
-import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 
 async function prepareTauriSidecarForBuild({ env }) {
   const moduleUrl = new URL('../../ui/scripts/prepareTauriSidecar.mjs', import.meta.url);
@@ -86,18 +82,8 @@ async function main() {
       consumerStackName: stackName,
       env: process.env,
     });
-    const runtimePaths = resolveStackRuntimePaths({ stackBaseDir: authority.producerStackBaseDir });
-    await mkdir(runtimePaths.runtimeDir, { recursive: true });
-    const result = await withWorkspaceBundleLock(async () => {
-      await ensureWorkspacePackagesBuiltForComponent(rootDir, { quiet: true, env: process.env });
-      await refreshLocalBundledWorkspacePackages(rootDir);
-      const { buildStackArtifacts } = await import('./build/build_stack_artifacts.mjs');
-      return await buildStackArtifacts({ rootDir, argv, env: process.env, authority });
-    }, {
-      lockPath: runtimePaths.lockPath,
-      errorLabel: 'runtime snapshot build lock',
-      timeoutMs: Number(process.env.HAPPIER_STACK_RUNTIME_BUILD_LOCK_TIMEOUT_MS) || undefined,
-    });
+    const { buildStackArtifacts } = await import('./build/build_stack_artifacts.mjs');
+    const result = await buildStackArtifacts({ rootDir, argv, env: process.env, authority });
     if (json) {
       printResult({ json, data: result });
     } else {

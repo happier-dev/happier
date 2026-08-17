@@ -38,3 +38,32 @@ test('stack daemon command retains admitted runtime provenance in its composed l
     context.runtimeProvenance.admittedDistClosureFingerprint,
   );
 });
+
+test('stack daemon command follows an active source-backed runtime before required stack env mode', async (t) => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'daemon-command-source' });
+  const env = {
+    ...process.env,
+    HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_RUNTIME_MODE: 'require',
+    HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_SERVER_PORT: '4102',
+  };
+
+  const context = await resolveStackDaemonCommandContext({
+    rootDir: fixture.root,
+    stackName: fixture.stackName,
+    env,
+    identity: 'default',
+    argv: [],
+    activeRuntimeState: { runtimeSnapshotId: null },
+  });
+
+  assert.deepEqual(context.runtimeProvenance, {
+    runtimeBacked: false,
+    admittedDistClosureFingerprint: null,
+    distEntrypoint: '',
+  });
+  assert.equal(context.cliEntrypoint, '');
+  assert.equal(context.envForIdentity.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED, undefined);
+});

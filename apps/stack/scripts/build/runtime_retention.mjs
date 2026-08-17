@@ -1,7 +1,11 @@
 import { readdir, rm, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import { readArtifactManifest, validateArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
+import {
+  readArtifactManifest,
+  readComponentArtifactSupportReference,
+  validateArtifactManifest,
+} from '../runtime/shared/artifact_manifest.mjs';
 import { readRuntimeManifest, readRuntimePointer, validateRuntimeManifest } from '../runtime/shared/runtime_manifest.mjs';
 import { resolveStackArtifactsDir, resolveStackRuntimePaths } from '../runtime/shared/runtime_paths.mjs';
 
@@ -61,6 +65,35 @@ async function resolveCreatedAtOrMtime(targetPath, rawCreatedAt) {
   return entryStat.mtime.toISOString();
 }
 
+async function collectValidRuntimeSnapshots({ stackBaseDir, removeInvalid = false }) {
+  const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
+  const snapshotIds = await listChildDirectories(runtimePaths.buildsDir);
+  const validSnapshots = [];
+  const removedEntries = [];
+
+  for (const snapshotId of snapshotIds) {
+    const snapshotDir = join(runtimePaths.buildsDir, snapshotId);
+    const manifest = await readRuntimeManifest({ manifestPath: join(snapshotDir, 'manifest.json') });
+    const validation = validateRuntimeManifest(manifest);
+    if (!validation.ok) {
+      if (removeInvalid) {
+        await rm(snapshotDir, { recursive: true, force: true });
+        removedEntries.push(snapshotId);
+      }
+      continue;
+    }
+    validSnapshots.push({
+      id: snapshotId,
+      dir: snapshotDir,
+      manifest: validation.manifest,
+      createdAt: await resolveCreatedAtOrMtime(snapshotDir, manifest?.createdAt),
+      referencedSnapshotIds: normalizeReferencedSnapshotIds(manifest),
+    });
+  }
+
+  return { validSnapshots, removedEntries };
+}
+
 export function resolveRuntimeRetentionPolicy({ env = process.env } = {}) {
   return {
     runtimeSnapshotKeepCount: resolveKeepCount(env.HAPPIER_STACK_RUNTIME_SNAPSHOT_KEEP_COUNT, DEFAULT_RETENTION_COUNT),
@@ -105,14 +138,19 @@ export async function assertRuntimeProducerCanBeRemoved({ producerStackBaseDir, 
   );
 }
 
-export async function pruneRuntimeSnapshots({
+async function collectRetainedRuntimeSnapshots({
   stackBaseDir,
   keepCount,
   preserveSnapshotIds = [],
   externalReferenceStorageRoot = '',
+  removeInvalid = false,
 }) {
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir });
-  const snapshotIds = await listChildDirectories(runtimePaths.buildsDir);
+  const { validSnapshots, removedEntries } = await collectValidRuntimeSnapshots({
+    stackBaseDir,
+    removeInvalid,
+  });
+  const snapshotById = new Map(validSnapshots.map((snapshot) => [snapshot.id, snapshot]));
   const keep = new Set((preserveSnapshotIds ?? []).map((value) => String(value ?? '').trim()).filter(Boolean));
   const externalReferences = await collectExternalRuntimeSnapshotReferences({
     producerStackBaseDir: stackBaseDir,
@@ -121,27 +159,7 @@ export async function pruneRuntimeSnapshots({
   for (const reference of externalReferences) keep.add(reference.snapshotId);
   const activePointer = await readRuntimePointer({ currentPath: runtimePaths.currentPath });
   const activeSnapshotId = String(activePointer?.snapshotId ?? '').trim();
-  const validSnapshots = [];
-  const removedEntries = [];
 
-  for (const snapshotId of snapshotIds) {
-    const snapshotDir = join(runtimePaths.buildsDir, snapshotId);
-    const manifest = await readRuntimeManifest({ manifestPath: join(snapshotDir, 'manifest.json') });
-    const validation = validateRuntimeManifest(manifest);
-    if (!validation.ok) {
-      await rm(snapshotDir, { recursive: true, force: true });
-      removedEntries.push(snapshotId);
-      continue;
-    }
-    validSnapshots.push({
-      id: snapshotId,
-      dir: snapshotDir,
-      createdAt: await resolveCreatedAtOrMtime(snapshotDir, manifest?.createdAt),
-      referencedSnapshotIds: normalizeReferencedSnapshotIds(manifest),
-    });
-  }
-
-  const snapshotById = new Map(validSnapshots.map((snapshot) => [snapshot.id, snapshot]));
   for (const snapshotId of [...keep]) {
     preserveSnapshotWithReferences(snapshotId, snapshotById, keep);
   }
@@ -155,6 +173,67 @@ export async function pruneRuntimeSnapshots({
     if (keep.size >= desiredKeepCount) break;
     preserveSnapshotWithReferences(snapshot.id, snapshotById, keep);
   }
+
+  return { validSnapshots, keep, removedEntries };
+}
+
+async function collectRetainedComponentArtifactFingerprints({
+  stackBaseDir,
+  runtimeSnapshotKeepCount,
+  externalReferenceStorageRoot,
+}) {
+  const { validSnapshots, keep } = await collectRetainedRuntimeSnapshots({
+    stackBaseDir,
+    keepCount: runtimeSnapshotKeepCount,
+    externalReferenceStorageRoot,
+  });
+  const fingerprintsByComponent = new Map();
+  const remember = (component, fingerprint) => {
+    const normalizedComponent = String(component ?? '').trim();
+    const normalizedFingerprint = String(fingerprint ?? '').trim();
+    if (!normalizedComponent || !normalizedFingerprint) return;
+    const fingerprints = fingerprintsByComponent.get(normalizedComponent) ?? new Set();
+    fingerprints.add(normalizedFingerprint);
+    fingerprintsByComponent.set(normalizedComponent, fingerprints);
+  };
+
+  for (const snapshot of validSnapshots) {
+    if (!keep.has(snapshot.id)) continue;
+    for (const component of ['web', 'server', 'daemon']) {
+      const artifactFingerprint = snapshot.manifest.components?.[component]?.artifactFingerprint;
+      if (!artifactFingerprint) continue;
+      remember(component, artifactFingerprint);
+      const artifactDir = join(
+        resolveStackArtifactsDir({ stackBaseDir }),
+        component,
+        String(artifactFingerprint),
+      );
+      const artifactManifest = await readArtifactManifest({ artifactDir });
+      const validation = validateArtifactManifest(artifactManifest);
+      if (!validation.ok || validation.manifest.component !== component) continue;
+      const supportReference = readComponentArtifactSupportReference(validation.manifest);
+      if (supportReference) {
+        remember(supportReference.supportComponent, supportReference.artifactFingerprint);
+      }
+    }
+  }
+
+  return fingerprintsByComponent;
+}
+
+export async function pruneRuntimeSnapshots({
+  stackBaseDir,
+  keepCount,
+  preserveSnapshotIds = [],
+  externalReferenceStorageRoot = '',
+}) {
+  const { validSnapshots, keep, removedEntries } = await collectRetainedRuntimeSnapshots({
+    stackBaseDir,
+    keepCount,
+    preserveSnapshotIds,
+    externalReferenceStorageRoot,
+    removeInvalid: true,
+  });
 
   for (const snapshot of validSnapshots) {
     if (keep.has(snapshot.id)) continue;
@@ -172,10 +251,17 @@ export async function pruneComponentArtifacts({
   stackBaseDir,
   component,
   keepCount,
+  runtimeSnapshotKeepCount = DEFAULT_RETENTION_COUNT,
+  externalReferenceStorageRoot = '',
 }) {
   const componentDir = join(resolveStackArtifactsDir({ stackBaseDir }), String(component ?? '').trim());
   const artifactIds = await listChildDirectories(componentDir);
-  const keep = new Set();
+  const retainedFingerprintsByComponent = await collectRetainedComponentArtifactFingerprints({
+    stackBaseDir,
+    runtimeSnapshotKeepCount,
+    externalReferenceStorageRoot,
+  });
+  const keep = new Set(retainedFingerprintsByComponent.get(String(component ?? '').trim()) ?? []);
   const validArtifacts = [];
   const removedEntries = [];
 

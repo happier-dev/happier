@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +11,10 @@ import { ensureEnvFileMutated } from './utils/env/env_file.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { selectLocalServerPortCandidateForStack } from './utils/server/resolve_stack_server_port.mjs';
 import { resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
+import {
+  resolveRepoStackIdentity,
+  resolveStacksStorageRoot,
+} from './utils/stack/repo_stack_identity.mjs';
 
 function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   const c = String(cmd ?? '').trim();
@@ -20,6 +23,18 @@ function shouldAutoInstallDepsForRepoLocalCommand(cmd) {
   if (c === 'where') return false;
   if (c === 'stop') return false;
   return true;
+}
+
+function isRuntimeSnapshotSelectionCommand(argv) {
+  const positionals = (Array.isArray(argv) ? argv : [])
+    .filter((arg) => arg !== '--' && !String(arg).startsWith('-'));
+  return (
+    positionals.length === 4
+    && positionals[0] === 'stack'
+    && positionals[1] === 'runtime'
+    && Boolean(positionals[2])
+    && positionals[3] === 'select'
+  );
 }
 
 function isMobileRepoLocalCommand(cmd) {
@@ -107,43 +122,6 @@ function isPortWithinRange(port, base, range) {
   return p >= b && p < b + r;
 }
 
-function sanitizeStackNameToken(s) {
-  const raw = String(s ?? '').trim().toLowerCase();
-  const cleaned = raw.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
-  return cleaned || 'repo';
-}
-
-function isHexToken(s, { minLen = 6 } = {}) {
-  const raw = String(s ?? '').trim().toLowerCase();
-  if (!raw || raw.length < minLen) return false;
-  return /^[a-f0-9]+$/.test(raw);
-}
-
-function resolveGitDir(repoRoot) {
-  try {
-    const gitPath = join(repoRoot, '.git');
-    if (!existsSync(gitPath)) return null;
-
-    // Common case: .git is a directory.
-    try {
-      const stat = readFileSync(gitPath, { encoding: 'utf-8' });
-      void stat;
-    } catch {
-      return gitPath;
-    }
-
-    // Worktree case: .git is a file like "gitdir: /path/to/actual/git/dir".
-    const raw = readFileSync(gitPath, 'utf-8').trim();
-    const m = raw.match(/^gitdir:\s*(.+)\s*$/i);
-    if (!m) return null;
-    const p = m[1].trim();
-    if (!p) return null;
-    return p.startsWith('/') ? p : join(repoRoot, p);
-  } catch {
-    return null;
-  }
-}
-
 function readTextFile(path) {
   try {
     if (!path || !existsSync(path)) return '';
@@ -163,15 +141,6 @@ function readEnvFileObject(path) {
   }
 }
 
-function writeTextFileBestEffort(path, contents) {
-  try {
-    if (!path) return;
-    writeFileSync(path, String(contents ?? ''), { encoding: 'utf-8' });
-  } catch {
-    // ignore
-  }
-}
-
 async function syncRepoLocalEnvFile({ envPath, managedEnv = {}, pruneKeys = [] } = {}) {
   const target = String(envPath ?? '').trim();
   if (!target) return;
@@ -183,52 +152,6 @@ async function syncRepoLocalEnvFile({ envPath, managedEnv = {}, pruneKeys = [] }
   const removeKeys = Array.from(new Set((pruneKeys ?? []).map((k) => String(k ?? '').trim()).filter(Boolean)));
   // Preserve user keys while applying the managed projection atomically.
   await ensureEnvFileMutated({ envPath: target, updates, removeKeys });
-}
-
-function stacklessIdForRepo({ repoRoot, stacksStorageRoot, createIfMissing }) {
-  const oldHash = createHash('sha256').update(String(repoRoot)).digest('hex').slice(0, 10);
-  const base = sanitizeStackNameToken(repoRoot.split('/').filter(Boolean).at(-1));
-  const oldName = `repo-${base}-${oldHash}`;
-
-  const gitDir = resolveGitDir(repoRoot);
-  if (!gitDir) {
-    // Best-effort fallback when .git is unavailable (e.g. a tarball checkout).
-    // This keeps behavior stable for a given path without creating new local state.
-    return oldHash;
-  }
-
-  const idPath = gitDir ? join(gitDir, 'happier-stack-stackless-id') : null;
-  const existing = readTextFile(idPath);
-  if (isHexToken(existing, { minLen: 8 })) {
-    return existing.slice(0, 20);
-  }
-
-  // Back-compat: if the old stack dir exists, pin the id to the previous hash to keep ports/state stable.
-  try {
-    const oldDir = join(stacksStorageRoot, oldName);
-    if (existsSync(oldDir)) {
-      if (createIfMissing) writeTextFileBestEffort(idPath, oldHash);
-      return oldHash;
-    }
-  } catch {
-    // ignore
-  }
-
-  if (!createIfMissing) {
-    // Dry-run / read-only mode: do not create new local state.
-    return oldHash;
-  }
-
-  // Fresh repo-local stack: generate a persistent id under git metadata (so it survives repo moves).
-  const generated = randomBytes(8).toString('hex');
-  writeTextFileBestEffort(idPath, generated);
-  return generated;
-}
-
-function stacklessStackNameForRepo({ repoRoot, stacksStorageRoot, createIfMissing }) {
-  const base = sanitizeStackNameToken(repoRoot.split('/').filter(Boolean).at(-1));
-  const id = stacklessIdForRepo({ repoRoot, stacksStorageRoot, createIfMissing });
-  return `repo-${base}-${id.slice(0, 10)}`;
 }
 
 function expandHomePath(p) {
@@ -258,12 +181,6 @@ function hasForeignStackSelection({ env, stackName, envPath, runtimeStatePath })
     const inheritedPath = normalizePathForComparison(env?.[key]);
     return inheritedPath && inheritedPath !== normalizePathForComparison(expectedPath);
   });
-}
-
-function resolveStacksStorageRoot(env) {
-  const raw = (env.HAPPIER_STACK_STORAGE_DIR ?? '').toString().trim();
-  if (raw) return expandHomePath(raw);
-  return join(homedir(), '.happier', 'stacks');
 }
 
 function readRuntimeServerPort(runtimeStatePath) {
@@ -314,7 +231,7 @@ async function main() {
   if (argvWithoutDryRun[0] === 'tui') {
     const forwarded = argvWithoutDryRun.slice(1);
     if (forwarded.length === 0) {
-      argv = ['tui', 'dev', ...forwarded];
+      argv = ['tui', 'dev', '--mobile'];
     }
   }
   const wantsTuiMobile = argv[0] === 'tui' && argv.some((arg) => String(arg ?? '').trim() === '--mobile' || String(arg ?? '').trim() === '--with-mobile');
@@ -335,21 +252,27 @@ async function main() {
     subcommand === 'stack' ||
     subcommand === 'wt' ||
     subcommand === 'worktrees';
+  const isRuntimeSnapshotSelection = isRuntimeSnapshotSelectionCommand(argv);
 
-  const stacksStorageRoot = resolveStacksStorageRoot(process.env);
-  const stacklessName = stacklessStackNameForRepo({
-    repoRoot,
-    stacksStorageRoot,
-    createIfMissing: !dryRun && !isStop,
-  });
-  const stacklessBaseDir = join(stacksStorageRoot, stacklessName);
-  const stacklessRuntimePath = join(stacklessBaseDir, 'stack.runtime.json');
-  const runtimeServerPort = readRuntimeServerPort(stacklessRuntimePath);
-  const runtimeExpoPort = readRuntimeExpoPort(stacklessRuntimePath);
-  const stacklessEnvPath = join(stacklessBaseDir, 'env');
-  const stacklessCliHomeDir = join(stacklessBaseDir, 'cli');
-  const stacklessLogsDir = join(stacklessBaseDir, 'logs');
-  const existingStacklessEnv = readEnvFileObject(stacklessEnvPath);
+  // Selecting a named consumer's existing producer snapshot has no repo-local
+  // producer role. Keep it free of identity allocation and dependency bootstrap
+  // so a controlled consumer can select while its checkout is not build-ready.
+  const stackIdentity = isRuntimeSnapshotSelection
+    ? null
+    : resolveRepoStackIdentity({
+        repoRoot,
+        stacksStorageRoot: resolveStacksStorageRoot(process.env),
+        createIfMissing: !dryRun && !isStop,
+      });
+  const stacklessName = stackIdentity?.stackName ?? '';
+  const stacklessBaseDir = stackIdentity?.stackBaseDir ?? '';
+  const stacklessRuntimePath = stackIdentity?.runtimeStatePath ?? '';
+  const runtimeServerPort = stacklessRuntimePath ? readRuntimeServerPort(stacklessRuntimePath) : null;
+  const runtimeExpoPort = stacklessRuntimePath ? readRuntimeExpoPort(stacklessRuntimePath) : null;
+  const stacklessEnvPath = stacklessBaseDir ? join(stacklessBaseDir, 'env') : '';
+  const stacklessCliHomeDir = stacklessBaseDir ? join(stacklessBaseDir, 'cli') : '';
+  const stacklessLogsDir = stacklessBaseDir ? join(stacklessBaseDir, 'logs') : '';
+  const existingStacklessEnv = stacklessEnvPath ? readEnvFileObject(stacklessEnvPath) : {};
   const existingPinnedServerPort = coercePositiveInt(existingStacklessEnv.HAPPIER_STACK_SERVER_PORT);
   const existingPinnedExpoPort = coercePositiveInt(existingStacklessEnv.HAPPIER_STACK_EXPO_DEV_PORT);
 
@@ -406,12 +329,14 @@ async function main() {
     ],
   });
 
-  const inheritedForeignStackSelection = hasForeignStackSelection({
-    env: cleaned,
-    stackName: stacklessName,
-    envPath: stacklessEnvPath,
-    runtimeStatePath: stacklessRuntimePath,
-  });
+  const inheritedForeignStackSelection = isRuntimeSnapshotSelection
+    ? false
+    : hasForeignStackSelection({
+        env: cleaned,
+        stackName: stacklessName,
+        envPath: stacklessEnvPath,
+        runtimeStatePath: stacklessRuntimePath,
+      });
   const runtimeModeRaw = inheritedForeignStackSelection
     ? ''
     : String(cleaned.HAPPIER_STACK_RUNTIME_MODE ?? '').trim();
@@ -437,6 +362,7 @@ async function main() {
           HAPPIER_STACK_CLI_HOME_DIR: stacklessCliHomeDir,
           // If set, internal spawns can tee output into stack-scoped log files (server.log/expo.log/ui.log).
           HAPPIER_STACK_LOG_TEE_DIR: stacklessLogsDir,
+          HAPPIER_STACK_LOG_TEE_TIMESTAMPS: '1',
           // Stackless isolation: keep ports away from main/default stack ports by default.
           HAPPIER_STACK_SERVER_PORT_BASE: (process.env.HAPPIER_STACK_SERVER_PORT_BASE ?? '52005').toString(),
           HAPPIER_STACK_SERVER_PORT_RANGE: (process.env.HAPPIER_STACK_SERVER_PORT_RANGE ?? '2000').toString(),
@@ -604,6 +530,7 @@ async function main() {
             HAPPIER_STACK_CLI_HOME_DIR: effectiveEnv.HAPPIER_STACK_CLI_HOME_DIR,
             HAPPIER_STACK_CLI_BUILD_MODE: effectiveEnv.HAPPIER_STACK_CLI_BUILD_MODE,
             HAPPIER_STACK_LOG_TEE_DIR: effectiveEnv.HAPPIER_STACK_LOG_TEE_DIR,
+            HAPPIER_STACK_LOG_TEE_TIMESTAMPS: effectiveEnv.HAPPIER_STACK_LOG_TEE_TIMESTAMPS,
             HAPPIER_ACTIVE_SERVER_ID: effectiveEnv.HAPPIER_ACTIVE_SERVER_ID,
             HAPPIER_STACK_INVOKED_CWD: effectiveEnv.HAPPIER_STACK_INVOKED_CWD,
             HAPPIER_STACK_RUNTIME_MODE: effectiveEnv.HAPPIER_STACK_RUNTIME_MODE,
@@ -617,18 +544,20 @@ async function main() {
     return;
   }
 
-  try {
-    await maybeAutoInstallRepoDeps({
-      repoRoot,
-      cmd: subcommand,
-      env: effectiveEnv,
-      autoInstallOverride,
-      preflightRootOverride,
-    });
-  } catch (e) {
-    process.stderr.write(`[repo-local] failed to install repo deps\n${String(e?.stack ?? e)}\n`);
-    process.stderr.write('\nFix:\n  corepack enable\n  yarn install\n');
-    process.exit(1);
+  if (!isRuntimeSnapshotSelection) {
+    try {
+      await maybeAutoInstallRepoDeps({
+        repoRoot,
+        cmd: subcommand,
+        env: effectiveEnv,
+        autoInstallOverride,
+        preflightRootOverride,
+      });
+    } catch (e) {
+      process.stderr.write(`[repo-local] failed to install repo deps\n${String(e?.stack ?? e)}\n`);
+      process.stderr.write('\nFix:\n  corepack enable\n  yarn install\n');
+      process.exit(1);
+    }
   }
 
   if (preflightOnly === '1') {

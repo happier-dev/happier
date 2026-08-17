@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureDir, readTextOrEmpty } from '../utils/fs/ops.mjs';
+import { createEnvFileExclusive } from '../utils/env/env_file.mjs';
 import { parseEnvToObject } from '../utils/env/dotenv.mjs';
 import { getWorkspaceDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { stackExistsSync } from '../utils/stack/stacks.mjs';
@@ -63,6 +64,12 @@ export async function writeStackEnv({ stackName, env }) {
     await writeFile(envPath, next, 'utf-8');
   }
   return envPath;
+}
+
+export async function createStackEnv({ stackName, env }) {
+  const envPath = resolveStackEnvPath(stackName).envPath;
+  const created = await createEnvFileExclusive({ envPath, content: stringifyEnv(env) });
+  return { created, envPath };
 }
 
 export async function withStackEnv({

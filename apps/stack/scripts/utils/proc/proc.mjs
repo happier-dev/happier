@@ -1,11 +1,16 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { terminateProcessGroup } from './terminate.mjs';
 import { resolveCommandInvocation } from '../process/resolveCommandInvocation.mjs';
+import {
+  createBoundedLogWriteStream,
+  DEFAULT_BOUNDED_LOG_MAX_BYTES,
+} from './boundedLog.mjs';
 
 const plannedExitMarker = Symbol('happier.stack.plannedExit');
+const DEFAULT_TEE_MAX_BYTES = DEFAULT_BOUNDED_LOG_MAX_BYTES;
 
 function resolveProcSpawnInvocation(cmd, args, env, shellOverride) {
   if (shellOverride === true) {
@@ -118,6 +123,13 @@ function writePrefixedLines(stream, prefix, lines) {
   }
 }
 
+function writePersistedLogLines(stream, prefix, lines, { timestamps = false } = {}) {
+  for (const line of lines) {
+    const timestamp = timestamps ? `[${new Date().toISOString()}] ` : '';
+    stream.write(`${prefix}${timestamp}${line}\n`);
+  }
+}
+
 function writeWithPrefix(stream, prefix, bufState, chunk) {
   writePrefixedLines(stream, prefix, consumeLineChunk(bufState, chunk));
 }
@@ -137,6 +149,11 @@ function sanitizeLogFileToken(raw) {
   const s = String(raw ?? '').trim().toLowerCase();
   const cleaned = s.replace(/[^a-z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
   return cleaned || 'proc';
+}
+
+export function resolveProcessTeeLogPath({ label, env } = {}) {
+  const teeDir = String(env?.HAPPIER_STACK_LOG_TEE_DIR ?? '').trim();
+  return teeDir ? join(teeDir, `${sanitizeLogFileToken(label)}.log`) : '';
 }
 
 function createWritableFinishController(stream) {
@@ -217,8 +234,11 @@ function formatFailureDiagnostic({ out, err, truncated, env }) {
 export function spawnProc(label, cmd, args, env, options = {}) {
   const {
     silent = false,
+    persistOutput = true,
     teeFile,
     teeLabel,
+    teeMaxBytes = DEFAULT_TEE_MAX_BYTES,
+    lineFilter,
     onLine,
     ...spawnOptions
   } = options ?? {};
@@ -231,25 +251,25 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   const outPrefix = `[${label}] `;
   const errPrefix = `[${label}] `;
 
-  let teePath = typeof teeFile === 'string' && teeFile.trim() ? teeFile.trim() : '';
-  if (!teePath) {
-    const teeDir = String(env?.HAPPIER_STACK_LOG_TEE_DIR ?? '').trim();
-    if (teeDir) {
+  let teePath = persistOutput && typeof teeFile === 'string' && teeFile.trim() ? teeFile.trim() : '';
+  if (persistOutput && !teePath) {
+    teePath = resolveProcessTeeLogPath({ label, env });
+    if (teePath) {
       try {
-        mkdirSync(teeDir, { recursive: true });
+        mkdirSync(dirname(teePath), { recursive: true });
       } catch {
         // ignore
       }
-      teePath = join(teeDir, `${sanitizeLogFileToken(label)}.log`);
     }
   }
-  const teeStream = teePath ? createWriteStream(teePath, { flags: 'a' }) : null;
+  const teeStream = teePath ? createBoundedLogWriteStream(teePath, teeMaxBytes) : null;
   const teeFinish = createWritableFinishController(teeStream);
   const teePrefix = (() => {
     const t = typeof teeLabel === 'string' ? teeLabel.trim() : '';
     if (t) return `[${t}] `;
     return outPrefix;
   })();
+  const teeTimestamps = String(env?.HAPPIER_STACK_LOG_TEE_TIMESTAMPS ?? '') === '1';
 
   const emitLines = (stream, lines) => {
     if (typeof onLine !== 'function') return;
@@ -260,6 +280,18 @@ export function spawnProc(label, cmd, args, env, options = {}) {
         // ignore observer failures; child process logging should stay best-effort
       }
     }
+  };
+
+  const filterLines = (stream, lines) => {
+    if (typeof lineFilter !== 'function') return lines;
+    return lines.filter((line) => {
+      try {
+        return lineFilter({ stream, line }) !== false;
+      } catch {
+        // A display optimization must never hide child output after its filter fails.
+        return true;
+      }
+    });
   };
 
   const child = spawn(invocation.command, invocation.args, {
@@ -276,21 +308,21 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   });
 
   child.stdout?.on('data', (d) => {
-    const lines = consumeLineChunk(outState, d);
+    const lines = filterLines('stdout', consumeLineChunk(outState, d));
     emitLines('stdout', lines);
     if (!silent) writePrefixedLines(process.stdout, outPrefix, lines);
-    if (teeStream) writePrefixedLines(teeStream, teePrefix, lines);
+    if (teeStream) writePersistedLogLines(teeStream, teePrefix, lines, { timestamps: teeTimestamps });
   });
   child.stderr?.on('data', (d) => {
-    const lines = consumeLineChunk(errState, d);
+    const lines = filterLines('stderr', consumeLineChunk(errState, d));
     emitLines('stderr', lines);
     if (!silent) writePrefixedLines(process.stderr, errPrefix, lines);
-    if (teeStream) writePrefixedLines(teeStream, teePrefix, lines);
+    if (teeStream) writePersistedLogLines(teeStream, teePrefix, lines, { timestamps: teeTimestamps });
   });
   child.completion = new Promise((resolve) => child.on('close', async (code, signal) => {
     child.__happierClosed = true;
-    const outLines = flushLineBuffer(outState);
-    const errLines = flushLineBuffer(errState);
+    const outLines = filterLines('stdout', flushLineBuffer(outState));
+    const errLines = filterLines('stderr', flushLineBuffer(errState));
     emitLines('stdout', outLines);
     emitLines('stderr', errLines);
     if (!silent) {
@@ -298,8 +330,8 @@ export function spawnProc(label, cmd, args, env, options = {}) {
       writePrefixedLines(process.stderr, errPrefix, errLines);
     }
     if (teeStream) {
-      writePrefixedLines(teeStream, teePrefix, outLines);
-      writePrefixedLines(teeStream, teePrefix, errLines);
+      writePersistedLogLines(teeStream, teePrefix, outLines, { timestamps: teeTimestamps });
+      writePersistedLogLines(teeStream, teePrefix, errLines, { timestamps: teeTimestamps });
     }
     await teeFinish.endAndWait();
     resolve({
@@ -316,7 +348,10 @@ export function spawnProc(label, cmd, args, env, options = {}) {
       }
       if (teeStream) {
         try {
-          teeStream.write(formatSpawnedProcessExitLine(teePrefix, code, sig, child));
+          const persistedExitPrefix = teeTimestamps
+            ? `${teePrefix}[${new Date().toISOString()}] `
+            : teePrefix;
+          teeStream.write(formatSpawnedProcessExitLine(persistedExitPrefix, code, sig, child));
         } catch {
           // ignore
         }
@@ -523,8 +558,17 @@ export async function runCapture(cmd, args, options = {}) {
         resolvePromise(out);
         return;
       }
+      const diagnosticStreamMaxChars = Math.max(1, Math.floor(DEFAULT_FAILURE_DIAGNOSTIC_MAX_CHARS / 2));
+      const diagnosticOut = appendBoundedTail('', out, diagnosticStreamMaxChars);
+      const diagnosticErr = appendBoundedTail('', err, diagnosticStreamMaxChars);
+      const failureDiagnostic = formatFailureDiagnostic({
+        out: diagnosticOut,
+        err: diagnosticErr,
+        truncated: out.length > diagnosticStreamMaxChars || err.length > diagnosticStreamMaxChars,
+        env: spawnOptions.env ?? process.env,
+      });
       const e = new Error(
-        `${cmd} ${args.join(' ')} failed (code=${code ?? 'null'}, sig=${signal ?? 'null'}): ${err.trim()}`
+        `${cmd} ${args.join(' ')} failed (code=${code ?? 'null'}, sig=${signal ?? 'null'})${failureDiagnostic}`
       );
       e.code = 'EEXIT';
       e.exitCode = code;
@@ -542,6 +586,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
     streamLabel,
     teeFile,
     teeLabel,
+    teeMaxBytes = DEFAULT_TEE_MAX_BYTES,
     input,
     heartbeatMs,
     shell: shellOverride,
@@ -576,7 +621,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
       if (label) return `[${label}] `;
       return '';
     })();
-    const teeStream = shouldTee ? createWriteStream(teePath, { flags: 'a' }) : null;
+    const teeStream = shouldTee ? createBoundedLogWriteStream(teePath, teeMaxBytes) : null;
     const teeFinish = createWritableFinishController(teeStream);
     const keepaliveEveryMs = Number.isFinite(heartbeatMs) && heartbeatMs > 0 ? heartbeatMs : 0;
     let terminalOverride = null;

@@ -20,3 +20,20 @@ export function routeDevTargetLogPaneId(normalizedLabel, configuredTargetNames) 
   const targetName = paneToken(label.slice('remote:'.length));
   return configuredTargetNames?.has(targetName) ? `remote-${targetName}` : null;
 }
+
+export function routeRemoteServiceLogPaneId(line, configuredTargetPlans) {
+  const match = String(line ?? '').match(/^\[remote:([^\]]+)\]\s+\[([^\]]+)\]\s*/i);
+  if (!match) return null;
+
+  const targetName = paneToken(match[1]);
+  const plan = configuredTargetPlans?.find(
+    (candidate) => paneToken(candidate?.target?.name) === targetName,
+  );
+  if (!plan) return null;
+
+  const nestedLabel = String(match[2]).trim().toLowerCase();
+  if (plan.services?.expo && ['expo', 'mobile', 'ui'].includes(nestedLabel)) return 'expo';
+  if (plan.services?.server && nestedLabel.includes('server')) return 'server';
+  if (plan.services?.daemon && nestedLabel.includes('daemon')) return 'daemon';
+  return null;
+}

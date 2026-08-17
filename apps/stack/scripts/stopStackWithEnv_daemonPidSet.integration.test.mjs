@@ -209,6 +209,77 @@ test('stop cleanup attempts a runtime-recorded Expo pid only once when Expo stat
   assert.equal(result.finalization?.reason, 'deleted');
 });
 
+test('stopStackWithEnv reclaims only a fully identified legacy dev-target tunnel', async (t) => {
+  const fixture = await createStopFixture(t, { stackName: 'legacy-dev-target-tunnel' });
+  const opensshConfigPath = join(fixture.baseDir, 'mutagen', 'openssh', 'config');
+  const legacyTunnelPid = 42001;
+  const unrelatedListenerPid = 42002;
+  const expectedTunnelLine = [
+    `${legacyTunnelPid} ssh -T -F ${opensshConfigPath}`,
+    '-o ControlMaster=no',
+    '-o BatchMode=yes',
+    '-o ExitOnForwardFailure=yes',
+    '-o ServerAliveInterval=15',
+    '-o ServerAliveCountMax=3',
+    '-R 127.0.0.1:55133:127.0.0.1:53288',
+    '-L 0.0.0.0:19364:localhost:21209',
+    '-N happier-dev-target-mac',
+  ].join(' ');
+  const terminated = [];
+
+  const result = await stopStackWithEnv({
+    rootDir: fixture.repoRoot,
+    stackName: fixture.stackName,
+    baseDir: fixture.baseDir,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: fixture.envPath,
+      HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
+      HAPPIER_STACK_SERVER_PORT: '53288',
+      HAPPIER_STACK_EXPO_DEV_PORT: '19364',
+    },
+    json: true,
+    noDocker: true,
+    sweepOwned: true,
+  }, {
+    loadDevTargetsConfigImpl: async () => ({
+      path: join(fixture.baseDir, 'dev-targets.json'),
+      config: { targets: [{ ssh: 'happier-dev-target-mac' }] },
+    }),
+    listListenPidsWithStatusImpl: async (port) => {
+      assert.equal(port, 19364);
+      return { status: 'ok', supported: true, pids: [legacyTunnelPid, unrelatedListenerPid] };
+    },
+    observePsEnvLineImpl: async (pid) => ({
+      status: 'ok',
+      line: pid === legacyTunnelPid
+        ? expectedTunnelLine
+        : `${unrelatedListenerPid} ssh -T -F ${opensshConfigPath} -L 0.0.0.0:19365:localhost:21209 -N happier-dev-target-mac`,
+    }),
+    killProcessGroupOwnedByStackImpl: async (pid, options) => {
+      assert.equal(typeof options.resolvePidStackOwnershipImpl, 'function');
+      const ownership = await options.resolvePidStackOwnershipImpl(pid);
+      if (!ownership.owned) {
+        return { killed: false, reason: ownership.reason };
+      }
+      terminated.push(pid);
+      return { killed: true, reason: 'killed_legacy_dev_target_tunnel' };
+    },
+  });
+
+  assert.deepEqual(terminated, [legacyTunnelPid]);
+  assert.deepEqual(result.sweep?.pids, [{
+    pid: legacyTunnelPid,
+    reason: 'killed_legacy_dev_target_tunnel',
+    pgid: null,
+  }]);
+  assert.deepEqual(result.sweep?.skipped, [{
+    pid: unrelatedListenerPid,
+    reason: 'process_identity_mismatch',
+  }]);
+});
+
 test('stale Expo state pointing at a definitively unowned reused pid does not block finalization', async (t) => {
   const fixture = await createStopFixture(t, { stackName: 'stale-expo-pid-reuse' });
   const unrelated = await fixture.spawnScript('setInterval(() => {}, 1000)', 'stale-expo-pid-reuse', { owned: false });

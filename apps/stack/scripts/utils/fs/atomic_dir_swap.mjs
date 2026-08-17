@@ -2,6 +2,8 @@ import { mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 
+import { publishStagedDirectoryMountedSync } from '@happier-dev/cli-common/workspaceRuntimeDependencies';
+
 const WINDOWS_TRANSIENT_RENAME_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
 
 function rand() {
@@ -39,6 +41,8 @@ export async function buildIntoTempThenReplace(
     platform = process.platform,
     renameImpl = rename,
     waitImpl = wait,
+    preserveDestinationPath = false,
+    pruneStale = true,
   } = {},
 ) {
   const outDir = String(targetDir ?? '').trim();
@@ -63,6 +67,21 @@ export async function buildIntoTempThenReplace(
 
   // Swap only after a successful build.
   const backupDir = join(parent, `.backup.${Date.now()}.${process.pid}.${rand()}`);
+  if (preserveDestinationPath) {
+    try {
+      publishStagedDirectoryMountedSync({
+        stagedDir: tmpDir,
+        liveDir: outDir,
+        rollbackDir: backupDir,
+        pruneStale,
+      });
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+    }
+    return;
+  }
+
   let hadExisting = false;
   try {
     await renameForPublication(outDir, backupDir, { platform, renameImpl, waitImpl });

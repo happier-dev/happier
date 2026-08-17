@@ -24,6 +24,11 @@ function safeResume(stdin) {
   }
 }
 
+export function ensureTuiStdinMode(stdin) {
+  safeSetRawMode(stdin, true);
+  safeResume(stdin);
+}
+
 /**
  * When we spawn a child with stdio: 'inherit', the child and the TUI compete for the same stdin FD.
  * If the TUI keeps reading, it will consume keystrokes before the child sees them.
@@ -46,8 +51,7 @@ export function detachTuiStdinForChild({ stdin, onData }) {
 
   return {
     restoreForTui() {
-      safeSetRawMode(stdin, true);
-      safeResume(stdin);
+      ensureTuiStdinMode(stdin);
       if (hadListener) {
         try {
           stdin.on('data', onData);
@@ -59,43 +63,12 @@ export function detachTuiStdinForChild({ stdin, onData }) {
   };
 }
 
-export async function waitForEnter({ stdin, timeoutMs = 120_000 } = {}) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    // eslint-disable-next-line no-await-in-loop
-    const chunk = await new Promise((resolve) => {
-      const onData = (d) => {
-        cleanup();
-        resolve(d);
-      };
-      const onEnd = () => {
-        cleanup();
-        resolve(null);
-      };
-      const cleanup = () => {
-        try {
-          stdin?.off?.('data', onData);
-        } catch {
-          // ignore
-        }
-        try {
-          stdin?.off?.('end', onEnd);
-        } catch {
-          // ignore
-        }
-      };
-
-      try {
-        stdin?.on?.('data', onData);
-        stdin?.on?.('end', onEnd);
-      } catch {
-        resolve(null);
-      }
-    });
-
-    const s = chunk == null ? '' : String(chunk);
-    if (s.includes('\n') || s.includes('\r')) return true;
+export async function runWithTuiStdinHandoff({ stdin, onData, run }) {
+  if (typeof run !== 'function') throw new Error('runWithTuiStdinHandoff: run is required');
+  const handoff = detachTuiStdinForChild({ stdin, onData });
+  try {
+    return await run();
+  } finally {
+    handoff.restoreForTui();
   }
-  return false;
 }
-

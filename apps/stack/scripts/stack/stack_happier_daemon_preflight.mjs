@@ -24,6 +24,7 @@ export async function ensureStackDaemonPreflight({
   env,
   argv,
   cliIdentity = 'default',
+  activeRuntimeState = null,
 } = {}) {
   const daemonContext = await resolveStackDaemonCommandContext({
     rootDir,
@@ -31,6 +32,7 @@ export async function ensureStackDaemonPreflight({
     env,
     identity: cliIdentity,
     argv,
+    activeRuntimeState,
   });
   await startLocalDaemonWithAuth({
     cliBin: daemonContext.cliBin,

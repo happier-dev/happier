@@ -152,16 +152,39 @@ function countEvent(events, expected) {
 
 test('dev reaches Expo before starting remote development targets', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
-  const expoStartIndex = source.lastIndexOf('(await ensureDevExpoServer({');
+  const expoStartIndex = source.lastIndexOf('await ensureDevExpoServer({');
+  const daemonStartIndex = source.indexOf('if (startupDecision.startDaemon) {');
   const devTargetsStartIndex = source.indexOf(
-    'devTargetsController = startStackDevTargetsInBackground({',
+    'devTargetsController = startStackDevTargetsInBackground(',
   );
 
   assert.notEqual(expoStartIndex, -1, 'expected the canonical Expo startup call');
+  assert.notEqual(daemonStartIndex, -1, 'expected daemon startup');
   assert.notEqual(devTargetsStartIndex, -1, 'expected background dev-target startup');
+  assert.ok(
+    expoStartIndex < daemonStartIndex,
+    'a potentially expensive daemon build must not delay Expo availability',
+  );
   assert.ok(
     expoStartIndex < devTargetsStartIndex,
     'remote target bootstrap must not delay local Expo startup',
+  );
+});
+
+test('dev publishes initial remote target state before background startup can publish a terminal state', async () => {
+  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
+  const initialStateIndex = source.indexOf(
+    "remoteTargets: Object.fromEntries(servicePlans.targets.map((plan) => [",
+  );
+  const devTargetsStartIndex = source.indexOf(
+    'devTargetsController = startStackDevTargetsInBackground(',
+  );
+
+  assert.notEqual(initialStateIndex, -1, 'expected initial remote target runtime projection');
+  assert.notEqual(devTargetsStartIndex, -1, 'expected background dev-target startup');
+  assert.ok(
+    initialStateIndex < devTargetsStartIndex,
+    'a fast unavailable/running callback must not be overwritten by a later starting projection',
   );
 });
 

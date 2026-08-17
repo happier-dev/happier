@@ -32,6 +32,7 @@ import {
   mergeEnvTextWithDefaults,
   installBinaryAtomically,
   installSelfHostBinaryFromLocalPath,
+  installUiWebFromEmbeddedRuntime,
 } from './self_host_runtime.mjs';
 import { buildServiceDefinition, resolveServiceBackend } from './utils/service/service_manager.mjs';
 
@@ -91,6 +92,51 @@ async function createLocalSelfHostRuntimePayloadRoot({ rootDir, binaryName, bina
   return binaryPath;
 }
 
+test('local self-host runtime promotion exposes the server-embedded UI to the post-promote owner', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-embedded-ui-test-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const binaryName = 'happier-server';
+  const payloadRoot = join(tmp, 'payload');
+  const sourceBinaryPath = await createLocalSelfHostRuntimePayloadRoot({ rootDir: payloadRoot, binaryName });
+  await mkdir(join(payloadRoot, 'ui-web', 'current'), { recursive: true });
+  await writeFile(join(payloadRoot, 'ui-web', 'current', 'index.html'), '<!doctype html><title>embedded</title>', 'utf-8');
+
+  const installRoot = join(tmp, 'install');
+  const config = {
+    platform: process.platform,
+    dataDir: join(installRoot, 'data'),
+    versionsDir: join(installRoot, 'versions'),
+    serverBinaryPath: join(installRoot, 'bin', binaryName),
+    serverPreviousBinaryPath: join(installRoot, 'bin', `${binaryName}.previous`),
+  };
+  let observedEmbeddedUi = '';
+
+  await selfHostRuntimeModule.installSelfHostBinaryFromLocalPath({
+    sourceBinaryPath,
+    binaryName,
+    config,
+    afterPromote: async ({ embeddedUiDir }) => {
+      observedEmbeddedUi = await readFile(join(embeddedUiDir, 'index.html'), 'utf-8');
+    },
+  });
+
+  assert.equal(observedEmbeddedUi, '<!doctype html><title>embedded</title>');
+});
+
+test('managed UI activation fails closed when the server payload has no embedded UI', async () => {
+  await assert.rejects(
+    installUiWebFromEmbeddedRuntime({
+      config: {},
+      embeddedUiDir: '',
+      version: '0.2.10-test.1',
+    }),
+    /missing its embedded UI/i,
+  );
+});
+
 test('parseSelfHostInvocation accepts optional self-host prefix', () => {
   const parsed = parseSelfHostInvocation(['self-host', 'install', '--channel=preview']);
   assert.equal(parsed.subcommand, 'install');
@@ -101,6 +147,17 @@ test('parseSelfHostInvocation supports direct command invocation', () => {
   const parsed = parseSelfHostInvocation(['status', '--json']);
   assert.equal(parsed.subcommand, 'status');
   assert.deepEqual(parsed.rest, ['--json']);
+});
+
+test('relay-host forwarding maps legacy HStack update onto the canonical idempotent install command', () => {
+  assert.deepEqual(
+    selfHostRuntimeModule.resolveRelayHostForwardedArgv(['update', '--channel=preview', '--json']),
+    ['install', '--channel=preview', '--json'],
+  );
+  assert.deepEqual(
+    selfHostRuntimeModule.resolveRelayHostForwardedArgv(['status', '--channel=preview', '--json']),
+    ['status', '--channel=preview', '--json'],
+  );
 });
 
 test('self-host install-time SQLite migration delegates to the installed canonical server-light binary', async () => {
@@ -1092,30 +1149,6 @@ test('installBinaryAtomically swaps a running binary on Linux without ETXTBSY', 
   assert.equal(ran.status, 0, `expected swapped binary to run cleanly, got:\n${ran.stderr || ran.stdout || ''}`);
 });
 
-test('resolveExtractedUiWebBundleRootDir picks the directory that contains index.html', async (t) => {
-  const tmp = await mkdtemp(join(tmpdir(), 'happier-self-host-ui-root-test-'));
-  t.after(async () => {
-    await spawnSync('bash', ['-lc', `rm -rf "${tmp.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
-  });
-
-  const extractDir = join(tmp, 'extract');
-  await mkdir(extractDir, { recursive: true });
-
-  // Extra top-level entry that should be ignored (e.g. AppleDouble metadata files).
-  await writeFile(join(extractDir, '000-root-metadata'), 'metadata', 'utf-8');
-
-  const bundleRootName = 'happier-ui-web-v1.2.3-web-any';
-  const bundleRootDir = join(extractDir, bundleRootName);
-  await mkdir(bundleRootDir, { recursive: true });
-  await writeFile(join(bundleRootDir, 'index.html'), '<!doctype html>', 'utf-8');
-
-  const mod = await import('./self_host_runtime.mjs');
-  assert.equal(typeof mod.resolveExtractedUiWebBundleRootDir, 'function');
-
-  const resolved = await mod.resolveExtractedUiWebBundleRootDir({ extractDir });
-  assert.equal(resolved, bundleRootDir);
-});
-
 test('resolveSelfHostEffectiveServerPort prefers PORT override', async () => {
   const mod = await import('./self_host_runtime.mjs');
   assert.equal(typeof mod.resolveSelfHostEffectiveServerPort, 'function');
@@ -1466,14 +1499,12 @@ test('resolveSelfHostReleaseTargets maps the publicdev ring to dev rolling tags'
   const targets = resolveSelfHostReleaseTargets('publicdev');
   assert.equal(targets.serverTag, 'server-dev');
   assert.deepEqual(targets.serverTags, ['server-dev', 'server-preview', 'server-stable']);
-  assert.deepEqual(targets.uiWebTags, ['ui-web-dev', 'ui-web-preview', 'ui-web-stable']);
 });
 
 test('resolveSelfHostReleaseTargets preserves stable release tags without fallback churn', () => {
   const targets = resolveSelfHostReleaseTargets('stable');
   assert.equal(targets.serverTag, 'server-stable');
   assert.deepEqual(targets.serverTags, ['server-stable']);
-  assert.deepEqual(targets.uiWebTags, ['ui-web-stable']);
 });
 
 test('buildUpdaterScheduledTaskCreateArgs uses DAILY schedule when at is provided', () => {

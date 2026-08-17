@@ -496,6 +496,98 @@ test('startup admission remains fail-closed for inconclusive recorded process li
   );
 });
 
+test('runtime trust keeps identity ambiguity strict unless a status reader opts into unverified', async () => {
+  const inconclusiveOwnership = async () => {
+    const error = new Error('process identity observation is inconclusive');
+    error.code = 'EPROCESSIDENTITYINCONCLUSIVE';
+    throw error;
+  };
+  const options = {
+    isPidAliveImpl: () => true,
+    isPidOwnedByStackImpl: inconclusiveOwnership,
+  };
+  const context = { key: 'serverPid', stackName: 'ownership-inconclusive' };
+
+  await assert.rejects(
+    () => runtimeStateModule.isStackRuntimeProcessTrusted(process.pid, context, options),
+    (error) => error?.code === 'EPROCESSIDENTITYINCONCLUSIVE',
+  );
+  assert.equal(
+    await runtimeStateModule.isStackRuntimeProcessTrusted(process.pid, context, {
+      ...options,
+      throwOnInconclusive: false,
+    }),
+    false,
+  );
+});
+
+test('runtime snapshot liveness requires a trusted lifecycle owner or tracked process', async () => {
+  const trustOptions = {
+    isPidAliveImpl: () => true,
+    isRuntimeProcessTrustedImpl: async (pid) => Number(pid) === 11 || Number(pid) === 13,
+  };
+
+  assert.equal(
+    await runtimeStateModule.hasTrustedStackRuntimeLifecycle(
+      { ownerPid: 11, processes: {} },
+      {},
+      trustOptions,
+    ),
+    true,
+    'a trusted lifecycle owner keeps the snapshot identity current before a child listens',
+  );
+  assert.equal(
+    await runtimeStateModule.hasTrustedStackRuntimeLifecycle(
+      { ownerPid: 12, processes: { serverPid: 13 } },
+      {},
+      trustOptions,
+    ),
+    true,
+    'a trusted tracked child keeps the identity current during owner recovery',
+  );
+  assert.equal(
+    await runtimeStateModule.hasTrustedStackRuntimeLifecycle(
+      { ownerPid: 12, processes: { serverPid: 14 } },
+      {},
+      trustOptions,
+    ),
+    false,
+    'a stale state file must not present its raw snapshot identity as loaded',
+  );
+});
+
+test('startup admission does not discard a live recorded process when ownership is inconclusive', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-stop-inconclusive-ownership-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, {
+    stackName: 'ownership-inconclusive',
+    ownerPid: 801,
+    processes: { serverPid: process.pid },
+  });
+
+  await assert.rejects(
+    () => recordStackRuntimeStart(statePath, {
+      stackName: 'ownership-inconclusive',
+      ownerPid: process.pid,
+    }, {
+      observePidLivenessImpl: async (pid) => Number(pid) === 801
+        ? { status: 'dead', reason: 'not_found' }
+        : { status: 'alive', reason: 'test' },
+      isPidOwnedByStackImpl: async () => {
+        const error = new Error('process identity observation is inconclusive');
+        error.code = 'EPROCESSIDENTITYINCONCLUSIVE';
+        throw error;
+      },
+    }),
+    (error) => error?.code === 'EPROCESSIDENTITYINCONCLUSIVE',
+  );
+
+  const retained = await readStackRuntimeStateFile(statePath);
+  assert.equal(retained?.ownerPid, 801);
+  assert.equal(retained?.processes?.serverPid, process.pid);
+});
+
 test('expected-owner stop rejects a reused pid with a different lifecycle startedAt', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-stop-pid-reuse-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -1386,10 +1478,29 @@ test('resolveTrustedStackRuntimeServerPort accepts a live trusted runtime compon
     {
       isPidAliveImpl: (pid) => Number(pid) === process.pid,
       isRuntimeProcessTrustedImpl: async (_pid, { key }) => key === 'serverPid',
+      resolveStackOwnedListenPidImpl: async () => process.pid,
     },
   );
 
   assert.equal(port, 23456);
+});
+
+test('resolveTrustedStackRuntimeServerPort rejects a trusted server pid that does not own the recorded port', async () => {
+  const port = await resolveTrustedStackRuntimeServerPort(
+    {
+      ownerPid: process.pid,
+      processes: { serverPid: process.pid },
+      ports: { server: 23456 },
+    },
+    { stackName: 'dev-built' },
+    {
+      isPidAliveImpl: () => true,
+      isRuntimeProcessTrustedImpl: async () => true,
+      resolveStackOwnedListenPidImpl: async () => null,
+    },
+  );
+
+  assert.equal(port, null);
 });
 
 test('recordStackRuntimeStopRequest persists stop attribution details', async (t) => {

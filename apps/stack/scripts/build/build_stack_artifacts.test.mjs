@@ -1,12 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import * as buildModule from './build_stack_artifacts.mjs';
-import { artifactPayloadDir, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 
 test('runtime artifact identity inputs include only the toolchains consumed by each component', async () => {
   assert.equal(typeof buildModule.collectRuntimeBuildToolchainInputs, 'function');
@@ -50,149 +48,68 @@ test('runtime artifact identity inputs include only the toolchains consumed by e
     server: [],
     daemon: [],
   });
-});
 
-async function writePublishedWebArtifact({ stackBaseDir, fingerprint, createdAt, complete = true }) {
-  const artifactDir = join(stackBaseDir, 'artifacts', 'web', fingerprint);
-  const payloadDir = artifactPayloadDir(artifactDir);
-  await mkdir(payloadDir, { recursive: true });
-  if (complete) {
-    await writeFile(join(payloadDir, 'index.html'), '<!doctype html>', 'utf8');
-  }
-  await writeArtifactManifest({
-    artifactDir,
-    manifest: {
-      version: 1,
-      component: 'web',
-      artifactFingerprint: fingerprint,
-      sourceFingerprint: `source-${fingerprint}`,
-      createdAt,
-      payloadDir: 'payload',
-      entrypoint: 'index.html',
+  const serverOnly = await buildModule.collectRuntimeBuildToolchainInputs({
+    selection: {
+      components: { web: false, server: true, daemon: false },
     },
+    commandProbe: (command) => command === 'bun',
+    resolveBunCommandImpl: () => '/toolchain/bun',
+    runCaptureImpl: async () => '1.2.3\n',
+    nodeVersion: 'v22.22.1',
   });
-  return { artifactDir, payloadDir };
-}
-
-test('server-only builds reuse the latest valid published web artifact without invoking the web builder', async () => {
-  assert.equal(typeof buildModule.buildSelectedStackArtifacts, 'function');
-  const stackBaseDir = mkdtempSync(join(tmpdir(), 'stack-server-web-reuse-'));
-  try {
-    const publishedWeb = await writePublishedWebArtifact({
-      stackBaseDir,
-      fingerprint: 'published-web',
-      createdAt: '2026-08-12T09:00:00.000Z',
-    });
-    await writePublishedWebArtifact({
-      stackBaseDir,
-      fingerprint: 'incomplete-newer-web',
-      createdAt: '2026-08-12T10:00:00.000Z',
-      complete: false,
-    });
-
-    const calls = [];
-    const artifacts = await buildModule.buildSelectedStackArtifacts({
-      selection: {
-        components: { web: false, server: true, daemon: false },
-      },
-      stackBaseDir,
-      buildComponent: async (component, _builder, options = {}) => {
-        calls.push({ component, options });
-        assert.notEqual(component, 'web', 'explicit --server must not invoke the web builder');
-        assert.equal(component, 'server');
-        return {
-          artifactDir: join(stackBaseDir, 'artifacts', 'server', 'server-with-published-web'),
-          manifest: {
-            artifactFingerprint: 'server-with-published-web',
-            webArtifactFingerprint: options.webArtifactFingerprint,
-          },
-        };
-      },
-    });
-
-    assert.deepEqual(calls.map(({ component }) => component), ['server']);
-    assert.equal(calls[0].options.webArtifactFingerprint, 'published-web');
-    assert.equal(calls[0].options.uiWebDistPath, publishedWeb.payloadDir);
-    assert.equal(artifacts.web.manifest.artifactFingerprint, 'published-web');
-    assert.equal(artifacts.server.manifest.webArtifactFingerprint, 'published-web');
-  } finally {
-    await rm(stackBaseDir, { recursive: true, force: true });
-  }
+  assert.deepEqual(serverOnly, {
+    web: [],
+    server: ['node=v22.22.1', 'bun=1.2.3'],
+    daemon: [],
+  });
 });
 
-test('web-selected server builds use the fresh web artifact rather than a published fallback', async () => {
+test('server-only builds do not create or consume a web artifact', async () => {
   assert.equal(typeof buildModule.buildSelectedStackArtifacts, 'function');
-  const freshWebArtifact = {
-    artifactDir: '/fresh/web-artifact',
-    manifest: { artifactFingerprint: 'fresh-web' },
-  };
   const calls = [];
-
   const artifacts = await buildModule.buildSelectedStackArtifacts({
     selection: {
-      components: { web: true, server: true, daemon: false },
+      components: { web: false, server: true, daemon: false },
     },
     stackBaseDir: '/published/artifacts',
     buildComponent: async (component, _builder, options = {}) => {
       calls.push({ component, options });
-      if (component === 'web') return freshWebArtifact;
-      assert.equal(component, 'server');
       return {
-        artifactDir: '/fresh/server-artifact',
-        manifest: {
-          artifactFingerprint: 'fresh-server',
-          webArtifactFingerprint: options.webArtifactFingerprint,
-        },
+        artifactDir: `/fresh/${component}-artifact`,
+        manifest: { artifactFingerprint: `fresh-${component}` },
       };
     },
   });
 
-  assert.deepEqual(calls.map(({ component }) => component), ['web', 'server']);
-  assert.equal(calls[1].options.webArtifactFingerprint, 'fresh-web');
-  assert.equal(calls[1].options.uiWebDistPath, artifactPayloadDir('/fresh/web-artifact'));
-  assert.equal(artifacts.web, freshWebArtifact);
+  assert.deepEqual(calls, [{ component: 'server', options: {} }]);
+  assert.deepEqual(Object.keys(artifacts), ['server']);
 });
 
-test('server-only builds publish one canonical web artifact when none is available', async () => {
+test('selected components build in a simple serial owner-local order without server-web coupling', async () => {
   assert.equal(typeof buildModule.buildSelectedStackArtifacts, 'function');
-  const stackBaseDir = mkdtempSync(join(tmpdir(), 'stack-server-web-missing-'));
   const calls = [];
-  try {
-    const artifacts = await buildModule.buildSelectedStackArtifacts({
-      selection: {
-        components: { web: false, server: true, daemon: false },
-      },
-      stackBaseDir,
-      buildComponent: async (component, _builder, options = {}) => {
-        calls.push({ component, options });
-        if (component === 'web') {
-          return {
-            artifactDir: join(stackBaseDir, 'artifacts', 'web', 'fresh-web'),
-            manifest: { artifactFingerprint: 'fresh-web' },
-          };
-        }
-        assert.equal(component, 'server');
-        return {
-          artifactDir: join(stackBaseDir, 'artifacts', 'server', 'server-with-fresh-web'),
-          manifest: {
-            artifactFingerprint: 'server-with-fresh-web',
-            webArtifactFingerprint: options.webArtifactFingerprint,
-          },
-        };
-      },
-    });
 
-    assert.deepEqual(calls.map(({ component }) => component), ['web', 'server']);
-    assert.equal(calls[1].options.webArtifactFingerprint, 'fresh-web');
-    assert.equal(
-      calls[1].options.uiWebDistPath,
-      artifactPayloadDir(join(stackBaseDir, 'artifacts', 'web', 'fresh-web')),
-    );
-    assert.equal(artifacts.web.manifest.artifactFingerprint, 'fresh-web');
-    assert.equal(artifacts.server.manifest.webArtifactFingerprint, 'fresh-web');
-  } finally {
-    await rm(stackBaseDir, { recursive: true, force: true });
-  }
+  const artifacts = await buildModule.buildSelectedStackArtifacts({
+    selection: {
+      components: { web: true, server: true, daemon: true },
+    },
+    stackBaseDir: '/published/artifacts',
+    buildComponent: async (component, _builder, options = {}) => {
+      calls.push({ component, options });
+      return {
+        artifactDir: `/fresh/${component}-artifact`,
+        manifest: { artifactFingerprint: `fresh-${component}` },
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { component: 'web', options: {} },
+    { component: 'server', options: {} },
+    { component: 'daemon', options: {} },
+  ]);
+  assert.deepEqual(Object.keys(artifacts), ['web', 'server', 'daemon']);
 });
 
 test('assertSelectedBuildPrerequisites does not require bun for web-only builds', () => {
@@ -361,4 +278,263 @@ test('ensureArtifactSourceInputsReady skips cli dist refresh when daemon artifac
   });
 
   assert.equal(ensureCliBuiltCalls.length, 0);
+});
+
+test('component preparation and payload work use identity locks and prune their declared owner-specific support artifacts', async () => {
+  assert.equal(typeof buildModule.buildRuntimeArtifactComponents, 'function');
+  const events = [];
+  const stackBaseDir = '/stacks/repository-producer';
+
+  const result = await buildModule.buildRuntimeArtifactComponents({
+    rootDir: '/repo',
+    stackBaseDir,
+    selection: {
+      components: { web: false, server: true, daemon: true },
+      activateRuntime: false,
+      forceRebuild: false,
+    },
+    env: {},
+    assertSelectedBuildPrerequisitesImpl: () => {},
+    ensureWorkspacePackagesBuiltForComponentImpl: async () => {
+      assert.deepEqual(events, []);
+      events.push('workspace-preparation');
+    },
+    refreshLocalBundledWorkspacePackagesImpl: async () => {
+      assert.deepEqual(events, ['workspace-preparation']);
+      events.push('bundled-preflight');
+    },
+    collectBuildSourceMetadataImpl: async () => ({
+      repoDir: '/repo',
+      sourceFingerprint: 'provenance-a',
+      builtAt: '2026-08-16T12:00:00.000Z',
+      serverComponent: 'happier-server-light',
+      dbProvider: 'sqlite',
+    }),
+    ensureArtifactSourceInputsReadyImpl: async () => {
+      assert.deepEqual(events, ['workspace-preparation', 'bundled-preflight']);
+      events.push('source-inputs');
+    },
+    resolveRuntimeBuildRequestIdentityImpl: async () => ({
+      sourceMetadata: {
+        repoDir: '/repo',
+        sourceFingerprint: 'provenance-a',
+        builtAt: '2026-08-16T12:00:00.000Z',
+        serverComponent: 'happier-server-light',
+        dbProvider: 'sqlite',
+      },
+      artifactFingerprints: { server: 'server-code-a', daemon: 'daemon-code-a' },
+      supportArtifactFingerprints: { server: 'server-support-a', daemon: 'daemon-support-a' },
+    }),
+    withWorkspaceBundleLockImpl: async (fn, options) => {
+      assert.equal(
+        options.lockPath,
+        events.includes('server-payload')
+          ? join(stackBaseDir, 'artifacts', 'daemon', 'daemon-code-a.lock')
+          : join(stackBaseDir, 'artifacts', 'server', 'server-code-a.lock'),
+      );
+      assert.equal(options.lockPath.includes('/runtime/'), false);
+      events.push(`component-lock:${options.lockPath.includes(join('artifacts', 'daemon')) ? 'daemon' : 'server'}`);
+      return await fn({ waited: false });
+    },
+    buildSelectedStackArtifactsImpl: async ({ buildComponent }) => ({
+      server: await buildComponent('server', async (input) => {
+        assert.deepEqual(events, [
+          'workspace-preparation',
+          'bundled-preflight',
+          'source-inputs',
+          'component-lock:server',
+        ]);
+        assert.equal(input.supportArtifactFingerprint, 'server-support-a');
+        events.push('server-payload');
+        return {
+          artifactDir: '/stacks/repository-producer/artifacts/server/server-code-a',
+          manifest: {
+            component: 'server',
+            artifactFingerprint: 'server-code-a',
+            serverSupportArtifactFingerprint: 'server-support-a',
+          },
+        };
+      }),
+      daemon: await buildComponent('daemon', async (input) => {
+        assert.deepEqual(events, [
+          'workspace-preparation',
+          'bundled-preflight',
+          'source-inputs',
+          'component-lock:server',
+          'server-payload',
+          'component-retention:server',
+          'component-retention:server-support',
+          'component-lock:daemon',
+        ]);
+        assert.equal(input.supportArtifactFingerprint, 'daemon-support-a');
+        events.push('daemon-payload');
+        return {
+          artifactDir: '/stacks/repository-producer/artifacts/daemon/daemon-code-a',
+          manifest: {
+            component: 'daemon',
+            artifactFingerprint: 'daemon-code-a',
+            daemonSupportArtifactFingerprint: 'daemon-support-a',
+          },
+        };
+      }),
+    }),
+    pruneComponentArtifactsImpl: async ({ component }) => events.push(`component-retention:${component}`),
+  });
+
+  assert.deepEqual(events, [
+      'workspace-preparation',
+      'bundled-preflight',
+      'source-inputs',
+      'component-lock:server',
+      'server-payload',
+      'component-retention:server',
+      'component-retention:server-support',
+      'component-lock:daemon',
+      'daemon-payload',
+      'component-retention:daemon',
+      'component-retention:daemon-support',
+    ]);
+  assert.equal(result.artifacts.server.manifest.artifactFingerprint, 'server-code-a');
+  assert.equal(result.artifacts.daemon.manifest.artifactFingerprint, 'daemon-code-a');
+});
+
+test('same component identity builds once while its waiter reuses the published object', async () => {
+  assert.equal(typeof buildModule.buildComponentArtifactWithIdentityLock, 'function');
+  const stackBaseDir = mkdtempSync(join(tmpdir(), 'runtime-component-identity-lock-'));
+  const completedPath = join(stackBaseDir, 'artifact-published');
+  let expensiveBuilds = 0;
+  const buildArtifact = async () => {
+    if (existsSync(completedPath)) return { reused: true };
+    expensiveBuilds += 1;
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    writeFileSync(completedPath, 'published\n', 'utf8');
+    return { reused: false };
+  };
+
+  try {
+    const [first, second] = await Promise.all([
+      buildModule.buildComponentArtifactWithIdentityLock({
+        stackBaseDir,
+        component: 'server',
+        artifactFingerprint: 'same-server-code',
+        buildArtifact,
+      }),
+      buildModule.buildComponentArtifactWithIdentityLock({
+        stackBaseDir,
+        component: 'server',
+        artifactFingerprint: 'same-server-code',
+        buildArtifact,
+      }),
+    ]);
+
+    assert.equal(expensiveBuilds, 1);
+    assert.deepEqual([first.reused, second.reused].sort(), [false, true]);
+  } finally {
+    rmSync(stackBaseDir, { recursive: true, force: true });
+  }
+});
+
+test('repository publication holds the runtime lock only for producer snapshot commit and never selects a consumer', async () => {
+  assert.equal(typeof buildModule.publishBuiltRepositoryRuntimeSnapshot, 'function');
+  const events = [];
+  let runtimeLockHeld = false;
+  const authority = {
+    consumerStackName: 'source-main',
+    consumerStackBaseDir: '/stacks/source-main',
+    producerStackName: 'repo-producer',
+    producerStackBaseDir: '/stacks/repo-producer',
+  };
+  const artifacts = Object.fromEntries(['web', 'server', 'daemon'].map((component) => [component, {
+    artifactDir: `/stacks/repo-producer/artifacts/${component}/${component}-new`,
+    manifest: { artifactFingerprint: `${component}-new` },
+  }]));
+
+  const result = await buildModule.publishBuiltRepositoryRuntimeSnapshot({
+    authority,
+    selection: {
+      components: { web: true, server: true, daemon: true },
+      activateRuntime: true,
+    },
+    requestedComponents: ['web', 'server', 'daemon'],
+    sourceMetadata: {
+      serverComponent: 'happier-server-light',
+      dbProvider: 'sqlite',
+      sourceFingerprint: 'provenance-only',
+      builtAt: '2026-08-16T12:00:00.000Z',
+    },
+    artifacts,
+    env: {},
+    retentionPolicy: { runtimeSnapshotKeepCount: 2, artifactKeepCount: 2 },
+    withWorkspaceBundleLockImpl: async (fn, options) => {
+      assert.equal(options.lockPath, join(authority.producerStackBaseDir, 'runtime', 'build.lock'));
+      runtimeLockHeld = true;
+      try {
+        return await fn({ waited: false });
+      } finally {
+        runtimeLockHeld = false;
+      }
+    },
+    inspectActiveRuntimeSnapshotImpl: async () => {
+      assert.equal(runtimeLockHeld, true);
+      events.push('validate-current');
+      return { valid: false, manifest: null, snapshot: null };
+    },
+    publishRuntimeSnapshotImpl: async (input) => {
+      assert.equal(runtimeLockHeld, true);
+      assert.equal(input.pruneAfterPublish, false);
+      events.push('publish-manifest');
+      return {
+        snapshotId: input.snapshotId,
+        snapshotPath: `/stacks/repo-producer/runtime/builds/${input.snapshotId}`,
+        reused: false,
+      };
+    },
+    selectRuntimeSnapshotImpl: async (input) => {
+      assert.equal(runtimeLockHeld, true);
+      assert.equal(input.consumerStackBaseDir, authority.producerStackBaseDir);
+      events.push('select-producer');
+      return {
+        snapshotId: input.snapshotId,
+        snapshotPath: `/stacks/repo-producer/runtime/builds/${input.snapshotId}`,
+        currentPath: '/stacks/repo-producer/runtime/current.json',
+      };
+    },
+    pruneRuntimeSnapshotsImpl: async () => {
+      assert.equal(runtimeLockHeld, false);
+      events.push('retention');
+    },
+  });
+
+  assert.deepEqual(events, ['validate-current', 'publish-manifest', 'select-producer', 'retention']);
+  assert.equal(result.selected, false);
+  assert.equal(result.components.join(','), 'web,server,daemon');
+  assert.equal(result.snapshotId.length > 0, true);
+});
+
+test('repository publication component resolution is current-pointer based and returns canonical string arrays', async () => {
+  assert.equal(typeof buildModule.resolveRepositoryRuntimePublicationComponents, 'function');
+  const result = await buildModule.resolveRepositoryRuntimePublicationComponents({
+    rootDir: '/repo',
+    authority: { producerStackBaseDir: '/stacks/repo-producer' },
+    requestedComponents: ['daemon', 'server', 'outside-domain'],
+    inspectActiveRuntimeSnapshotImpl: async () => ({
+      valid: true,
+      snapshot: { snapshotId: 'snapshot-current' },
+      manifest: {
+        components: {
+          server: { artifactFingerprint: 'server-current' },
+          daemon: { artifactFingerprint: 'daemon-old' },
+        },
+      },
+    }),
+    resolveRuntimeBuildRequestIdentityImpl: async ({ selection }) => {
+      assert.deepEqual(selection.components, { web: false, server: true, daemon: true, tauri: false });
+      return { artifactFingerprints: { server: 'server-current', daemon: 'daemon-new' } };
+    },
+  });
+
+  assert.deepEqual(result, {
+    components: ['daemon'],
+    currentSnapshotId: 'snapshot-current',
+  });
 });

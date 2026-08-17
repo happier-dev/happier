@@ -35,6 +35,7 @@ import { normalizeStackNameFirstArgs, resolveTopLevelNodeScriptFile, stackNameFr
 import { getStackHelpUsageLine, renderStackRootHelpText, renderStackSubcommandHelpText, STACK_HELP_COMMANDS } from './stack/help_text.mjs';
 import { copyAuthFromStackIntoNewStack } from './stack/copy_auth_from_stack.mjs';
 import {
+  createStackEnv,
   getRuntimePortExtraEnv,
   parseServerComponentFromEnv,
   readStackEnvObject,
@@ -57,7 +58,7 @@ import { runStackInstallCommand } from './stack/stack_install_command.mjs';
 import { resolveRequestedRepoCheckoutDir } from './stack/repo_checkout_resolution.mjs';
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
 import { hasExplicitStackRuntimeModeArg } from './runtime/shared/runtime_mode.mjs';
-import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
+import { ensureEnvFileMutated, ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
 import { writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { startDevServer } from './utils/dev/server.mjs';
@@ -76,6 +77,7 @@ import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { bullets, sectionTitle } from './utils/ui/layout.mjs';
 import { findAnyCredentialPathInCliHome } from './utils/auth/credentials_paths.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
+import { assertRuntimeProducerCanBeRemoved } from './build/runtime_retention.mjs';
 import { getHomeEnvLocalPath } from './utils/env/config.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { getEnvValue, getEnvValueAny } from './utils/env/values.mjs';
@@ -111,6 +113,51 @@ const STACK_REPO_OVERRIDE_SCRIPT_BY_COMMAND = new Map([
   ['review', resolveTopLevelNodeScriptFile('review') || 'review.mjs'],
 ]);
 
+function stackAlreadyExistsError(stackName) {
+  return new Error(
+    `[stack] stack already exists: ${stackName}\n` +
+      `[stack] Use \`hstack stack edit ${stackName} --interactive\` or \`hstack stack env ${stackName} ...\` to change it.`,
+  );
+}
+
+// `stack edit` owns only its stack-shape and server/infra projection. Runtime selection,
+// borrowed Expo, auth seeding, and operator-defined values are independent stack policy and
+// must survive an interactive edit.
+const STACK_EDIT_MANAGED_ENV_KEYS = [
+  'HAPPIER_STACK_STACK',
+  'HAPPIER_STACK_SERVER_COMPONENT',
+  'HAPPIER_STACK_UI_BUILD_DIR',
+  'HAPPIER_STACK_CLI_HOME_DIR',
+  'HAPPIER_STACK_STACK_REMOTE',
+  'HAPPIER_STACK_REPO_DIR',
+  'HAPPIER_DB_PROVIDER',
+  'HAPPY_DB_PROVIDER',
+  'HAPPIER_STACK_SERVER_PORT',
+  'HAPPIER_SERVER_LIGHT_DATA_DIR',
+  'HAPPIER_SERVER_LIGHT_FILES_DIR',
+  'HAPPIER_SERVER_LIGHT_DB_DIR',
+  'HAPPY_SERVER_LIGHT_DB_DIR',
+  'HAPPIER_STACK_MANAGED_INFRA',
+  'HAPPIER_STACK_PG_USER',
+  'HAPPIER_STACK_PG_PASSWORD',
+  'HAPPIER_STACK_PG_DATABASE',
+  'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE',
+  'HAPPIER_STACK_SERVER_BACKEND_PORT',
+  'HAPPIER_STACK_PG_PORT',
+  'HAPPIER_STACK_REDIS_PORT',
+  'HAPPIER_STACK_MINIO_PORT',
+  'HAPPIER_STACK_MINIO_CONSOLE_PORT',
+  'DATABASE_URL',
+  'REDIS_URL',
+  'S3_ACCESS_KEY',
+  'S3_SECRET_KEY',
+  'S3_BUCKET',
+  'S3_HOST',
+  'S3_PORT',
+  'S3_USE_SSL',
+  'S3_PUBLIC_URL',
+];
+
 async function cmdNew({ rootDir, argv, emit = true }) {
   const { flags, kv } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
@@ -136,10 +183,6 @@ async function cmdNew({ rootDir, argv, emit = true }) {
 
   // argv here is already "args after 'new'", so the first positional is the stack name.
   let stackName = stackNameFromArg(positionals, 0);
-  const interactive =
-    flags.has('--interactive') ||
-    (!flags.has('--non-interactive') && isTty() && !json);
-
   const defaults = {
     stackName,
     port: kv.get('--port')?.trim() ? Number(kv.get('--port')) : null,
@@ -147,6 +190,15 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     createRemote: (kv.get('--remote') ?? '').trim() || '',
     repo: (kv.get('--repo') ?? kv.get('--repo-dir') ?? '').trim() || null,
   };
+  // A named repo and server are the complete direct configuration. Port and remote
+  // intentionally use their canonical ephemeral/upstream defaults, so a TTY must not
+  // turn the documented controlled form into a wizard unless the user asks for one.
+  const hasCompleteDirectConfiguration = Boolean(
+    defaults.stackName && defaults.serverComponent && defaults.repo,
+  );
+  const interactive =
+    flags.has('--interactive') ||
+    (!flags.has('--non-interactive') && isTty() && !json && !hasCompleteDirectConfiguration);
 
   let config = defaults;
   if (interactive) {
@@ -178,6 +230,9 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   }
   if (stackName === 'main') {
     throw new Error('[stack] stack name \"main\" is reserved (use the default stack without creating it)');
+  }
+  if (stackExistsSync(stackName)) {
+    throw stackAlreadyExistsError(stackName);
   }
 
   const serverComponent = (config.serverComponent || 'happier-server-light').trim();
@@ -248,6 +303,12 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     HAPPIER_STACK_STACK_REMOTE: config.createRemote?.trim() ? config.createRemote.trim() : 'upstream',
     ...defaultRepoEnv,
   };
+  if (!copyAuth) {
+    // `--no-copy-auth` / `--fresh-auth` is a durable ownership choice, not merely a
+    // one-time create behavior. Without this, a later non-interactive start would
+    // fall back to auto-seeding credentials from main.
+    stackEnv.HAPPIER_STACK_AUTO_AUTH_SEED = '0';
+  }
   // Persist DB provider explicitly so existing behavior is stable even if defaults evolve later.
   stackEnv.HAPPIER_DB_PROVIDER = effectiveDbProvider;
   // Power user knob: override DATABASE_URL (required for mysql today, useful for external DBs).
@@ -389,7 +450,10 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       });
   }
 
-  const envPath = await writeStackEnv({ stackName, env: stackEnv });
+  const { created, envPath } = await createStackEnv({ stackName, env: stackEnv });
+  if (!created) {
+    throw stackAlreadyExistsError(stackName);
+  }
   const res = { ok: true, stackName, envPath, port: port ?? null, serverComponent, portsMode: port == null ? 'ephemeral' : 'pinned' };
   if (emit) {
     printResult({
@@ -585,8 +649,14 @@ async function cmdEdit({ rootDir, argv }) {
     next.HAPPIER_STACK_REPO_DIR = monoRoot;
   }
 
-  const wrote = await writeStackEnv({ stackName, env: next });
-  printResult({ json, data: { stackName, envPath: wrote, port, serverComponent }, text: `[stack] updated ${stackName}\n[stack] env: ${wrote}` });
+  const updates = Object.entries(next)
+    .filter(([key, value]) => String(value ?? '').trim() && existingEnv[key] !== String(value))
+    .map(([key, value]) => ({ key, value: String(value) }));
+  const removeKeys = STACK_EDIT_MANAGED_ENV_KEYS.filter(
+    (key) => !Object.prototype.hasOwnProperty.call(next, key),
+  );
+  await ensureEnvFileMutated({ envPath, updates, removeKeys });
+  printResult({ json, data: { stackName, envPath, port, serverComponent }, text: `[stack] updated ${stackName}\n[stack] env: ${envPath}` });
 }
 
 async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
@@ -1431,6 +1501,12 @@ async function cmdArchiveStack({ rootDir, argv, stackName }) {
     throw new Error(`[stack] archive: stack does not exist: ${stackName}`);
   }
 
+  const { baseDir } = resolveStackEnvPath(stackName);
+  await assertRuntimeProducerCanBeRemoved({
+    producerStackBaseDir: baseDir,
+    stacksStorageRoot: dirname(baseDir),
+  });
+
   const { env } = await readStackEnvObject(stackName);
 
   const workspaceDir = getWorkspaceDir(rootDir);
@@ -1453,7 +1529,6 @@ async function cmdArchiveStack({ rootDir, argv, stackName }) {
     }
   }
 
-  const { baseDir } = resolveStackEnvPath(stackName);
   const destStackDir = join(dirname(baseDir), '.archived', date, stackName);
 
   // Safety: avoid archiving a worktree that is still actively referenced by other stacks.
@@ -2188,6 +2263,21 @@ async function main() {
     await cmdAuth({ rootDir, stackName: stackNameForHelp, args: argv.slice(2) });
     return;
   }
+  if (
+    wantsHelpFlag
+    && cmd === 'runtime'
+    && stackNameForHelp
+    && positionals[2] === 'select'
+    && stackExistsSync(stackNameForHelp)
+  ) {
+    await cmdRuntime({
+      rootDir,
+      stackName: stackNameForHelp,
+      runtimeCommand: 'select',
+      args: argv.slice(3),
+    });
+    return;
+  }
   if (wantsHelpFlag && cmd !== 'help') {
     const handled = await printDelegatedStackHelpIfAvailable({
       rootDir,
@@ -2300,6 +2390,7 @@ async function main() {
                   ? [
                       '[stack] usage:',
                       '  hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json]',
+                      '  hstack stack runtime <name> select [--json]',
                       '',
                       'example:',
                       '  hstack stack runtime exp1 activate --web',
@@ -2504,13 +2595,14 @@ async function main() {
   }
   if (cmd === 'runtime') {
     const runtimeCmd = passthrough[0];
-    if (runtimeCmd !== 'activate') {
+    if (runtimeCmd !== 'activate' && runtimeCmd !== 'select') {
       printResult({
         json,
         data: { ok: false, error: 'missing_runtime_subcommand', stackName },
         text: [
           '[stack] usage:',
           '  hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json]',
+          '  hstack stack runtime <name> select [--json]',
           '',
           'example:',
           `  hstack stack runtime ${stackName} activate --web`,
@@ -2518,7 +2610,7 @@ async function main() {
       });
       process.exit(1);
     }
-    await cmdRuntime({ rootDir, stackName, args: passthrough.slice(1) });
+    await cmdRuntime({ rootDir, stackName, runtimeCommand: runtimeCmd, args: passthrough.slice(1) });
     return;
   }
 

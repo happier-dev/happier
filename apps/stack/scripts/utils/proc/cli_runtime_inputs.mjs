@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 
 import { resolveWorkspaceBundlesFromPackageJson } from '@happier-dev/cli-common/workspaces';
 import { isDevRuntimeReloadIgnoredPath } from '../dev/watchSignature.mjs';
+import { forgetCachedFileDigest, readCachedFileDigest } from '../fs/cached_file_digest.mjs';
 
 export function collectHappyCliRuntimePackageDirs({
   cliDir,
@@ -88,6 +89,7 @@ export async function readHappyCliRuntimeInputFreshness(cliDir) {
     try {
       fileStat = await lstat(path, { bigint: true });
     } catch {
+      forgetCachedFileDigest(path);
       return;
     }
     newestMtimeNs = newestMtimeNs === null || fileStat.mtimeNs > newestMtimeNs
@@ -110,12 +112,13 @@ export async function readHappyCliRuntimeInputFreshness(cliDir) {
     }
     fingerprint.update(String(fileStat.size));
     fingerprint.update('\0');
+    if (fileStat.isFile()) {
+      fingerprint.update(await readCachedFileDigest(path, fileStat));
+      fingerprint.update('\0');
+      return;
+    }
     fingerprint.update(String(fileStat.mtimeNs));
     fingerprint.update('\0');
-    // A same-size rewrite can restore mtime (for example, by a preserving copy)
-    // while still changing the runtime bytes. ctime remains an inexpensive
-    // owner-local identity signal for that replacement without hashing the
-    // complete CLI source closure on every stack currentness check.
     fingerprint.update(String(fileStat.ctimeNs));
     fingerprint.update('\0');
   };

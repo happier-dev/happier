@@ -24,8 +24,15 @@ import {
 import { hasExplicitStackRuntimeModeArg } from '../runtime/shared/runtime_mode.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 
-export async function resolveStackDaemonCommandContext({ rootDir, stackName, env, identity, argv = [] }) {
-  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env });
+export async function resolveStackDaemonCommandContext({
+  rootDir,
+  stackName,
+  env,
+  identity,
+  argv = [],
+  activeRuntimeState = null,
+}) {
+  const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState });
   const runtimeSnapshot = runtimeLaunchContext.snapshot;
   const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);

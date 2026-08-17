@@ -90,7 +90,7 @@ export function resolveServerReadyTimeoutMs({ serverComponentName = '', env = pr
   if (Number.isFinite(configured) && configured >= 1_000) {
     return configured;
   }
-  return serverComponentName === 'happier-server-light' ? 120_000 : 60_000;
+  return 600_000;
 }
 
 export function resolveServerMigrationTimeoutMs({ env = process.env } = {}) {

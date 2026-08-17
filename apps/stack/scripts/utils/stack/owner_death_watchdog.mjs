@@ -23,6 +23,7 @@ export function spawnStackOwnerDeathWatchdog({
   env = process.env,
   pollMs,
   logFile,
+  logMaxBytes,
 } = {}) {
   const ownerPidNum = parsePositiveInt(ownerPid);
   const ownerStartedAtValue = normalizeStackRuntimeOwnerStartedAt(ownerStartedAt);
@@ -37,6 +38,7 @@ export function spawnStackOwnerDeathWatchdog({
   }
 
   const effectivePollMs = parsePositiveInt(pollMs, 1000);
+  const effectiveLogMaxBytes = parsePositiveInt(logMaxBytes);
   const effectiveLogFile =
     typeof logFile === 'string' && logFile.trim()
       ? logFile.trim()
@@ -61,6 +63,7 @@ export function spawnStackOwnerDeathWatchdog({
       `--poll-ms=${effectivePollMs}`,
       ...(envPathValue ? [`--env-path=${envPathValue}`] : []),
       ...(effectiveLogFile ? [`--log-file=${effectiveLogFile}`] : []),
+      ...(effectiveLogMaxBytes ? [`--log-max-bytes=${effectiveLogMaxBytes}`] : []),
     ],
     {
       env: {

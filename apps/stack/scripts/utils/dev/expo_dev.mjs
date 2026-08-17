@@ -1,5 +1,6 @@
-import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { dirname, join } from 'node:path';
+import { mkdir, readFile } from 'node:fs/promises';
 import {
   ensureExpoIsolationEnv,
   getExpoStatePaths,
@@ -17,7 +18,12 @@ import {
   recordStackRuntimeUpdate,
 } from '../stack/runtime_state.mjs';
 import { killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
-import { expoSpawn } from '../expo/command.mjs';
+import {
+  ensureExpoWorkspacePrepared,
+  expoSpawn,
+  hasUsableExpoWorkspaceLastGreen,
+  withExpoPreparationEnv,
+} from '../expo/command.mjs';
 import { run } from '../proc/proc.mjs';
 import { resolveMobileExpoConfig } from '../mobile/config.mjs';
 import { resolveMobileReachableServerUrl } from '../server/mobile_api_url.mjs';
@@ -37,19 +43,6 @@ function normalizeExpoHost(raw) {
   const v = String(raw ?? '').trim().toLowerCase();
   if (v === 'localhost' || v === 'lan' || v === 'tunnel') return v;
   return 'lan';
-}
-
-async function ensureWorkspacePackagesBuiltForExpoProject({ projectDir, env, quiet }) {
-  const scriptPath = join(projectDir, 'scripts', 'ensureWorkspacePackagesBuilt.mjs');
-  if (!existsSync(scriptPath)) {
-    return;
-  }
-  await run(process.execPath, [scriptPath], {
-    cwd: projectDir,
-    env,
-    stdio: quiet ? 'ignore' : 'inherit',
-    timeoutMs: 10 * 60_000,
-  });
 }
 
 export function resolveExpoDevHost({ env = process.env } = {}) {
@@ -98,6 +91,41 @@ function expoModeLabel({ wantWeb, wantDevClient }) {
 
 function normalizeApiServerUrl(raw) {
   return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
+export async function resolveMetroConfigFingerprint({ projectDir } = {}) {
+  const configPath = join(String(projectDir ?? '').trim(), 'metro.config.js');
+  try {
+    const contents = await readFile(configPath);
+    return `sha256:${createHash('sha256').update(contents).digest('hex')}`;
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return 'missing';
+    }
+    throw error;
+  }
+}
+
+export async function inspectExpoMetroConfigState({ projectDir, state } = {}) {
+  const currentFingerprint = await resolveMetroConfigFingerprint({ projectDir });
+  const recordedFingerprint = String(state?.metroConfigFingerprint ?? '').trim();
+  return Object.freeze({
+    current: recordedFingerprint === currentFingerprint,
+    currentFingerprint,
+    recordedFingerprint: recordedFingerprint || null,
+  });
+}
+
+export function resolveExpoSpawnOptions({ autostartBaseDir, spawnOptions } = {}) {
+  const options = { ...(spawnOptions ?? {}) };
+  const baseDir = String(autostartBaseDir ?? '').trim();
+  if (!String(options.teeFile ?? '').trim() && baseDir) {
+    options.teeFile = join(baseDir, 'logs', 'expo.log');
+  }
+  if (!String(options.teeLabel ?? '').trim()) {
+    options.teeLabel = 'expo';
+  }
+  return options;
 }
 
 export function buildExpoDevEnv({
@@ -184,6 +212,8 @@ export async function ensureDevExpoServer({
   expoTailscale = false,
   isShuttingDown = () => false,
   quiet = false,
+  prepareExpoWorkspace = ensureExpoWorkspacePrepared,
+  hasUsableWorkspaceLastGreen = hasUsableExpoWorkspaceLastGreen,
 } = {}) {
   const wantWeb = Boolean(startUi);
   const wantDevClient = Boolean(startMobile);
@@ -214,7 +244,6 @@ export async function ensureDevExpoServer({
   }
 
   const projectDir = String(expoProjectDir ?? '').trim() || uiDir;
-
   const paths = getExpoStatePaths({
     baseDir: autostart.baseDir,
     kind: 'expo-dev',
@@ -223,9 +252,48 @@ export async function ensureDevExpoServer({
   });
   const tmpDir = resolveExpoTmpDir({ env, defaultTmpDir: paths.tmpDir, kind: 'expo-dev', projectDir });
   await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
-
   const running = await isStateProcessRunning(paths.statePath);
   const alreadyRunning = Boolean(running.running);
+  let metroConfigInspection = null;
+  try {
+    metroConfigInspection = await inspectExpoMetroConfigState({ projectDir, state: running.state });
+  } catch (error) {
+    if (!quiet) {
+      const detail = error instanceof Error ? error.message : String(error);
+      // A config-inspection failure must not make the rest of the Stack unavailable.
+      console.warn(`[local] expo: unable to inspect metro.config.js; preserving the current Expo lifecycle.\n${detail}`);
+    }
+  }
+
+  const prepareWorkspace = async () => {
+    await withExpoPreparationEnv(env, async (preparationEnv) => {
+      await prepareExpoWorkspace({ projectDir, env: preparationEnv, quiet });
+    });
+  };
+  const warnAndContinue = (error, { hasLastGreen }) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(
+      (hasLastGreen
+        ? '[local] Expo workspace refresh failed; keeping the current last-green outputs.\n'
+        : '[local] Expo workspace preparation failed; starting Expo in a degraded state so the rest of the Stack remains available.\n')
+      + detail,
+    );
+  };
+  // Availability does not depend on freshness. Start or adopt Expo from the
+  // currently available workspace bytes while the canonical writer refreshes
+  // them in the background. This also covers remote checkouts where the
+  // readiness record is intentionally not synchronized even though usable
+  // outputs remain on disk.
+  void (async () => {
+    let hasLastGreen = false;
+    try {
+      hasLastGreen = await hasUsableWorkspaceLastGreen({ projectDir });
+      await prepareWorkspace();
+    } catch (error) {
+      warnAndContinue(error, { hasLastGreen });
+    }
+  })();
+
   let desiredApiServerUrl = normalizeApiServerUrl(env.EXPO_PUBLIC_HAPPIER_SERVER_URL || apiServerUrl);
   const cliHomeDir = (baseEnv?.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim();
   const stablePortMode =
@@ -266,6 +334,10 @@ export async function ensureDevExpoServer({
     (wantWeb || wantDevClient) &&
     desiredApiServerUrl &&
     runningStateApiServerUrl !== desiredApiServerUrl;
+  const shouldRestartForMetroConfigMismatch =
+    alreadyRunning &&
+    !restart &&
+    metroConfigInspection?.current === false;
   // In stack mode, never adopt "running by port probe only" state. It may belong to a
   // different stack/session and has no reliable owned pid for lifecycle control.
   const shouldRestartForPortFallbackInStackMode =
@@ -292,6 +364,7 @@ export async function ensureDevExpoServer({
   const shouldReplaceRunningExpo =
     restart ||
     shouldRestartForApiServerMismatch ||
+    shouldRestartForMetroConfigMismatch ||
     shouldRestartForPortFallbackInStackMode ||
     shouldRestartForTailscaleMismatch ||
     shouldRestartForDeadTailscaleForwarder;
@@ -342,6 +415,10 @@ export async function ensureDevExpoServer({
     console.log(
       `[local] expo: restarting to align API server URL (running=${runningStateApiServerUrl || 'unset'}, wanted=${desiredApiServerUrl}).`
     );
+  }
+  if (shouldRestartForMetroConfigMismatch && !quiet) {
+    // eslint-disable-next-line no-console
+    console.log('[local] expo: restarting because metro.config.js changed since the running process was started.');
   }
   if (shouldRestartForTailscaleMismatch && !quiet) {
     // eslint-disable-next-line no-console
@@ -477,7 +554,13 @@ export async function ensureDevExpoServer({
 
   // Some auth flows historically passed `stdio: ['ignore','ignore','ignore']` which drops Expo output entirely.
   // For reliability, treat that as "use default pipes" so errors remain debuggable (and verbose can stream).
-  const normalizedSpawnOptions = { ...(spawnOptions ?? {}) };
+  const normalizedSpawnOptions = resolveExpoSpawnOptions({
+    autostartBaseDir: autostart?.baseDir,
+    spawnOptions,
+  });
+  if (normalizedSpawnOptions.teeFile) {
+    await mkdir(dirname(normalizedSpawnOptions.teeFile), { recursive: true });
+  }
   const stdio = normalizedSpawnOptions.stdio;
   if (Array.isArray(stdio) && stdio[1] === 'ignore' && stdio[2] === 'ignore') {
     delete normalizedSpawnOptions.stdio;
@@ -512,6 +595,7 @@ export async function ensureDevExpoServer({
         devClientEnabled: wantDevClient,
         host,
         apiServerUrl: desiredApiServerUrl || null,
+        metroConfigFingerprint: metroConfigInspection?.currentFingerprint ?? null,
         scheme: wantDevClient ? scheme : null,
         tailscaleEnabled,
         tailscaleForwarderPid: tailscaleResult?.pid ?? null,
@@ -597,6 +681,7 @@ export async function ensureDevExpoServer({
       projectDir,
       args: forceClearCache ? buildStartArgs({ forceClearCache: true }) : args,
       env,
+      workspacePrepared: true,
       options: {
         ...normalizedSpawnOptions,
         onLine: (event) => {
@@ -654,7 +739,6 @@ export async function ensureDevExpoServer({
   };
 
   // Run the Expo CLI from the runner dir (where deps/bins live), but target the actual Expo project dir.
-  await ensureWorkspacePackagesBuiltForExpoProject({ projectDir, env, quiet });
   const proc = await spawnTrackedExpo();
 
   return {

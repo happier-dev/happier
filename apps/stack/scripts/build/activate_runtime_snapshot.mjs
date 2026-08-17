@@ -1,12 +1,18 @@
-import { constants } from 'node:fs';
-import { cp, mkdir, realpath, symlink } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { getFirstPartyComponentCatalogEntry } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
-import { artifactPayloadDir, validateArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
 import {
+  artifactPayloadDir,
+  readArtifactManifest,
+  readReusableArtifactManifest,
+  resolveComponentArtifactSupportReference,
+  validateArtifactManifest,
+} from '../runtime/shared/artifact_manifest.mjs';
+import {
+  isRetainedLegacyRuntimeSnapshotComponentReference,
   readRuntimeManifest,
   resolveRuntimeManifestEntrypoint,
   validateRuntimeTarget,
@@ -16,44 +22,43 @@ import {
 } from '../runtime/shared/runtime_manifest.mjs';
 import {
   getRuntimeSnapshotPhysicalContainmentError,
+  resolveStackComponentArtifactDir,
   resolveStackRuntimePaths,
 } from '../runtime/shared/runtime_paths.mjs';
 import { pathExists } from '../utils/fs/fs.mjs';
 import { assertCanonicalManagedStackName } from '../utils/stack/names.mjs';
 import { inspectActiveRuntimeSnapshot } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { pruneRuntimeSnapshots } from './runtime_retention.mjs';
-
-const RUNTIME_DIRECTORY_COPY_OPTIONS = Object.freeze({
-  recursive: true,
-  // Prefer filesystem clone-on-write when available so partial runtime activation
-  // does not byte-copy large unchanged server/daemon payloads on every web-only swap.
-  mode: constants.COPYFILE_FICLONE,
-});
-
-const RUNTIME_FILE_COPY_OPTIONS = Object.freeze({
-  mode: constants.COPYFILE_FICLONE,
-});
+import { createRuntimeSnapshotSourceMetadata } from '../runtime/shared/runtime_snapshot_identity.mjs';
 
 function resolveComponentDirectoryName(component) {
   return component === 'web' ? 'ui' : component === 'server' ? 'server' : 'cli';
 }
 
-async function materializeRuntimeComponent({
-  targetDir,
-  sourceDir,
-  reusedSnapshotId = null,
-}) {
-  if (reusedSnapshotId) {
-    await symlink(sourceDir, targetDir, process.platform === 'win32' ? 'junction' : 'dir');
-    return;
-  }
-  await cp(sourceDir, targetDir, RUNTIME_DIRECTORY_COPY_OPTIONS);
+async function materializeRuntimeComponent({ targetDir, sourceDir }) {
+  await symlink(sourceDir, targetDir, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
-async function validateRuntimeArtifact({ component, artifact }) {
+async function validateRuntimeArtifact({ stackBaseDir, component, artifact }) {
   const validation = validateArtifactManifest(artifact?.manifest);
   if (!validation.ok) {
     throw new Error(`[build] invalid ${component} artifact manifest: ${validation.errors.join('; ')}`);
+  }
+  if (validation.manifest.component !== component) {
+    throw new Error(`[build] invalid ${component} artifact manifest: component identity does not match.`);
+  }
+
+  const canonicalArtifactDir = resolveStackComponentArtifactDir({
+    stackBaseDir,
+    component,
+    fingerprint: validation.manifest.artifactFingerprint,
+  });
+  const [actualArtifactDir, expectedArtifactDir] = await Promise.all([
+    realpath(artifact.artifactDir).catch(() => ''),
+    realpath(canonicalArtifactDir).catch(() => ''),
+  ]);
+  if (!actualArtifactDir || !expectedArtifactDir || actualArtifactDir !== expectedArtifactDir) {
+    throw new Error(`[build] ${component} artifact must resolve to its canonical producer artifact path.`);
   }
 
   const entrypointPath = join(artifactPayloadDir(artifact.artifactDir), validation.manifest.entrypoint);
@@ -75,6 +80,11 @@ async function validateRuntimeArtifact({ component, artifact }) {
       throw new Error(`[build] daemon artifact node entrypoint is missing: ${nodeEntrypointPath}`);
     }
   }
+
+  await resolveComponentArtifactSupportReference({
+    stackBaseDir,
+    manifest: validation.manifest,
+  });
 
   return validation.manifest;
 }
@@ -98,10 +108,60 @@ function assertCompatibleServerFlavor({ sourceMetadata, reuseSource, sourceLabel
   );
 }
 
+function resolveComponentArtifactEntrypoint(component, entrypoint) {
+  const componentDirectoryName = resolveComponentDirectoryName(component);
+  return componentDirectoryName + '/' + entrypoint;
+}
+
+async function resolveCanonicalCurrentComponentSource({
+  stackBaseDir,
+  component,
+  currentSnapshot,
+}) {
+  const artifactFingerprint = String(
+    currentSnapshot?.manifest?.components?.[component]?.artifactFingerprint ?? '',
+  ).trim();
+  if (!artifactFingerprint) return null;
+
+  const artifactDir = resolveStackComponentArtifactDir({
+    stackBaseDir,
+    component,
+    fingerprint: artifactFingerprint,
+  });
+  const artifactManifest = await readReusableArtifactManifest({
+    artifactDir,
+    artifactFingerprint,
+  });
+  if (!artifactManifest || artifactManifest.component !== component) return null;
+
+  const currentComponentDir = join(
+    currentSnapshot.snapshotPath,
+    resolveComponentDirectoryName(component),
+  );
+  const canonicalPayloadDir = artifactPayloadDir(artifactDir);
+  const [currentComponentPath, canonicalPayloadPath] = await Promise.all([
+    realpath(currentComponentDir).catch(() => ''),
+    realpath(canonicalPayloadDir).catch(() => ''),
+  ]);
+  if (!currentComponentPath || currentComponentPath !== canonicalPayloadPath) return null;
+
+  await resolveComponentArtifactSupportReference({
+    stackBaseDir,
+    manifest: artifactManifest,
+  });
+
+  return {
+    artifactFingerprint: artifactManifest.artifactFingerprint,
+    sourceDir: canonicalPayloadDir,
+    entrypoint: resolveComponentArtifactEntrypoint(component, artifactManifest.entrypoint),
+    reusedSnapshotId: null,
+  };
+}
+
 async function resolveComponentSource({ stackBaseDir, component, artifact, currentSnapshot, sourceMetadata }) {
   const componentDirName = resolveComponentDirectoryName(component);
   if (artifact) {
-    const manifest = await validateRuntimeArtifact({ component, artifact });
+    const manifest = await validateRuntimeArtifact({ stackBaseDir, component, artifact });
     if (component === 'server') {
       assertCompatibleServerFlavor({
         sourceMetadata,
@@ -112,12 +172,7 @@ async function resolveComponentSource({ stackBaseDir, component, artifact, curre
     return {
       artifactFingerprint: manifest.artifactFingerprint,
       sourceDir: artifactPayloadDir(artifact.artifactDir),
-      entrypoint:
-        component === 'web'
-          ? `ui/${manifest.entrypoint}`
-          : component === 'server'
-            ? `server/${manifest.entrypoint}`
-            : `cli/${manifest.entrypoint}`,
+      entrypoint: resolveComponentArtifactEntrypoint(component, manifest.entrypoint),
       reusedSnapshotId: null,
     };
   }
@@ -133,6 +188,13 @@ async function resolveComponentSource({ stackBaseDir, component, artifact, curre
       sourceLabel: 'active runtime server artifact',
     });
   }
+
+  const canonicalCurrentSource = await resolveCanonicalCurrentComponentSource({
+    stackBaseDir,
+    component,
+    currentSnapshot,
+  });
+  if (canonicalCurrentSource) return canonicalCurrentSource;
 
   return {
     artifactFingerprint: String(currentSnapshot.manifest.components[component].artifactFingerprint ?? '').trim(),
@@ -185,15 +247,17 @@ export async function publishRuntimeSnapshot({
   externalReferenceStorageRoot = '',
   platform = process.platform,
   arch = process.arch,
+  pruneAfterPublish = true,
 }) {
   const stackBaseDir = producerStackBaseDir;
+  const runtimeSourceMetadata = createRuntimeSnapshotSourceMetadata({ sourceMetadata, snapshotId });
   const runtimePaths = resolveStackRuntimePaths({ stackBaseDir, snapshotId });
   await mkdir(runtimePaths.buildsDir, { recursive: true });
   const currentInspection = await inspectActiveRuntimeSnapshot({ stackBaseDir });
   const currentSnapshot = currentInspection.snapshot;
-  const webSource = await resolveComponentSource({ stackBaseDir, component: 'web', artifact: artifacts.web, currentSnapshot, sourceMetadata });
-  const serverSource = await resolveComponentSource({ stackBaseDir, component: 'server', artifact: artifacts.server, currentSnapshot, sourceMetadata });
-  const daemonSource = await resolveComponentSource({ stackBaseDir, component: 'daemon', artifact: artifacts.daemon, currentSnapshot, sourceMetadata });
+  const webSource = await resolveComponentSource({ stackBaseDir, component: 'web', artifact: artifacts.web, currentSnapshot, sourceMetadata: runtimeSourceMetadata });
+  const serverSource = await resolveComponentSource({ stackBaseDir, component: 'server', artifact: artifacts.server, currentSnapshot, sourceMetadata: runtimeSourceMetadata });
+  const daemonSource = await resolveComponentSource({ stackBaseDir, component: 'daemon', artifact: artifacts.daemon, currentSnapshot, sourceMetadata: runtimeSourceMetadata });
   const sources = { web: webSource, server: serverSource, daemon: daemonSource };
   const reusedSnapshotIds = [...new Set([
     webSource.reusedSnapshotId,
@@ -204,17 +268,19 @@ export async function publishRuntimeSnapshot({
   if (await isPublishedRuntimeSnapshotReusable({
     runtimePaths,
     snapshotId,
-    sourceMetadata,
+    sourceMetadata: runtimeSourceMetadata,
     sources,
     platform,
     arch,
   })) {
-    await pruneRuntimeSnapshots({
-      stackBaseDir,
-      keepCount: runtimeSnapshotKeepCount,
-      preserveSnapshotIds: [snapshotId],
-      externalReferenceStorageRoot,
-    });
+    if (pruneAfterPublish) {
+      await pruneRuntimeSnapshots({
+        stackBaseDir,
+        keepCount: runtimeSnapshotKeepCount,
+        preserveSnapshotIds: [snapshotId],
+        externalReferenceStorageRoot,
+      });
+    }
     return {
       snapshotId,
       snapshotPath: runtimePaths.snapshotDir,
@@ -227,17 +293,14 @@ export async function publishRuntimeSnapshot({
     await materializeRuntimeComponent({
       sourceDir: webSource.sourceDir,
       targetDir: join(tmpSnapshotDir, 'ui'),
-      reusedSnapshotId: webSource.reusedSnapshotId,
     });
     await materializeRuntimeComponent({
       sourceDir: serverSource.sourceDir,
       targetDir: join(tmpSnapshotDir, 'server'),
-      reusedSnapshotId: serverSource.reusedSnapshotId,
     });
     await materializeRuntimeComponent({
       sourceDir: daemonSource.sourceDir,
       targetDir: join(tmpSnapshotDir, 'cli'),
-      reusedSnapshotId: daemonSource.reusedSnapshotId,
     });
 
     await writeRuntimeManifest({
@@ -245,10 +308,10 @@ export async function publishRuntimeSnapshot({
       manifest: {
         version: 1,
         snapshotId,
-        sourceFingerprint: sourceMetadata.sourceFingerprint,
+        sourceFingerprint: runtimeSourceMetadata.sourceFingerprint,
         target: { platform, arch },
-        createdAt: sourceMetadata.builtAt,
-        source: sourceMetadata,
+        createdAt: runtimeSourceMetadata.builtAt,
+        source: runtimeSourceMetadata,
         reusedSnapshotIds,
         components: {
           web: {
@@ -268,12 +331,14 @@ export async function publishRuntimeSnapshot({
     });
   });
 
-  await pruneRuntimeSnapshots({
-    stackBaseDir,
-    keepCount: runtimeSnapshotKeepCount,
-    preserveSnapshotIds: [snapshotId],
-    externalReferenceStorageRoot,
-  });
+  if (pruneAfterPublish) {
+    await pruneRuntimeSnapshots({
+      stackBaseDir,
+      keepCount: runtimeSnapshotKeepCount,
+      preserveSnapshotIds: [snapshotId],
+      externalReferenceStorageRoot,
+    });
+  }
 
   return {
     snapshotId,
@@ -304,12 +369,85 @@ async function validatePublishedRuntimeSnapshot({ producerStackBaseDir, snapshot
   if (!targetValidation.ok) {
     throw new Error(`[runtime] cannot select runtime snapshot: ${targetValidation.errors.join('; ')}`);
   }
-  for (const component of ['ui', 'server', 'cli']) {
-    if (!(await pathExists(join(producerPaths.snapshotDir, component)))) {
-      throw new Error(`[runtime] cannot select incomplete runtime snapshot: missing ${component}.`);
+  for (const [component, directoryName] of [
+    ['web', 'ui'],
+    ['server', 'server'],
+    ['daemon', 'cli'],
+  ]) {
+    const componentPath = join(producerPaths.snapshotDir, directoryName);
+    if (!(await pathExists(componentPath))) {
+      throw new Error(`[runtime] cannot select incomplete runtime snapshot: missing ${directoryName}.`);
     }
+    await validatePublishedRuntimeComponentReference({
+      producerStackBaseDir,
+      componentPath,
+      component,
+      manifest: validation.manifest,
+      reusableSnapshotIds: validation.manifest.reusedSnapshotIds,
+    });
   }
   return { manifest: validation.manifest, producerPaths };
+}
+
+async function validatePublishedRuntimeComponentReference({
+  producerStackBaseDir,
+  componentPath,
+  component,
+  manifest,
+  reusableSnapshotIds = [],
+}) {
+  const artifactFingerprint = String(manifest?.components?.[component]?.artifactFingerprint ?? '').trim();
+  if (!artifactFingerprint) return;
+  const artifactDir = resolveStackComponentArtifactDir({
+    stackBaseDir: producerStackBaseDir,
+    component,
+    fingerprint: artifactFingerprint,
+  });
+  const artifactManifest = await readArtifactManifest({ artifactDir });
+  const artifactValidation = validateArtifactManifest(artifactManifest);
+  const componentStats = await lstat(componentPath).catch(() => null);
+  const retainedLegacyReference = componentStats?.isSymbolicLink()
+    && await isRetainedLegacyRuntimeSnapshotComponentReference({
+      producerStackBaseDir,
+      componentPath,
+      component,
+      reusedSnapshotIds: reusableSnapshotIds,
+    });
+
+  if (retainedLegacyReference) return;
+
+  if (!artifactValidation.ok || artifactValidation.manifest.component !== component) {
+    if (componentStats?.isSymbolicLink()) {
+      throw new Error(
+        `[runtime] cannot select incomplete runtime snapshot: ${component} artifact reference is missing or invalid.`,
+      );
+    }
+    // v1 snapshots published before reference-only assembly contain their own
+    // payload. They remain readable until ordinary retention removes them.
+    return;
+  }
+
+  // A v1 snapshot owns a physical, self-contained component directory. Its
+  // manifest can happen to name an artifact which exists today, but that does
+  // not retroactively turn its payload into a reference. Keep that released
+  // shape readable; only the symlink/junction shape published by this owner
+  // must resolve back to the canonical artifact object.
+  if (!componentStats?.isSymbolicLink()) return;
+
+  await resolveComponentArtifactSupportReference({
+    stackBaseDir: producerStackBaseDir,
+    manifest: artifactValidation.manifest,
+  });
+
+  const [snapshotComponentPath, artifactPayloadPath] = await Promise.all([
+    realpath(componentPath),
+    realpath(artifactPayloadDir(artifactDir)),
+  ]);
+  if (snapshotComponentPath !== artifactPayloadPath) {
+    throw new Error(
+      `[runtime] cannot select runtime snapshot: ${component} component reference does not match its canonical artifact payload.`,
+    );
+  }
 }
 
 export async function selectRuntimeSnapshot({
@@ -333,7 +471,10 @@ export async function selectRuntimeSnapshot({
     await symlink(join(producerPaths.snapshotDir, 'ui'), join(tmpCurrentDir, 'ui'), process.platform === 'win32' ? 'junction' : 'dir');
     await symlink(join(producerPaths.snapshotDir, 'server'), join(tmpCurrentDir, 'server'), process.platform === 'win32' ? 'junction' : 'dir');
     await symlink(join(producerPaths.snapshotDir, 'cli'), join(tmpCurrentDir, 'cli'), process.platform === 'win32' ? 'junction' : 'dir');
-    await cp(join(producerPaths.snapshotDir, 'manifest.json'), join(tmpCurrentDir, 'manifest.json'), RUNTIME_FILE_COPY_OPTIONS);
+    await copyFile(
+      join(producerPaths.snapshotDir, 'manifest.json'),
+      join(tmpCurrentDir, 'manifest.json'),
+    );
   });
 
   await writeRuntimePointer({
@@ -376,8 +517,11 @@ export async function selectActiveProducerRuntimeSnapshot({
     const reason = inspection.missing
       ? 'has no active runtime snapshot'
       : `has an invalid active runtime snapshot${inspection.errors[0] ? `: ${inspection.errors[0]}` : ''}`;
+    const buildConsumerName = String(consumerStackName ?? '').trim() || '<consumer>';
     throw new Error(
-      `[runtime] producer ${producerStackName} ${reason}. Ask its build owner to publish and select a complete snapshot before selecting it on this consumer.`,
+      `[runtime] producer ${producerStackName} ${reason}. Publish through the repository authority with `
+      + `hstack stack build ${buildConsumerName} --server --daemon, then select the complete result with `
+      + `hstack stack runtime ${buildConsumerName} activate --all. These commands do not restart the producer or consumer.`,
     );
   }
 

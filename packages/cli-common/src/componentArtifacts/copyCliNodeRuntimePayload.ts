@@ -137,7 +137,7 @@ function resolveRuntimeRootCliNodeWorkspaceBundles(
   }));
 }
 
-function readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot({
+export function readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot({
   runtimeRoot,
   packageNames,
 }: Readonly<{

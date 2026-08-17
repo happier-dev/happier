@@ -16,6 +16,8 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   '.happier',
   '.happier-stack',
   'coverage',
+  '!packages/triage-qa/src/coverage',
+  '!packages/triage-qa/src/coverage/**',
   '/output',
   '.reviews',
   '.agent-contexts',

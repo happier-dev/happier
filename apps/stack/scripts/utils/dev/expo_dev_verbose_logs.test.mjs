@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { ensureDevExpoServer } from './expo_dev.mjs';
+import { ensureDevExpoServer, resolveExpoSpawnOptions } from './expo_dev.mjs';
 
 test('ensureDevExpoServer does not drop Expo output when spawnOptions stdio is ignore', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-verbose-'));
@@ -64,4 +64,24 @@ test('ensureDevExpoServer does not drop Expo output when spawnOptions stdio is i
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
+});
+
+test('Expo spawn options always publish the owner log for borrowed consumers', () => {
+  const options = resolveExpoSpawnOptions({
+    autostartBaseDir: '/managed/stacks/repo-producer',
+    spawnOptions: {},
+  });
+
+  assert.equal(options.teeFile, join('/managed/stacks/repo-producer', 'logs', 'expo.log'));
+  assert.equal(options.teeLabel, 'expo');
+});
+
+test('explicit Expo log options remain authoritative', () => {
+  const options = resolveExpoSpawnOptions({
+    autostartBaseDir: '/managed/stacks/repo-producer',
+    spawnOptions: { teeFile: '/explicit/expo.log', teeLabel: 'custom' },
+  });
+
+  assert.equal(options.teeFile, '/explicit/expo.log');
+  assert.equal(options.teeLabel, 'custom');
 });

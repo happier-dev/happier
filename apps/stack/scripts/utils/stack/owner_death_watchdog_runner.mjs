@@ -1,7 +1,11 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { readEnvObjectFromFile } from '../env/read.mjs';
+import {
+  createBoundedLogWriteStream,
+  DEFAULT_BOUNDED_LOG_MAX_BYTES,
+} from '../proc/boundedLog.mjs';
 import { isPidAlive } from '../proc/pids.mjs';
 import { stopStackWithEnv } from './stop.mjs';
 import { readStackRuntimeStateFile } from './runtime_state.mjs';
@@ -36,6 +40,10 @@ const ownerStartedAtRaw = parseFlagValue('--owner-started-at');
 const ownerStartedAt = normalizeStackRuntimeOwnerStartedAt(ownerStartedAtRaw);
 const pollMs = parsePositiveInt(parseFlagValue('--poll-ms'), 1000);
 const logFile = parseFlagValue('--log-file');
+const logMaxBytes = parsePositiveInt(
+  parseFlagValue('--log-max-bytes'),
+  DEFAULT_BOUNDED_LOG_MAX_BYTES,
+);
 const ownerDeathStopAttribution = {
   requestedBy: 'owner death watchdog',
   reason: 'lifecycle owner exited; sweeping stack-owned runtime',
@@ -43,27 +51,28 @@ const ownerDeathStopAttribution = {
 
 let pollTimer = null;
 let stopping = false;
+let logStream = null;
 
-async function writeLog(message) {
+async function writeLogLine(line) {
   if (!logFile) return;
-  const line = `[owner-watchdog] ${message}\n`;
   try {
     await mkdir(dirname(logFile), { recursive: true });
+    if (!logStream) {
+      logStream = createBoundedLogWriteStream(logFile, logMaxBytes);
+      logStream.on('error', () => {});
+    }
+    await new Promise((resolve) => logStream.write(line, resolve));
   } catch {
-    // ignore
+    // Logging is diagnostic and must not take lifecycle cleanup down with it.
   }
-  await appendFile(logFile, line, 'utf-8').catch(() => {});
+}
+
+async function writeLog(message) {
+  await writeLogLine(`[owner-watchdog] ${message}\n`);
 }
 
 async function writeStructuredLog(payload) {
-  if (!logFile) return;
-  const line = `[owner-watchdog-json] ${JSON.stringify(payload)}\n`;
-  try {
-    await mkdir(dirname(logFile), { recursive: true });
-  } catch {
-    // ignore
-  }
-  await appendFile(logFile, line, 'utf-8').catch(() => {});
+  await writeLogLine(`[owner-watchdog-json] ${JSON.stringify(payload)}\n`);
 }
 
 function summarizeStopActions(actions) {

@@ -123,8 +123,12 @@ export function gethstackRegistry() {
       name: 'dev-targets',
       kind: 'node',
       scriptRelPath: 'scripts/dev_targets.mjs',
-      rootUsage: 'hstack dev-targets add|remove|list|show|doctor|path [--stack=NAME]',
-      description: 'Configure Mutagen-backed remote development daemons',
+      rootUsage: [
+        'hstack dev-targets add|remove|list|show|doctor|status|sync|path [--stack=NAME]',
+        'hstack dev-targets add NAME --host HOST --user USER [--repo-dir PATH] [--cli-home-dir PATH] [--stack NAME]',
+        'hstack dev-targets exec NAME [--cwd PATH] [--env KEY=VALUE]... [--flush] [--tty] [--stack NAME] -- COMMAND [ARG...]',
+      ],
+      description: 'Provision, configure, and use Mutagen-backed remote development targets',
     },
     {
       name: 'stop',

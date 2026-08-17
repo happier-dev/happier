@@ -393,16 +393,23 @@ test('startDevServer validates workspace package exports before spawning a serve
         runtimeStatePath: join(serverDir, 'stack.runtime.json'),
         serverAlreadyRunning: false,
         restart: false,
+        admitPriorBuildsImmediately: true,
         children: [],
         quiet: true,
       },
       {
-        ensureDepsInstalledImpl: async () => {
+        ensureDepsInstalledImpl: async (_dir, _label, options) => {
           calls.push('deps');
+          assert.equal(options.refreshExisting, false);
+          assert.equal(options.prepareComponentOutputs, false);
         },
-        ensureSourceServerWorkspacePackagesBuiltImpl: async ({ serverDir: dir }) => {
+        ensureSourceServerWorkspacePackagesBuiltImpl: async ({
+          serverDir: dir,
+          admitPriorOutputsImmediately,
+        }) => {
           calls.push('workspace');
           assert.equal(dir, serverDir);
+          assert.equal(admitPriorOutputsImmediately, true);
         },
         pmSpawnScriptImpl: async ({ options }) => {
           calls.push('spawn');
@@ -428,6 +435,137 @@ test('startDevServer validates workspace package exports before spawning a serve
     assert.equal(result.serverProc, child);
     assert.equal(typeof spawnOnLine, 'function');
     assert.deepEqual(calls, ['deps', 'workspace', 'spawn', 'ready', 'ownership', 'record']);
+  });
+});
+
+test('startDevServer boots an admitted prior runtime before source preparation and leaves source reload env current', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const calls = [];
+    const child = { pid: 2001, exitCode: null, kill() {} };
+    const runtimeServerDir = join(serverDir, 'prior-runtime', 'server');
+    const priorRuntimeServerLaunchSpec = {
+      source: 'runtime',
+      serverDir: runtimeServerDir,
+      command: join(runtimeServerDir, 'happier-server'),
+      args: [],
+    };
+
+    const result = await startDevServer(
+      {
+        serverComponentName: 'happier-server-light',
+        serverDir,
+        autostart: { stackName: 'start-test', baseDir: serverDir },
+        baseEnv: {},
+        serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'http://localhost:34567',
+        envPath: join(serverDir, 'env'),
+        stackMode: true,
+        runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+        serverAlreadyRunning: false,
+        restart: false,
+        admitPriorBuildsImmediately: true,
+        priorRuntimeServerLaunchSpec,
+        children: [],
+        quiet: true,
+      },
+      {
+        ensureDepsInstalledImpl: async () => {
+          throw new Error('source dependency preparation must stay in the background refresh');
+        },
+        ensureSourceServerWorkspacePackagesBuiltImpl: async () => {
+          throw new Error('source workspace builds must stay in the background refresh');
+        },
+        pmSpawnScriptImpl: async () => {
+          throw new Error('the source server must not be the cold-start availability gate');
+        },
+        spawnPriorRuntimeServerImpl: ({ launchSpec, env }) => {
+          calls.push('spawn-runtime');
+          assert.equal(launchSpec, priorRuntimeServerLaunchSpec);
+          assert.equal(env.HAPPIER_SQLITE_AUTO_MIGRATE, '0');
+          assert.equal(env.HAPPIER_SQLITE_MIGRATIONS_DIR, join(runtimeServerDir, 'prisma', 'sqlite', 'migrations'));
+          return child;
+        },
+        waitForServerReadyImpl: async () => calls.push('ready'),
+        assertServerPortOwnedBySpawnedProcessGroupImpl: async () => {
+          calls.push('ownership');
+          return 3001;
+        },
+        recordStackRuntimeServerActivationImpl: async () => calls.push('record'),
+      },
+    );
+
+    assert.equal(result.serverProc, child);
+    assert.equal(result.bootstrapSource, 'runtime');
+    assert.equal(result.serverEnv.DATABASE_URL, undefined);
+    assert.equal(result.serverEnv.HAPPIER_SQLITE_MIGRATIONS_DIR, undefined);
+    assert.deepEqual(calls, ['spawn-runtime', 'ready', 'ownership', 'record']);
+  });
+});
+
+test('startDevServer refreshes once and retries when an admitted prior generation cannot boot', async (t) => {
+  await withTempServerDir(t, async (serverDir) => {
+    const calls = [];
+    const children = [];
+    const firstChild = { pid: 2001, exitCode: 1 };
+    const secondChild = { pid: 2002, exitCode: null };
+    let spawnCount = 0;
+    let readyCount = 0;
+
+    const result = await startDevServer(
+      {
+        serverComponentName: 'happier-server',
+        serverDir,
+        autostart: { stackName: 'start-test', baseDir: serverDir },
+        baseEnv: { HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0' },
+        serverPort: 34567,
+        internalServerUrl: 'http://127.0.0.1:34567',
+        publicServerUrl: 'http://localhost:34567',
+        envPath: join(serverDir, 'env'),
+        stackMode: true,
+        runtimeStatePath: join(serverDir, 'stack.runtime.json'),
+        serverAlreadyRunning: false,
+        restart: false,
+        admitPriorBuildsImmediately: true,
+        children,
+        quiet: true,
+      },
+      {
+        ensureDepsInstalledImpl: async (_dir, _label, options) => {
+          calls.push(options.refreshExisting === false ? 'deps:prior' : 'deps:fresh');
+        },
+        ensureSourceServerWorkspacePackagesBuiltImpl: async ({ admitPriorOutputsImmediately }) => {
+          calls.push(admitPriorOutputsImmediately ? 'workspace:prior' : 'workspace:fresh');
+        },
+        pmSpawnScriptImpl: async () => {
+          spawnCount += 1;
+          calls.push(`spawn:${spawnCount}`);
+          return spawnCount === 1 ? firstChild : secondChild;
+        },
+        waitForServerReadyImpl: async () => {
+          readyCount += 1;
+          calls.push(`ready:${readyCount}`);
+          if (readyCount === 1) throw new Error('prior generation is incompatible');
+        },
+        assertServerPortOwnedBySpawnedProcessGroupImpl: async () => 3002,
+        recordStackRuntimeServerActivationImpl: async () => calls.push('record'),
+        killProcessGroupOwnedByStackImpl: async () => ({ killed: false, reason: 'already-exited' }),
+      },
+    );
+
+    assert.equal(result.serverProc, secondChild);
+    assert.deepEqual(children, [secondChild]);
+    assert.deepEqual(calls, [
+      'deps:prior',
+      'workspace:prior',
+      'spawn:1',
+      'ready:1',
+      'deps:fresh',
+      'workspace:fresh',
+      'spawn:2',
+      'ready:2',
+      'record',
+    ]);
   });
 });
 
@@ -679,6 +817,48 @@ test('resolveStackOwnedServerRuntimePid repairs stale runtime PID from stack-own
   );
 
   assert.equal(pid, 2222);
+});
+
+test('resolveStackOwnedServerRuntimePid returns the listener identity when a wrapper leads the listener process group', async () => {
+  const pid = await resolveStackOwnedServerRuntimePid(
+    { runtimeServerPid: 1234, serverPort: 34567, stackName: 'watch-test', envPath: '/tmp/watch-test/env' },
+    {
+      isPidAliveImpl: () => true,
+      isPidOwnedByStackImpl: async () => true,
+      listListenPidsImpl: async () => [2222],
+      getProcessGroupIdImpl: async (candidate) => {
+        if (Number(candidate) === 1234 || Number(candidate) === 2222) return 7000;
+        return Number(candidate);
+      },
+      resolveStackOwnedServerListenPidImpl: async () => null,
+    },
+  );
+
+  assert.equal(pid, 2222);
+});
+
+test('stopStackOwnedServerForRestart terminates through the listener identity when a wrapper leads the process group', async () => {
+  const killed = [];
+  const result = await stopStackOwnedServerForRestart(
+    { pid: 1234, serverPort: 34567, stackName: 'watch-test', envPath: '/tmp/watch-test/env', label: 'server' },
+    {
+      isPidAliveImpl: () => true,
+      isPidOwnedByStackImpl: async () => true,
+      listListenPidsImpl: async () => [2222],
+      getProcessGroupIdImpl: async (candidate) => {
+        if (Number(candidate) === 1234 || Number(candidate) === 2222) return 7000;
+        return Number(candidate);
+      },
+      killProcessGroupOwnedByStackImpl: async (pid) => {
+        killed.push(Number(pid));
+        return { killed: Number(pid) === 2222 };
+      },
+      waitForTcpPortFreeImpl: async () => ({ status: 'free' }),
+    },
+  );
+
+  assert.deepEqual(killed, [2222]);
+  assert.deepEqual(result, { stopped: true, pid: 1234 });
 });
 
 test('stopStackOwnedServerForRestart repairs stale stack-owned listeners before waiting for port release', async () => {

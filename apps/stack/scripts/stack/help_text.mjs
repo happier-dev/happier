@@ -17,7 +17,7 @@ const STACK_HELP_USAGE_LINES = [
   'hstack stack dev <name> [-- ...]',
   'hstack stack start <name> [-- ...]',
   'hstack stack build <name> [-- ...]',
-  'hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json]',
+  'hstack stack runtime <name> activate [--web|--server|--daemon|--all] [--json] | select [--json]',
   'hstack stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--json]',
   'hstack stack typecheck <name> [component...] [--json]',
   'hstack stack lint <name> [component...] [--json]',

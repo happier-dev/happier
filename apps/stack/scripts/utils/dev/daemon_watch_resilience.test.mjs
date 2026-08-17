@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -12,16 +12,18 @@ import {
 import { createDevServerReloadDescriptors } from './server.mjs';
 import cliDistBuildManifest from '../cli/cliDistBuildManifestLoader.mjs';
 
-function writeDistBuildManifestForTest(distIndexPath) {
+function writeDistBuildManifestForTest(distIndexPath, options = {}) {
   return cliDistBuildManifest.writeCliDistBuildManifest(distIndexPath, {
     outputDir: dirname(distIndexPath),
     builtAt: '2026-07-09T00:00:00.000Z',
+    ...options,
   });
 }
 
 test('CLI reload descriptors own source inputs and exclude generated refresh outputs', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-cli-inputs-'));
-  t.after(async () => rm(root, { recursive: true, force: true }));
+  const lexicalRoot = await mkdtemp(join(tmpdir(), 'hs-daemon-cli-inputs-'));
+  const root = await realpath(lexicalRoot);
+  t.after(async () => rm(lexicalRoot, { recursive: true, force: true }));
 
   const cliDir = join(root, 'apps', 'cli');
   const runtimePackages = [
@@ -108,7 +110,66 @@ test('CLI reload descriptors own source inputs and exclude generated refresh out
   assert.equal(descriptors.find((descriptor) => descriptor.id === 'shared:agents')?.target, 'daemon');
   assert.equal(serverDescriptors.find((descriptor) => descriptor.id === 'shared:agents')?.target, 'shared');
   assert.equal(serverDescriptors.some((descriptor) => descriptor.id === 'shared:plugin-sdk'), false);
-  assert.ok(!paths.some((path) => path.includes('/dist') || path.includes('/node_modules')));
+  assert.deepEqual(
+    descriptors.find((descriptor) => descriptor.id === 'daemon:cli-publication')?.paths,
+    [join(cliDir, 'dist', '.build-manifest.json')],
+  );
+  assert.ok(!paths.some((path) => path.includes('/node_modules')));
+  assert.ok(!paths.some((path) => path.includes('/dist') && !path.endsWith('/dist/.build-manifest.json')));
+});
+
+test('reload executor immediately adopts an external superseded CLI publication before requesting the trailing build', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-external-publication-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const cliDir = join(root, 'apps', 'cli');
+  const distIndexPath = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndexPath), { recursive: true });
+  await writeFile(distIndexPath, 'export const daemon = true;\n', 'utf-8');
+  const publishedInputFingerprint = 'a'.repeat(64);
+  const currentInputFingerprint = 'b'.repeat(64);
+  writeDistBuildManifestForTest(distIndexPath, {
+    inputFingerprint: publishedInputFingerprint,
+  });
+
+  let ensureBuildCalls = 0;
+  let runtimeProbeCalls = 0;
+  const executor = createHappyCliReloadExecutor(
+    {
+      startDaemon: true,
+      buildCli: true,
+      cliDir,
+      cliBin: join(cliDir, 'bin', 'happier.mjs'),
+      cliHomeDir: join(root, 'home'),
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+      stackName: 'dev',
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        ensureBuildCalls += 1;
+        return { built: true, current: true, reason: 'unexpected' };
+      },
+      readCliRuntimeInputFreshnessImpl: async () => ({
+        fingerprint: currentInputFingerprint,
+        newestMtimeNs: 2n,
+      }),
+      probeCliDistRuntimeImportImpl: async () => {
+        runtimeProbeCalls += 1;
+      },
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.deepEqual(await executor.build({
+    changedDescriptors: ['daemon:cli-publication'],
+  }), {
+    ok: true,
+    allowSupersededActivation: true,
+    requestFollowup: true,
+  });
+  assert.equal(ensureBuildCalls, 0);
+  assert.equal(runtimeProbeCalls, 1);
 });
 
 test('reload executor rejects bare dist entrypoint without build manifest', async () => {
@@ -346,6 +407,77 @@ test('reload executor skips replacement when the CLI build result is not current
     reason: 'cli-build-mode_never',
   });
   assert.equal(restartCalls, 0);
+});
+
+test('reload executor coalesces consecutive current and superseded generations already active in the healthy daemon', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-reload-same-dist-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const cliDir = join(root, 'apps', 'cli');
+  const distIndexPath = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndexPath), { recursive: true });
+  await writeFile(distIndexPath, 'export const daemon = true;\n', 'utf-8');
+  const { manifest } = writeDistBuildManifestForTest(distIndexPath);
+
+  const buildResults = [
+    { built: false, current: true, reason: 'cache_hit' },
+    { built: true, current: false, reason: 'inputs_changed_during_build' },
+    { built: false, current: true, reason: 'cache_hit' },
+  ];
+  const runtimeState = {
+    processes: { daemonPid: 111, daemonPids: [111] },
+    daemon: { distClosureFingerprint: manifest.fingerprint },
+  };
+  let pingPid = 111;
+  let restartCalls = 0;
+  const executor = createHappyCliReloadExecutor(
+    {
+      startDaemon: true,
+      buildCli: true,
+      cliDir,
+      cliBin: join(cliDir, 'bin', 'happier.mjs'),
+      cliHomeDir: join(root, 'home'),
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      runtimeStatePath: join(root, 'stack.runtime.json'),
+      isShuttingDown: () => false,
+      stackName: 'dev',
+    },
+    {
+      ensureCliBuiltImpl: async () => buildResults.shift(),
+      pingDaemonImpl: async () => ({
+        ok: true,
+        pid: pingPid,
+        distClosureFingerprint: manifest.fingerprint,
+      }),
+      readStackRuntimeStateFileImpl: async () => runtimeState,
+      restartDaemonViaControlServerImpl: async () => {
+        restartCalls += 1;
+        return { status: 'already_restarting', previousPid: 111, pid: 222 };
+      },
+      syncStackRuntimeDaemonPidFromDaemonStateImpl: async () => {},
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.deepEqual(await executor.build(), { ok: true });
+  assert.deepEqual(
+    await executor.restart({ revalidateGeneration: async () => true }),
+    { skipped: true, reason: 'daemon-dist-already-active' },
+  );
+  assert.deepEqual(await executor.build(), {
+    ok: true,
+    allowSupersededActivation: true,
+  });
+  assert.deepEqual(
+    await executor.restart({ revalidateGeneration: async () => false }),
+    { skipped: true, reason: 'daemon-dist-already-active' },
+  );
+  assert.equal(restartCalls, 0, 'same-fingerprint generations must not request a replacement daemon');
+
+  pingPid = 222;
+  assert.deepEqual(await executor.build(), { ok: true });
+  assert.deepEqual(await executor.restart(), { restarted: true, mode: 'overlap' });
+  assert.equal(restartCalls, 1, 'an unprojected same-fingerprint activation must remain unresolved');
 });
 
 test('reload executor retries lock contention and activates the concurrently published CLI build even after newer edits', async (t) => {
@@ -644,6 +776,59 @@ test('reload executor carries the admitted dist fingerprint through overlap conf
     pid: 222,
     distClosureFingerprint: manifest.fingerprint,
   });
+});
+
+test('reload executor retries before daemon mutation when the admitted workspace runtime publication was superseded', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-reload-workspace-runtime-race-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+  const cliDir = join(root, 'apps', 'cli');
+  const distIndexPath = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(dirname(distIndexPath), { recursive: true });
+  await writeFile(distIndexPath, 'export const daemon = true;\n', 'utf-8');
+  writeDistBuildManifestForTest(distIndexPath, {
+    workspaceRuntimeIdentity: 'a'.repeat(64),
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let restartCalls = 0;
+  const executor = createHappyCliReloadExecutor(
+    {
+      startDaemon: true,
+      buildCli: true,
+      cliDir,
+      cliBin: join(cliDir, 'bin', 'happier.mjs'),
+      cliHomeDir: join(root, 'home'),
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+      stackName: 'dev',
+    },
+    {
+      ensureCliBuiltImpl: async () => ({ built: true, current: true, reason: 'test' }),
+      readCliWorkspaceRuntimeIdentityImpl: () => ({
+        fingerprint: 'b'.repeat(64),
+        packageCount: 1,
+        packageNames: ['@happier-dev/protocol'],
+      }),
+      pingDaemonImpl: async () => ({ ok: true, pid: 111 }),
+      restartDaemonViaControlServerImpl: async () => {
+        restartCalls += 1;
+        return { status: 'restarting', previousPid: 111, pid: 222 };
+      },
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  await executor.build();
+  await assert.rejects(
+    () => executor.restart(),
+    (error) => (
+      error?.code === 'ECLIWORKSPACERUNTIMEADVANCED'
+      && error?.reloadRetryAfterMs === 250
+      && /changed before daemon activation/.test(error.message)
+    ),
+  );
+  assert.equal(restartCalls, 0);
 });
 
 test('reload executor does not project runtime state when fingerprint confirmation fails', async (t) => {

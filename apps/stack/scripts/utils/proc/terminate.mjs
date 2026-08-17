@@ -1,6 +1,6 @@
 import { isPidAlive } from './pids.mjs';
 import { spawn } from 'node:child_process';
-import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 function resolveProcessBoundary(boundary = {}) {
   return {

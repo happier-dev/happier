@@ -12,11 +12,16 @@ export async function cmdService({ rootDir, stackName, svcCmd, args = [] }) {
   });
 }
 
-export async function cmdRuntime({ rootDir, stackName, args = [] }) {
+export async function cmdRuntime({ rootDir, stackName, runtimeCommand, args = [] }) {
+  const scriptName = runtimeCommand === 'select' ? 'runtime_select.mjs' : 'runtime_activate.mjs';
   await withStackEnv({
     stackName,
+    // Selecting an already-published snapshot must only update this consumer's
+    // runtime selection. Do not let generic command setup reconcile its daemon
+    // membership as an incidental write.
+    reconcileDaemonRuntimeState: runtimeCommand !== 'select',
     fn: async ({ env }) => {
-      await run(process.execPath, [join(rootDir, 'scripts', 'runtime_activate.mjs'), ...args], { cwd: rootDir, env });
+      await run(process.execPath, [join(rootDir, 'scripts', scriptName), ...args], { cwd: rootDir, env });
     },
   });
 }

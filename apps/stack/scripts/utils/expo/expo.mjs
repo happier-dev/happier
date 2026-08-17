@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { isPidAlive } from '../proc/pids.mjs';
 import { isTcpPortFree, listListenPids } from '../net/ports.mjs';
 import { runCapture } from '../proc/proc.mjs';
@@ -91,6 +92,7 @@ export async function waitForExpoMetroRunning(
     timeoutMs = null,
     intervalMs = null,
     env = process.env,
+    signal = null,
   } = {},
   {
     looksLikeExpoMetroImpl = looksLikeExpoMetro,
@@ -114,15 +116,33 @@ export async function waitForExpoMetroRunning(
   const startMs = nowMsImpl();
   let probes = 0;
   while (nowMsImpl() - startMs <= resolvedTimeoutMs) {
+    if (signal?.aborted) {
+      return { ok: false, reason: 'aborted', probes };
+    }
     // eslint-disable-next-line no-await-in-loop
     const ok = await looksLikeExpoMetroImpl({ port: p });
     probes += 1;
     if (ok) {
       return { ok: true, probes };
     }
-    // eslint-disable-next-line no-await-in-loop
-    await delayImpl(resolvedIntervalMs);
+    if (signal?.aborted) {
+      return { ok: false, reason: 'aborted', probes };
+    }
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await delayImpl(
+        resolvedIntervalMs,
+        undefined,
+        signal ? { signal } : undefined,
+      );
+    } catch (error) {
+      if (signal?.aborted) {
+        return { ok: false, reason: 'aborted', probes };
+      }
+      throw error;
+    }
   }
+  if (signal?.aborted) return { ok: false, reason: 'aborted', probes };
   return { ok: false, reason: 'timeout', probes };
 }
 

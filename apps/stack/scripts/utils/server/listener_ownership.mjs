@@ -39,7 +39,7 @@ export function createListenerOwnershipObservationScope({
   totalTimeoutMs = 750,
   // The scope deadline remains authoritative; this only avoids repeatedly aborting a loaded lsof at 250ms.
   attemptTimeoutMs = DEFAULT_LISTENER_DISCOVERY_ATTEMPT_TIMEOUT_MS,
-  processGroupAttemptTimeoutMs = DEFAULT_LISTENER_DISCOVERY_ATTEMPT_TIMEOUT_MS,
+  processGroupAttemptTimeoutMs = Number.POSITIVE_INFINITY,
   retryDelayMs = 25,
   retryInconclusive = true,
   listListenPidsImpl,
@@ -66,6 +66,7 @@ export function createListenerOwnershipObservationScope({
       attemptTimeoutCapMs = attemptTimeoutMs,
       attemptTimeoutMsForObservation = attemptTimeoutMs,
       observationTimeoutMs = Number.POSITIVE_INFINITY,
+      retryEmptyPidsForObservation = false,
     } = {},
   ) => {
     const observationDeadline = Math.min(
@@ -105,11 +106,11 @@ export function createListenerOwnershipObservationScope({
       ]);
       attempted = true;
       clearTimeout(timer);
-      if (
-        last?.status === 'ok'
-        || last?.status === 'unsupported'
-        || !retryInconclusiveForObservation
-      ) return last;
+      if (last?.status === 'ok') {
+        const hasListenerPid = Array.isArray(last?.pids) && last.pids.length > 0;
+        if (!retryEmptyPidsForObservation || hasListenerPid) return last;
+      }
+      if (last?.status === 'unsupported' || !retryInconclusiveForObservation) return last;
       const remaining = observationRemainingMs();
       if (remaining <= 0) break;
       const pauseMs = Math.min(remaining, Math.max(0, Number(retryDelayMs) || 0));
@@ -129,25 +130,26 @@ export function createListenerOwnershipObservationScope({
   return {
     resolvePidStackOwnershipImpl,
     remainingMs,
-    observe(port, observationOptions = {}) {
+    observe(port, observationOptions = {}, { requireListener = false } = {}) {
       const serverPort = Number(port);
       const candidatePids = Array.from(new Set(
         (Array.isArray(observationOptions?.candidatePids) ? observationOptions.candidatePids : [])
           .map((pid) => Number(pid))
           .filter((pid) => Number.isInteger(pid) && pid > 1),
       )).sort((a, b) => a - b);
-      const key = candidatePids.length > 0
+      const baseKey = candidatePids.length > 0
         ? `pids:${candidatePids.join(',')}:port:${serverPort}`
         : serverPort;
+      const key = requireListener ? `${baseKey}:listener-required` : baseKey;
       if (!observations.has(key)) {
         observations.set(key, observeFresh(serverPort, {
           ...observationOptions,
           ...(candidatePids.length > 0 ? { candidatePids } : {}),
-        }));
+        }, { retryEmptyPidsForObservation: requireListener }));
       }
       return observations.get(key);
     },
-    observeProcessGroup(port, processGroupId) {
+    observeProcessGroup(port, processGroupId, { requireListener = false } = {}) {
       const pgid = Number(processGroupId);
       if (!supportsProcessGroupFilter || !Number.isInteger(pgid) || pgid <= 1) {
         return Promise.resolve({
@@ -157,12 +159,13 @@ export function createListenerOwnershipObservationScope({
           reason: 'process-group-listener-discovery-unsupported',
         });
       }
-      const key = `pgid:${pgid}:port:${Number(port)}`;
+      const baseKey = `pgid:${pgid}:port:${Number(port)}`;
+      const key = requireListener ? `${baseKey}:listener-required` : baseKey;
       if (!observations.has(key)) {
         // Prefer the strongest positive proof while reserving the final third
-        // of the command scope for broad listener evidence. A one-second
-        // attempt matches the underlying listener command's normal budget and
-        // avoids rejecting a just-ready server after one 250ms lsof timeout.
+        // of the command scope for broad listener evidence. By default, one
+        // in-flight discovery can consume that reserved subdeadline; callers
+        // can inject a smaller cap when retries are preferable.
         const observationTimeoutMs = Math.max(1, Math.floor((remainingMs() * 2) / 3));
         const attemptTimeoutCapMs = Math.max(1, Math.min(
           Math.max(1, Number(processGroupAttemptTimeoutMs) || 1),
@@ -176,6 +179,7 @@ export function createListenerOwnershipObservationScope({
             attemptTimeoutCapMs,
             attemptTimeoutMsForObservation: attemptTimeoutCapMs,
             observationTimeoutMs,
+            retryEmptyPidsForObservation: requireListener,
           },
         ));
       }
@@ -297,7 +301,7 @@ export async function resolveSpawnedProcessGroupListenPid(
     const pgid = Number(processGroupId);
     if (!Number.isInteger(pgid) || pgid <= 1 || attemptedProcessGroups.has(pgid)) return null;
     attemptedProcessGroups.add(pgid);
-    const result = await scope.observeProcessGroup(serverPort, pgid);
+    const result = await scope.observeProcessGroup(serverPort, pgid, { requireListener: true });
     return result.status === 'ok' && result.pids.length > 0 ? Number(result.pids[0]) : null;
   };
 
@@ -312,7 +316,7 @@ export async function resolveSpawnedProcessGroupListenPid(
     if (processGroupListenerPid) return processGroupListenerPid;
   }
 
-  const listenResult = await scope.observe(serverPort);
+  const listenResult = await scope.observe(serverPort, {}, { requireListener: true });
   if (listenResult.status !== 'ok') {
     const error = new Error(
       `[local] server readiness ownership could not be proven on port ${serverPort}: ` +

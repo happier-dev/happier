@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readlink, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -79,6 +79,33 @@ test('CLI runtime input identity changes after a same-size rewrite with restored
   const after = await readHappyCliRuntimeInputFreshness(cliDir);
 
   assert.notEqual(after.fingerprint, before.fingerprint);
+});
+
+test('CLI runtime input identity ignores an identical rewrite with different filesystem metadata', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-input-identical-rewrite-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  const inputPath = join(cliDir, 'src', 'generated.ts');
+  await mkdir(dirname(inputPath), { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: {},
+  }), 'utf-8');
+  const content = 'export const generated = true;\n';
+  await writeFile(inputPath, content, 'utf-8');
+
+  const beforeStat = await stat(inputPath, { bigint: true });
+  const before = await readHappyCliRuntimeInputFreshness(cliDir);
+  await writeFile(inputPath, content, 'utf-8');
+  const afterStat = await stat(inputPath, { bigint: true });
+  const after = await readHappyCliRuntimeInputFreshness(cliDir);
+
+  assert.notEqual(afterStat.ctimeNs, beforeStat.ctimeNs);
+  assert.equal(after.fingerprint, before.fingerprint);
 });
 
 test('CLI runtime input identity ignores directory timestamp churn without hiding tree membership changes', async (t) => {
@@ -247,6 +274,7 @@ async function writeSlowYarnArgDumpStub({ binDir, outputPath }) {
       '    printf "%s\\n" "${HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD:-}" > "$LOCK_OUTPUT_PATH"',
       '  fi',
       '  sleep 0.25',
+      '  mkdir -p node_modules',
       'fi',
     ].join('\n') + '\n',
     'utf-8',
@@ -348,7 +376,7 @@ async function writeYarnCanonicalCliInputChangeStub({ binDir, outputPath }) {
     [
       '#!/usr/bin/env node',
       "const { appendFileSync, mkdirSync, rmSync, writeFileSync } = require('node:fs');",
-      "const { join } = require('node:path');",
+      "const { dirname, join } = require('node:path');",
       'const [command] = process.argv.slice(2);',
       'if (command === "--version") {',
       '  console.log("1.22.22");',
@@ -362,6 +390,8 @@ async function writeYarnCanonicalCliInputChangeStub({ binDir, outputPath }) {
       '  if (!/^[a-f0-9]{64}$/.test(admittedFingerprint ?? "")) {',
       '    throw new Error("missing admitted CLI input fingerprint");',
       '  }',
+      '  mkdirSync(join(process.cwd(), "src"), { recursive: true });',
+      '  writeFileSync(join(process.cwd(), "src", "generated.ts"), "export const generated = true;\\n", "utf8");',
       '  try {',
       '    await buildCliDist({',
       '      packageRoot: process.cwd(),',
@@ -370,15 +400,11 @@ async function writeYarnCanonicalCliInputChangeStub({ binDir, outputPath }) {
       '      env: process.env,',
       '      resolveTypeScriptCliInvocationImpl: () => ({ argsPrefix: ["/canonical/runTypeScriptCli.mjs"] }),',
       '      runTypecheckImpl: () => {},',
-      '      runPkgrollBuildImpl: ({ outputDir }) => {',
-      '        const stageDir = join(process.cwd(), outputDir);',
+      '      runPkgrollBuildImpl: ({ outputDir, packageJsonPath }) => {',
+      '        const stageDir = join(dirname(packageJsonPath), outputDir);',
       '        mkdirSync(stageDir, { recursive: true });',
       '        writeFileSync(join(stageDir, "index.mjs"), "export const mixed = true;\\n", "utf8");',
       '      },',
-      '      readRuntimeInputFreshnessImpl: async () => ({',
-      '        fingerprint: "f".repeat(64),',
-      '        newestMtimeNs: 1n,',
-      '      }),',
       '    });',
       '  } catch (error) {',
       '    const message = error instanceof Error ? error.message : String(error);',
@@ -499,33 +525,51 @@ async function writeYarnBuildCreatesPartialDistWithMissingChunkStub({ binDir, ou
 
 async function writeYarnBuildRefreshesAgentsAndPreservesCliDistStub({ binDir, outputPath, agentsDir }) {
   await mkdir(binDir, { recursive: true });
-  const yarnPath = join(binDir, 'yarn');
+  const stubPath = join(binDir, 'yarn-stub.cjs');
   await writeFile(
-    yarnPath,
+    stubPath,
     [
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      'echo "$*" >> "${OUTPUT_PATH:?}"',
-      'if [ "${1:-}" = "--version" ]; then',
-      '  echo "1.22.22"',
-      '  exit 0',
-      'fi',
-      'if [ "${1:-}" = "-s" ] && [ "${2:-}" = "build" ]; then',
-      `  out="\${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-${join(agentsDir, 'dist')}}"`,
-      '  mkdir -p "$out/session/state"',
-      '  echo "export const state = true;" > "$out/session/state/index.js"',
-      '  echo "export const agentsBuilt = true;" > "$out/index.js"',
-      '  exit 0',
-      'fi',
-      'if [ "${1:-}" = "build" ]; then',
-      ...fakeAtomicCliDistBuildLines([
-        '  echo "export const cliBuilt = true;" > "$out/index.mjs"',
-      ]),
-      '  exit 0',
-      'fi',
-      'exit 0',
+      "const { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'const args = process.argv.slice(2);',
+      "appendFileSync(process.env.OUTPUT_PATH, args.join(' ') + '\\n');",
+      "if (args[0] === '--version') { console.log('1.22.22'); process.exit(0); }",
+      "if (args[0] === '-s' && args[1] === 'build') {",
+      `  const out = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR || ${JSON.stringify(join(agentsDir, 'dist'))};`,
+      "  mkdirSync(join(out, 'session', 'state'), { recursive: true });",
+      "  writeFileSync(join(out, 'session', 'state', 'index.js'), 'export const state = true;\\n');",
+      "  writeFileSync(join(out, 'index.js'), 'export const agentsBuilt = true;\\n');",
+      '  process.exit(0);',
+      '}',
+      "if (args[0] === 'build') {",
+      "  const out = process.env.HAPPIER_CLI_BUILD_OUTPUT_DIR || `dist.staging.${process.pid}`;",
+      "  const backup = `dist.__fake_backup__.${process.pid}`;",
+      '  rmSync(out, { recursive: true, force: true });',
+      '  rmSync(backup, { recursive: true, force: true });',
+      '  mkdirSync(out, { recursive: true });',
+      "  writeFileSync(join(out, 'index.mjs'), 'export const cliBuilt = true;\\n');",
+      '  const manifest = require(process.env.HAPPIER_TEST_CLI_DIST_MANIFEST_MODULE);',
+      "  manifest.writeCliDistBuildManifest(join(out, 'index.mjs'), {",
+      '    outputDir: out,',
+      "    builtAt: '2026-07-09T00:00:00.000Z',",
+      '    ...(process.env.HAPPIER_CLI_BUILD_INPUT_FINGERPRINT',
+      '      ? { inputFingerprint: process.env.HAPPIER_CLI_BUILD_INPUT_FINGERPRINT }',
+      '      : {}),',
+      '  });',
+      "  if (existsSync('dist')) renameSync('dist', backup);",
+      "  renameSync(out, 'dist');",
+      '  rmSync(backup, { recursive: true, force: true });',
+      '}',
     ].join('\n') + '\n',
     'utf-8'
+  );
+  const yarnPath = join(binDir, process.platform === 'win32' ? 'yarn.cmd' : 'yarn');
+  await writeFile(
+    yarnPath,
+    process.platform === 'win32'
+      ? `@echo off\r\n"${process.execPath}" "%~dp0yarn-stub.cjs" %*\r\n`
+      : `#!/usr/bin/env sh\nexec ${JSON.stringify(process.execPath)} "$(dirname "$0")/yarn-stub.cjs" "$@"\n`,
+    'utf-8',
   );
   await chmod(yarnPath, 0o755);
   await writeFile(outputPath, '', 'utf-8');
@@ -604,9 +648,21 @@ function expectedCacheEnv({ envPath }) {
   };
 }
 
+function withoutInheritedPackageManagerHints(env) {
+  const isolatedEnv = { ...env };
+  delete isolatedEnv.npm_execpath;
+  delete isolatedEnv.npm_config_user_agent;
+  return isolatedEnv;
+}
+
 function applyEnvOverrides(t, vars) {
+  const isolatedVars = {
+    npm_execpath: null,
+    npm_config_user_agent: null,
+    ...vars,
+  };
   const previous = {};
-  for (const key of Object.keys(vars)) {
+  for (const key of Object.keys(isolatedVars)) {
     previous[key] = process.env[key];
   }
   t.after(() => {
@@ -615,7 +671,7 @@ function applyEnvOverrides(t, vars) {
       else process.env[key] = value;
     }
   });
-  for (const [key, value] of Object.entries(vars)) {
+  for (const [key, value] of Object.entries(isolatedVars)) {
     if (value == null) delete process.env[key];
     else process.env[key] = String(value);
   }
@@ -711,6 +767,55 @@ test('ensureDepsInstalled skips dependency refresh when explicitly disabled in l
   assert.ok(!out.includes('install'), `expected no yarn install when refresh is disabled, got:\n${out}`);
 });
 
+test('ensureDepsInstalled explicitly suppresses refresh of an existing dependency tree', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-existing-tree-no-refresh-');
+  const { root, envPath, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'argv.txt');
+
+  await writeYarnArgDumpStub({ binDir, outputPath });
+  await mkdir(join(componentDir, 'node_modules'), { recursive: true });
+  await writeFile(join(componentDir, 'node_modules', '.yarn-integrity'), 'old\n', 'utf-8');
+  await writeFile(join(componentDir, 'yarn.lock'), '# changed lock\n', 'utf-8');
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: envPath,
+    HAPPIER_STACK_HOME_DIR: join(root, 'hstack-home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: null,
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', {
+    quiet: true,
+    env: process.env,
+    refreshExisting: false,
+  });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.ok(!out.includes('install'), `expected the existing dependency tree to be reused, got:\n${out}`);
+});
+
+test('ensureDepsInstalled still installs a missing dependency tree when existing refresh is suppressed', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-missing-tree-no-refresh-');
+  const { root, envPath, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'argv.txt');
+
+  await writeYarnArgDumpStub({ binDir, outputPath });
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: envPath,
+    HAPPIER_STACK_HOME_DIR: join(root, 'hstack-home'),
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', {
+    quiet: true,
+    env: process.env,
+    refreshExisting: false,
+  });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.match(out, /^install\b/m);
+});
+
 test('ensureDepsInstalled scrubs production-mode env for yarn installs', async (t) => {
   const fixture = await createStackCacheFixture(t, 'hs-pm-stack-cache-prod-scrub-');
   const { root, envPath, componentDir, binDir } = fixture;
@@ -800,6 +905,45 @@ test('ensureDepsInstalled honors HAPPIER_STACK_PM_CACHE_BASE_DIR when no stack e
   assert.equal(parsed.YARN_CACHE_FOLDER, join(cacheBase, 'yarn'));
   assert.equal(parsed.npm_config_cache, join(cacheBase, 'npm'));
   assert.equal(parsed.HOME, join(cacheBase, 'home'));
+});
+
+test('stack package-manager preparation preserves installed bin symlinks for live file crawlers', async (t) => {
+  const fixture = await createStackCacheFixture(t, 'hs-pm-isolated-workspace-tools-');
+  const { root, envPath, componentDir, binDir } = fixture;
+  const outputPath = join(root, 'argv.txt');
+  const eslintDir = join(componentDir, 'node_modules', 'eslint');
+  const installedBinDir = join(componentDir, 'node_modules', '.bin');
+  const installedBinPath = join(installedBinDir, 'eslint');
+
+  await writeYarnArgDumpStub({ binDir, outputPath });
+  await mkdir(join(eslintDir, 'bin'), { recursive: true });
+  await mkdir(installedBinDir, { recursive: true });
+  await writeFile(join(componentDir, 'package.json'), JSON.stringify({
+    private: true,
+    devDependencies: { eslint: '1.0.0' },
+  }) + '\n', 'utf-8');
+  await writeFile(join(eslintDir, 'package.json'), JSON.stringify({
+    name: 'eslint',
+    version: '1.0.0',
+    bin: { eslint: './bin/eslint.js' },
+  }) + '\n', 'utf-8');
+  await writeFile(join(eslintDir, 'bin', 'eslint.js'), '#!/usr/bin/env node\n', 'utf-8');
+  await symlink('../eslint/bin/eslint.js', installedBinPath);
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: envPath,
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+  });
+
+  await ensureDepsInstalled(componentDir, 'test-component', { quiet: true, env: process.env });
+
+  assert.equal(await readlink(installedBinPath), '../eslint/bin/eslint.js');
+  assert.match(
+    await readFile(join(componentDir, '.project', 'tmp', 'workspace-tool-bins', 'eslint'), 'utf-8'),
+    /eslint[\\/]bin[\\/]eslint\.js/,
+  );
 });
 
 test('ensureDepsInstalled prefers the .nvmrc node runtime for yarn shebangs when available', async (t) => {
@@ -954,6 +1098,18 @@ test('ensureDepsInstalled delegates Prisma output freshness to the server genera
     HAPPIER_STACK_ENV_FILE: null,
   });
 
+  await ensureDepsInstalled(componentDir, 'happier-server-light', {
+    quiet: true,
+    refreshExisting: false,
+    prepareComponentOutputs: false,
+  });
+  assert.doesNotMatch(
+    await readFile(outputPath, 'utf-8'),
+    /\bworkspace @happier-dev\/server generate:providers\b/,
+    'last-known-good admission must not gate startup on regenerated provider outputs',
+  );
+
+  await writeFile(outputPath, '', 'utf-8');
   await ensureDepsInstalled(componentDir, 'happier-server-light', { quiet: true });
   const out = await readFile(outputPath, 'utf-8');
   assert.match(out, /\bworkspace @happier-dev\/server generate:providers\b/, `expected provider generation, got:\n${out}`);
@@ -1232,13 +1388,13 @@ test('ensureDepsInstalled waits for the monorepo CLI bundle lock before deciding
   const outputPath = join(root, 'argv.txt');
   const heldLockOutputPath = join(root, 'held-cli-lock.txt');
   await writeSlowYarnArgDumpStub({ binDir, outputPath });
-  const env = {
+  const env = withoutInheritedPackageManagerHints({
     ...process.env,
     PATH: `${binDir}:/usr/bin:/bin`,
     OUTPUT_PATH: outputPath,
     LOCK_OUTPUT_PATH: heldLockOutputPath,
     HAPPIER_STACK_ENV_FILE: '',
-  };
+  });
 
   let releaseCliLock;
   const releaseCliLockPromise = new Promise((resolve) => {
@@ -1458,14 +1614,14 @@ test('ensureDepsInstalled uses Corepack Yarn when a global Yarn shim is unavaila
 
   await ensureDepsInstalled(componentDir, 'corepack-component', {
     quiet: true,
-    env: {
+    env: withoutInheritedPackageManagerHints({
       ...process.env,
       PATH: `${binDir}:/usr/bin:/bin`,
       OUTPUT_PATH: outputPath,
       HAPPIER_STACK_BINARY_MODE: '0',
       HAPPIER_STACK_ENV_FILE: '',
       HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
-    },
+    }),
   });
 
   assert.equal(await readFile(outputPath, 'utf-8'), 'yarn --version\n');
@@ -1485,14 +1641,14 @@ test('ensureDepsInstalled preserves a Windows-style Path key while preparing Cor
   const outputPath = join(root, 'argv.txt');
   await writeCorepackYarnArgDumpStub({ binDir, outputPath });
 
-  const env = {
+  const env = withoutInheritedPackageManagerHints({
     ...process.env,
     Path: `${binDir}:/usr/bin:/bin`,
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_BINARY_MODE: '0',
     HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
-  };
+  });
   delete env.PATH;
 
   await ensureDepsInstalled(componentDir, 'corepack-component', { quiet: true, env });
@@ -1797,7 +1953,7 @@ test('ensureCliBuilt serializes concurrent rebuilds so a fresh dist is built onc
   assert.equal(await readFile(distIndex, 'utf-8'), 'export const built = true;\n');
 });
 
-test('ensureCliBuilt consumes one concurrent atomic build when runtime inputs change during it', async (t) => {
+test('ensureCliBuilt rebuilds an atomic publication when runtime inputs changed during it', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-lock-always-dirty-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
@@ -1832,9 +1988,11 @@ test('ensureCliBuilt consumes one concurrent atomic build when runtime inputs ch
       '  exit 0',
       'fi',
       'if [ "${1:-}" = "build" ]; then',
+      '  tracked="$(tr -d \'\\n\' < src/tracked.txt)"',
+      '  echo "captured" >> "${OUTPUT_PATH:?}"',
       '  sleep 1',
       ...fakeAtomicCliDistBuildLines([
-        '  echo "export const built = true;" > "$out/index.mjs"',
+        '  printf \'export const tracked = "%s";\\n\' "$tracked" > "$out/index.mjs"',
       ]),
       '  exit 0',
       'fi',
@@ -1848,7 +2006,7 @@ test('ensureCliBuilt consumes one concurrent atomic build when runtime inputs ch
   applyEnvOverrides(t, {
     PATH: `${binDir}:/usr/bin:/bin`,
     OUTPUT_PATH: outputPath,
-    HAPPIER_STACK_CLI_BUILD_MODE: 'always',
+    HAPPIER_STACK_CLI_BUILD_MODE: 'auto',
     HAPPIER_STACK_HOME_DIR: join(root, 'home'),
     HAPPIER_STACK_ENV_FILE: null,
   });
@@ -1858,24 +2016,24 @@ test('ensureCliBuilt consumes one concurrent atomic build when runtime inputs ch
   await writeFile(distIndex, 'export const stable = true;\n', 'utf-8');
 
   const firstBuildPromise = ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
-  await waitForFileText(outputPath, /(^|\n)build(\n|$)/);
-  const secondBuildPromise = ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+  await waitForFileText(outputPath, /(^|\n)captured(\n|$)/);
   await writeFile(join(cliDir, 'src', 'tracked.txt'), 'changed during build\n', 'utf-8');
 
-  const [firstBuild, secondBuild] = await Promise.all([firstBuildPromise, secondBuildPromise]);
+  const firstBuild = await firstBuildPromise;
 
   assert.deepEqual(firstBuild, { built: true, current: false, reason: 'inputs_changed_during_build' });
-  assert.equal(secondBuild.built, false);
-  assert.match(secondBuild.reason, /^concurrent_build_(?:already_completed|superseded)$/);
-  assert.equal(secondBuild.current, secondBuild.reason === 'concurrent_build_already_completed');
+  assert.equal(await readFile(distIndex, 'utf-8'), 'export const tracked = "initial";\n');
+
+  const trailingBuild = await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+  assert.deepEqual(trailingBuild, { built: true, current: true, reason: 'changed' });
 
   const argv = await readFile(outputPath, 'utf-8');
   const buildInvocations = argv
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line === 'build');
-  assert.equal(buildInvocations.length, 1);
-  assert.equal(await readFile(distIndex, 'utf-8'), 'export const built = true;\n');
+  assert.equal(buildInvocations.length, 2);
+  assert.equal(await readFile(distIndex, 'utf-8'), 'export const tracked = "changed during build";\n');
 });
 
 test('ensureCliBuilt detects a runtime input changed during build when another input has a newer mtime', async (t) => {
@@ -1943,15 +2101,16 @@ test('ensureCliBuilt detects a runtime input changed during build when another i
   });
 });
 
-test('ensureCliBuilt restores a valid release backup after the canonical CLI builder rejects mixed inputs', async (t) => {
+test('ensureCliBuilt admits a canonical prebuild source publication without scheduling a duplicate build', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-interrupted-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
 
   const cliDir = join(root, 'apps', 'cli');
-  await mkdir(cliDir, { recursive: true });
+  await mkdir(join(cliDir, 'src'), { recursive: true });
   await writeFile(join(cliDir, 'package.json'), '{ "name": "cli-test" }\n', 'utf-8');
+  await writeFile(join(cliDir, 'src', 'index.ts'), 'export const initial = true;\n', 'utf-8');
   await writeFile(join(cliDir, 'yarn.lock'), '# yarn\n', 'utf-8');
   await mkdir(join(cliDir, 'node_modules'), { recursive: true });
   await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
@@ -1999,23 +2158,17 @@ test('ensureCliBuilt restores a valid release backup after the canonical CLI bui
     HAPPIER_STACK_ENV_FILE: null,
   });
 
-  await assert.rejects(
-    () => ensureCliBuilt(cliDir, { buildCli: true, quiet: true }),
-    /runtime inputs changed while package prebuild was preparing dependencies/i,
-  );
+  const result = await ensureCliBuilt(cliDir, { buildCli: true, quiet: true });
+  assert.deepEqual(result, { built: true, current: true, reason: 'mode_always' });
 
   const distIndex = join(cliDir, 'dist', 'index.mjs');
-  assert.equal(await readFile(distIndex, 'utf-8'), 'export const stable = true;\n');
-  const restoredManifest = JSON.parse(
-    await readFile(join(cliDir, 'dist', '.build-manifest.json'), 'utf-8'),
-  );
-  assert.equal(restoredManifest.fingerprint, priorManifest.fingerprint);
+  assert.equal(await readFile(distIndex, 'utf-8'), 'export const mixed = true;\n');
   const argv = await readFile(outputPath, 'utf-8');
   assert.match(argv, /(^|\n)build(\n|$)/);
   await assert.rejects(() => stat(distBackupDir));
   const selectedSnapshot = resolveValidRuntimeSnapshot(cliDir, 'index.mjs');
   assert.equal(selectedSnapshot?.outputDir, join(cliDir, 'dist'));
-  assert.equal(selectedSnapshot?.manifest.fingerprint, priorManifest.fingerprint);
+  assert.notEqual(selectedSnapshot?.manifest.fingerprint, priorManifest.fingerprint);
   assert.notEqual(selectedSnapshot?.manifest.fingerprint, packageDistManifest.fingerprint);
 });
 
@@ -2239,17 +2392,21 @@ test('ensureCliBuilt refreshes shared workspace deps before trusting a cached cl
   await writeYarnBuildRefreshesAgentsAndPreservesCliDistStub({ binDir, outputPath, agentsDir });
 
   applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
+    PATH: [binDir, process.env.PATH].filter(Boolean).join(delimiter),
     OUTPUT_PATH: outputPath,
     HAPPIER_STACK_CLI_BUILD_MODE: 'auto',
     HAPPIER_STACK_ENV_FILE: null,
+    HAPPIER_TEST_CLI_DIST_MANIFEST_MODULE: CLI_DIST_BUILD_MANIFEST_MODULE_PATH,
   });
 
-  await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
+  const result = await ensureCliBuilt(cliDir, { buildCli: true, quiet: true, env: process.env });
 
   const argv = await readFile(outputPath, 'utf-8');
   assert.match(argv, /-s build/);
+  assert.match(argv, /(^|\n)build(\n|$)/);
+  assert.deepEqual(result, { built: true, current: true, reason: 'changed' });
   assert.equal(await readFile(join(agentsDir, 'dist', 'session', 'state', 'index.js'), 'utf-8'), 'export const state = true;\n');
+  assert.equal(await readFile(join(cliDir, 'dist', 'index.mjs'), 'utf-8'), 'export const cliBuilt = true;\n');
   assert.equal(
     await readFile(join(bundledAgentsDir, 'dist', 'index.js'), 'utf-8'),
     'export const agentsBuilt = true;\n',

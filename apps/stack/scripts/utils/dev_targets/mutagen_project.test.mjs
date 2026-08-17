@@ -131,6 +131,26 @@ test('renderMutagenProject creates one-way source replicas while retaining targe
   assert.doesNotMatch(rendered, /beforeCreate|afterCreate|beforeTerminate|afterTerminate/);
 });
 
+test('renderMutagenProject re-includes tracked source coverage without unignoring generated coverage', () => {
+  const rendered = renderMutagenProject({
+    sourceDir: '/Users/dev/happier',
+    targets,
+  });
+
+  assert.deepEqual(
+    rendered
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.includes('coverage')),
+    [
+      '- "coverage"',
+      '- "!packages/triage-qa/src/coverage"',
+      '- "!packages/triage-qa/src/coverage/**"',
+    ],
+    'the generic generated-coverage ignore must precede the tracked source exception',
+  );
+});
+
 test('buildMutagenProjectArgs isolates global configuration and addresses the generated project explicitly', () => {
   assert.deepEqual(buildMutagenProjectArgs('start', '/tmp/stack/mutagen.yml'), [
     'project',

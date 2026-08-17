@@ -29,9 +29,16 @@ test('native launcher bypasses Node when no repository target configuration can 
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-local-'));
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
+  const tokenToolMarker = join(root, 'token-tool-called');
   await mkdir(binDir, { recursive: true });
   await mkdir(storageDir, { recursive: true });
   await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  for (const command of ['dirname', 'basename', 'tr', 'sed']) {
+    await executable(
+      join(binDir, command),
+      `#!/bin/sh\nprintf '%s\\n' ${command} >> "${tokenToolMarker}"\nexec /usr/bin/${command} "$@"\n`,
+    );
+  }
   await executable(join(binDir, 'probe-command'), '#!/bin/sh\nprintf "direct:%s\\n" "$1"\n');
 
   const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
@@ -47,6 +54,7 @@ test('native launcher bypasses Node when no repository target configuration can 
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'direct:ok\n');
+  await assert.rejects(readFile(tokenToolMarker), { code: 'ENOENT' });
 });
 
 test('automatic local execution does not pin descendant commands to the local host', async () => {
@@ -128,6 +136,38 @@ test('native launcher uses Node once to publish a stale validated projection, th
   );
 });
 
+test('native launcher refreshes an explicit stale projection instead of silently falling back locally', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-explicit-stale-'));
+  const binDir = join(root, 'bin');
+  const stackDir = join(root, 'stack');
+  const configPath = join(stackDir, 'dev-targets.json');
+  const projectionPath = join(stackDir, 'dev-target-exec-v1.sh');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(configPath, '{"version":1,"targets":[]}\n', 'utf8');
+  await writeFile(projectionPath, [
+    "HSTACK_EXEC_PROJECTION_VERSION='1'",
+    `projection_repo_root='${repoRoot}'`,
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), `#!/bin/sh\nexec ${process.execPath} "$@"\n`);
+
+  const result = spawnSync('/bin/sh', [launcher, '--', '/usr/bin/true'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_EXEC_CONFIG_PATH: configPath,
+      HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'),
+      PATH: `${binDir}:/usr/bin:/bin`,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(await readFile(projectionPath, 'utf8'), /^HSTACK_EXEC_PROJECTION_VERSION='2'$/m);
+});
+
 test('native launcher preserves the canonical repository cwd boundary', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-cwd-'));
   const binDir = join(root, 'bin');
@@ -167,7 +207,7 @@ test('native launcher ignores an inherited local preference and dispatches to th
   );
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='1'",
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
     "command_mode='auto'",
     "include_local='0'",
@@ -230,7 +270,7 @@ test('native launcher retries another target when the selected host is unreachab
   await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='1'",
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
     "command_mode='auto'",
     "include_local='0'",
@@ -300,7 +340,7 @@ test('native launcher accounts for an in-flight dispatch before routing another 
   await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='1'",
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
     "command_mode='auto'",
     "include_local='0'",
@@ -405,7 +445,7 @@ test('native launcher excludes a low-load target that cannot launch the requeste
   await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='1'",
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
     "command_mode='auto'",
     "include_local='0'",
@@ -460,6 +500,80 @@ test('native launcher excludes a low-load target that cannot launch the requeste
   assert.doesNotMatch(result.stdout, /mac2-host/);
 });
 
+test('native launcher bootstraps Yarn commands before dispatching them and leaves raw searches bootstrap-free', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-dependency-admission-'));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    "dependency_direct_commands='node npm npx pnpm tsc vitest yarn'",
+    "dependency_corepack_subcommands='npm pnpm yarn'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='mac2'",
+    "target_1_ssh='mac2-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 1 0.5\\n" ;;',
+    '  *command\\ -v*) exit 0 ;;',
+    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *remote_dependency_bootstrap.mjs*typecheck:local*) printf "typed-after-bootstrap:%s\\n" "$*" ;;',
+    '  *typecheck:local*) printf "typed-without-bootstrap\\n"; exit 42 ;;',
+    '  *remote_dependency_bootstrap.mjs*) printf "unexpected-bootstrap\\n"; exit 43 ;;',
+    '  *rg*) printf "raw-search:%s\\n" "$*" ;;',
+    '  *) printf "unexpected:%s\\n" "$*"; exit 44 ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  const env = {
+    ...executionNeutralEnv,
+    HOME: root,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    PATH: `${binDir}:/usr/bin:/bin`,
+    TMPDIR: root,
+  };
+
+  const typed = spawnSync('/bin/sh', [launcher, '--script=typecheck:local'], {
+    cwd: repoRoot,
+    env,
+    encoding: 'utf8',
+  });
+  assert.equal(typed.status, 0, typed.stderr);
+  assert.match(typed.stdout, /typed-after-bootstrap/);
+  assert.match(typed.stdout, /remote_dependency_bootstrap\.mjs/);
+  assert.match(typed.stdout, /HAPPIER_STACK_PM_CACHE_BASE_DIR.*remote\/home\/cache/);
+
+  const raw = spawnSync('/bin/sh', [launcher, '--', 'rg', '-n', 'needle'], {
+    cwd: repoRoot,
+    env,
+    encoding: 'utf8',
+  });
+  assert.equal(raw.status, 0, raw.stderr);
+  assert.match(raw.stdout, /raw-search/);
+  assert.doesNotMatch(raw.stdout, /remote_dependency_bootstrap\.mjs/);
+});
+
 test('native launcher cancellation verifies the recorded process identity before terminating it', async () => {
   const source = await readFile(launcher, 'utf8');
   assert.ok(source.includes('ps -p \\"\\$pid\\" -o command='));
@@ -475,7 +589,7 @@ test('native launcher executes locally when configured command targets are not P
   await mkdir(stackDir, { recursive: true });
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    "HSTACK_EXEC_PROJECTION_VERSION='1'",
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
     "command_mode='auto'",
     "include_local='0'",

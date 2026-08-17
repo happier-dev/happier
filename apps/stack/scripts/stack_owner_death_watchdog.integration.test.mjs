@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -66,6 +66,46 @@ test('stack owner-death watchdog spawn fails closed without owner startedAt', ()
   assert.equal(spawnStackOwnerDeathWatchdog(input), null);
   assert.equal(spawnStackOwnerDeathWatchdog({ ...input, ownerStartedAt: 'not-a-timestamp' }), null);
   assert.equal(spawnStackOwnerDeathWatchdog({ ...input, ownerStartedAt: '2026-07-17T08:04:00Z' }), null);
+});
+
+test('stack owner-death watchdog uses the shared bounded log owner', async (t) => {
+  const fixture = await setupStackStopSweepFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'hstack-owner-death-watchdog-bounded-log-',
+  });
+  const runtimeStatePath = join(fixture.baseDir, 'stack.runtime.json');
+  const watchdogLogPath = join(fixture.baseDir, 'logs', 'owner-death-watchdog.log');
+  const owner = fixture.trackChild(spawnOwnedSleep({ env: fixture.baseEnv }));
+  await waitForProcessAlive({ pid: owner.pid, timeoutMs: 2_000, intervalMs: 25, label: 'bounded-log owner' });
+  const runtime = await recordStackRuntimeStart(runtimeStatePath, {
+    stackName: fixture.stackName,
+    script: 'owner-watchdog-bounded-log-test',
+    ephemeral: true,
+    ownerPid: owner.pid,
+    processes: {},
+    ports: {},
+  });
+  await mkdir(join(fixture.baseDir, 'logs'), { recursive: true });
+  await writeFile(watchdogLogPath, 'legacy-watchdog-line\n'.repeat(80), 'utf8');
+
+  fixture.trackChild(spawnStackOwnerDeathWatchdog({
+    rootDir: fixture.rootDir,
+    stackName: fixture.stackName,
+    baseDir: fixture.baseDir,
+    envPath: fixture.envPath,
+    runtimeStatePath,
+    ownerPid: owner.pid,
+    ownerStartedAt: runtime.startedAt,
+    env: fixture.baseEnv,
+    pollMs: 25,
+    logFile: watchdogLogPath,
+    logMaxBytes: 256,
+  }));
+
+  await waitForLogMatch(watchdogLogPath, /watching owner pid=/i);
+  assert.ok((await stat(watchdogLogPath)).size <= 256);
+  assert.ok((await stat(`${watchdogLogPath}.1`)).size <= 256);
 });
 
 test('owner-death sweep no-ops when a successor publishes after the watched owner was observed', async (t) => {

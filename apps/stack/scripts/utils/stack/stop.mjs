@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { getComponentDir, resolveExplicitStackEnvFilePath } from '../paths/paths.mjs';
 import { isPidAlive, readPidState } from '../expo/expo.mjs';
+import { loadDevTargetsConfig } from '../dev_targets/config.mjs';
+import { listListenPidsWithStatus } from '../net/ports.mjs';
 import { stopLocalDaemon } from '../../daemon.mjs';
 import { stopHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import {
@@ -86,6 +88,199 @@ function isEphemeralRuntimeFallbackKillAllowed(line, stackName) {
     textContainsNeedle(line, 'npm_package_name=@happier-dev/server') &&
     textContainsEnvBindingName(line, 'npm_lifecycle_event')
   );
+}
+
+function escapeRegExp(value) {
+  return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasSshArgumentPair(line, flag, value) {
+  const normalizedFlag = String(flag ?? '').trim();
+  const normalizedValue = String(value ?? '').trim();
+  if (!normalizedFlag || !normalizedValue) return false;
+  return new RegExp(
+    `(?:^|\\s)${escapeRegExp(normalizedFlag)}\\s+${escapeRegExp(normalizedValue)}(?=\\s|$)`,
+  ).test(String(line ?? ''));
+}
+
+function isForwardPort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65_535;
+}
+
+function readSshForwards(line) {
+  return Array.from(String(line ?? '').matchAll(/(?:^|\s)(-L|-R)\s+([^\s]+)/g), (match) => ({
+    direction: match[1] === '-L' ? 'local' : 'reverse',
+    specification: match[2],
+  }));
+}
+
+function isExpectedLegacyDevTargetForward(forward, { localServerPort, localExpoPort }) {
+  const specification = String(forward?.specification ?? '');
+  if (forward?.direction === 'reverse') {
+    const match = specification.match(/^127\.0\.0\.1:(\d+):127\.0\.0\.1:(\d+)$/);
+    return Boolean(
+      match
+      && isForwardPort(match[1])
+      && Number(match[2]) === localServerPort,
+    );
+  }
+  if (forward?.direction === 'local') {
+    const match = specification.match(/^(127\.0\.0\.1|0\.0\.0\.0):(\d+):localhost:(\d+)$/);
+    return Boolean(
+      match
+      && isForwardPort(match[2])
+      && isForwardPort(match[3])
+      && Number(match[2]) === localExpoPort,
+    );
+  }
+  return false;
+}
+
+export function isLegacyDevTargetTunnelCommand(
+  line,
+  { opensshConfigPath, localServerPort, localExpoPort, targetSsh } = {},
+) {
+  const commandLine = String(line ?? '').trim();
+  const serverPort = Number(localServerPort);
+  const expoPort = Number(localExpoPort);
+  const configPath = String(opensshConfigPath ?? '').trim();
+  const targets = Array.from(new Set(
+    (Array.isArray(targetSsh) ? targetSsh : [])
+      .map((target) => String(target ?? '').trim())
+      .filter(Boolean),
+  ));
+  if (
+    !commandLine
+    || !Number.isInteger(serverPort)
+    || !isForwardPort(serverPort)
+    || !Number.isInteger(expoPort)
+    || !isForwardPort(expoPort)
+    || !configPath
+    || targets.length === 0
+  ) {
+    return false;
+  }
+  if (!/(?:^|\s)(?:(?:[^\s]+[\\/])?ssh(?:\.exe)?)(?=\s+-T\s)/i.test(commandLine)) {
+    return false;
+  }
+  if (!hasSshArgumentPair(commandLine, '-F', configPath)) return false;
+  const matchedTarget = targets.find((target) => hasSshArgumentPair(commandLine, '-N', target));
+  if (!matchedTarget) return false;
+  for (const option of [
+    'ControlMaster=no',
+    'BatchMode=yes',
+    'ExitOnForwardFailure=yes',
+    'ServerAliveInterval=15',
+    'ServerAliveCountMax=3',
+  ]) {
+    if (!hasSshArgumentPair(commandLine, '-o', option)) return false;
+  }
+  const forwards = readSshForwards(commandLine);
+  return forwards.length === 2
+    && forwards.every((forward) => isExpectedLegacyDevTargetForward(forward, {
+      localServerPort: serverPort,
+      localExpoPort: expoPort,
+    }))
+    && forwards.some((forward) => forward.direction === 'reverse')
+    && forwards.some((forward) => forward.direction === 'local');
+}
+
+async function reclaimLegacyDevTargetTunnels({
+  stackName,
+  baseDir,
+  env,
+  envPath,
+  cliHomeDir,
+  json,
+  cleanupResults,
+  confirmedCleanupPids,
+  killProcessGroupOwnedByStackImpl,
+  listListenPidsWithStatusImpl,
+  loadDevTargetsConfigImpl,
+  observePsEnvLineImpl,
+}) {
+  const localServerPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
+  const localExpoPort = coercePort(env.HAPPIER_STACK_EXPO_DEV_PORT);
+  if (
+    process.platform === 'win32'
+    || !Number.isInteger(localServerPort)
+    || !Number.isInteger(localExpoPort)
+  ) {
+    return { swept: [], skipped: [] };
+  }
+
+  let loaded;
+  try {
+    loaded = await loadDevTargetsConfigImpl({ stackName, env, allowMissing: true });
+  } catch {
+    return { swept: [], skipped: [] };
+  }
+  if (String(loaded?.path ?? '') !== join(baseDir, 'dev-targets.json')) {
+    return { swept: [], skipped: [] };
+  }
+  const targetSsh = Array.from(new Set(
+    (Array.isArray(loaded?.config?.targets) ? loaded.config.targets : [])
+      .map((target) => String(target?.ssh ?? '').trim())
+      .filter(Boolean),
+  ));
+  if (targetSsh.length === 0) return { swept: [], skipped: [] };
+
+  const listeners = await listListenPidsWithStatusImpl(localExpoPort, { timeoutMs: 1_000, env });
+  if (listeners?.status !== 'ok') return { swept: [], skipped: [] };
+
+  const opensshConfigPath = join(baseDir, 'mutagen', 'openssh', 'config');
+  const swept = [];
+  const skipped = [];
+  const pids = Array.from(new Set(
+    (Array.isArray(listeners?.pids) ? listeners.pids : [])
+      .map((pid) => Number(pid))
+      .filter((pid) => Number.isInteger(pid) && pid > 1),
+  ));
+  for (const pid of pids) {
+    if (confirmedCleanupPids.has(pid)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const stopped = await killProcessGroupOwnedByStackImpl(pid, {
+      stackName,
+      envPath,
+      cliHomeDir,
+      label: 'legacy-dev-target-tunnel',
+      json,
+      resolvePidStackOwnershipImpl: async (candidatePid) => {
+        const observation = await observePsEnvLineImpl(candidatePid);
+        if (observation?.status === 'inconclusive') {
+          return { status: 'inconclusive', owned: null, reason: observation.reason ?? 'process-identity-inconclusive' };
+        }
+        if (observation?.status !== 'ok' || !observation.line) {
+          return { status: 'not_owned', owned: false, reason: observation?.reason ?? 'process-not-found' };
+        }
+        return isLegacyDevTargetTunnelCommand(observation.line, {
+          opensshConfigPath,
+          localServerPort,
+          localExpoPort,
+          targetSsh,
+        })
+          ? { status: 'owned', owned: true, reason: 'legacy_dev_target_tunnel_signature' }
+          : { status: 'not_owned', owned: false, reason: 'process_identity_mismatch' };
+      },
+    });
+    if (stopped?.killed === true) {
+      confirmedCleanupPids.add(pid);
+      swept.push({ pid, reason: stopped.reason ?? 'killed_legacy_dev_target_tunnel', pgid: stopped.pgid ?? null });
+      cleanupResults.push({ ok: true, step: 'legacy-dev-target-tunnel', pid, reason: stopped.reason ?? 'killed_legacy_dev_target_tunnel' });
+      continue;
+    }
+    if (stopped?.reason === 'process_identity_mismatch' || DEFINITIVE_NOT_OWNED_REASONS.has(stopped?.reason)) {
+      skipped.push({ pid, reason: stopped?.reason ?? 'process_identity_mismatch' });
+      continue;
+    }
+    if (stopped?.reason === 'ownership_inconclusive' || stopped?.reason === 'process-identity-inconclusive') {
+      skipped.push({ pid, reason: stopped.reason });
+      continue;
+    }
+    cleanupResults.push({ ok: false, step: 'legacy-dev-target-tunnel', pid, reason: stopped?.reason ?? 'cleanup_unconfirmed' });
+  }
+  return { swept, skipped };
 }
 
 async function requestLifecycleOwnerShutdown(
@@ -351,6 +546,8 @@ async function stopStackWithEnvInternal({
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
   stopHappyServerManagedInfraImpl = stopHappyServerManagedInfra,
   observePsEnvLineImpl = observePsEnvLine,
+  listListenPidsWithStatusImpl = listListenPidsWithStatus,
+  loadDevTargetsConfigImpl = loadDevTargetsConfig,
   requestLifecycleOwnerShutdownImpl = requestLifecycleOwnerShutdown,
 } = {}, runtimeStopTransaction = null) {
   const resolvedStopAttribution = {
@@ -633,6 +830,23 @@ async function stopStackWithEnvInternal({
         reason: res?.reason ?? 'cleanup_unconfirmed',
       });
     }
+
+    const legacyDevTargetTunnels = await reclaimLegacyDevTargetTunnels({
+      stackName,
+      baseDir,
+      env,
+      envPath,
+      cliHomeDir,
+      json,
+      cleanupResults,
+      confirmedCleanupPids,
+      killProcessGroupOwnedByStackImpl,
+      listListenPidsWithStatusImpl,
+      loadDevTargetsConfigImpl,
+      observePsEnvLineImpl,
+    });
+    swept.push(...legacyDevTargetTunnels.swept);
+    sweepSkipped.push(...legacyDevTargetTunnels.skipped);
 
     // Repo-local fallback: older stackless infra runs may have omitted HAPPIER_STACK_ENV_FILE.
     // Do not sweep by only (stackName + repoDir): daemon-spawned session runners inherit

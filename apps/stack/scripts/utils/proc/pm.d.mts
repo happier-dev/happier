@@ -11,6 +11,7 @@ export function ensureWorkspacePackagesBuiltByName(
     quiet?: boolean;
     env?: NodeJS.ProcessEnv;
     force?: boolean;
+    publicationMode?: 'live' | 'artifact';
   },
 ): Promise<WorkspaceBuildResult>;
 
@@ -19,6 +20,7 @@ export function ensureWorkspacePackagesBuiltForComponent(
   options?: {
     quiet?: boolean;
     env?: NodeJS.ProcessEnv;
+    publicationMode?: 'live' | 'artifact';
   },
 ): Promise<WorkspaceBuildResult>;
 

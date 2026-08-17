@@ -1,4 +1,6 @@
-import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { lstat, readFile, readdir, readlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { commandExists, execOrThrow, resolveYarnCommand, type RunCommand } from './commands.js';
@@ -11,6 +13,34 @@ export type StageEntry = {
 
 export type ServerDbProvider = 'sqlite' | 'mysql';
 export type ServerComponent = 'happier-server' | 'happier-server-light';
+
+export type ServerRuntimeSupportIdentity = {
+  fingerprint: string;
+  entryCount: number;
+};
+
+/**
+ * The server support artifact's generated Prisma/native closure is selected by
+ * this value. Keep it with sidecar discovery so build, identity, and staging
+ * cannot disagree about which provider payload they mean.
+ */
+export function resolveServerRuntimeSupportBuildDbProviders({
+  serverComponent,
+  buildDbProviders,
+  env = process.env,
+}: {
+  serverComponent: ServerComponent;
+  buildDbProviders?: string;
+  env?: NodeJS.ProcessEnv;
+}): string {
+  if (serverComponent === 'happier-server') return 'mysql';
+  return String(
+    buildDbProviders
+    ?? env.HAPPIER_BUILD_DB_PROVIDERS
+    ?? env.HAPPY_BUILD_DB_PROVIDERS
+    ?? 'all',
+  ).trim() || 'all';
+}
 
 type PackageJson = {
   name?: string;
@@ -222,18 +252,16 @@ async function collectInstalledPackageSidecars({
   return entries;
 }
 
-export async function resolveServerBinarySidecarEntries({
+export async function resolveServerRuntimeSupportEntries({
   repoRoot,
-  uiWebDistPath,
   target,
   serverComponent = 'happier-server-light',
-  buildDbProviders = String(process.env.HAPPIER_BUILD_DB_PROVIDERS ?? process.env.HAPPY_BUILD_DB_PROVIDERS ?? 'all').trim() || 'all',
+  buildDbProviders,
   env = process.env,
   runCommand = execOrThrow,
   commandProbe = commandExists,
 }: {
   repoRoot: string;
-  uiWebDistPath: string;
   target?: BinaryTarget;
   serverComponent?: ServerComponent;
   buildDbProviders?: string;
@@ -242,7 +270,11 @@ export async function resolveServerBinarySidecarEntries({
   commandProbe?: (cmd: string) => boolean;
 }): Promise<StageEntry[]> {
   const yarn = resolveYarnCommand({ commandProbe });
-  const effectiveBuildDbProviders = serverComponent === 'happier-server' ? 'mysql' : buildDbProviders;
+  const effectiveBuildDbProviders = resolveServerRuntimeSupportBuildDbProviders({
+    serverComponent,
+    buildDbProviders,
+    env,
+  });
   runCommand(
     yarn.cmd,
     [...yarn.args, '--cwd', 'apps/server', '-s', 'generate:providers'],
@@ -354,15 +386,6 @@ export async function resolveServerBinarySidecarEntries({
     });
   }
 
-  const uiDistInfo = await stat(uiWebDistPath).catch(() => null);
-  if (!uiDistInfo?.isDirectory()) {
-    throw new Error(`[component-artifacts] missing prepared ui web dist directory: ${uiWebDistPath}`);
-  }
-  entries.push({
-    sourcePath: uiWebDistPath,
-    targetPath: join('ui-web', 'current'),
-  });
-
   const postgresClientInfo = await stat(postgresClientPath).catch(() => null);
   if (!postgresClientInfo?.isDirectory()) {
     throw new Error(`[component-artifacts] missing generated postgres Prisma client directory: ${postgresClientPath}`);
@@ -403,4 +426,172 @@ export async function resolveServerBinarySidecarEntries({
   }
 
   return entries;
+}
+
+/**
+ * Full-server support also owns the immutable Prisma migration-tool binary.
+ * These entries are hashed as tool inputs but deliberately are not copied into
+ * the runtime payload: the compiled tool is the runtime asset.
+ */
+export async function resolveServerRuntimeSupportToolIdentityEntries({
+  repoRoot,
+  serverComponent,
+}: {
+  repoRoot: string;
+  serverComponent: ServerComponent;
+}): Promise<StageEntry[]> {
+  if (serverComponent !== 'happier-server') return [];
+  const entries: StageEntry[] = [
+    {
+      sourcePath: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildPrismaMigrateBinary.mjs'),
+      targetPath: join('tool-inputs', 'buildPrismaMigrateBinary.mjs'),
+    },
+    {
+      sourcePath: join(repoRoot, 'node_modules', 'prisma'),
+      targetPath: join('tool-inputs', 'prisma'),
+    },
+    {
+      sourcePath: join(repoRoot, 'node_modules', 'node-fetch-native'),
+      targetPath: join('tool-inputs', 'node-fetch-native'),
+    },
+  ];
+  for (const entry of entries) {
+    const info = await stat(entry.sourcePath).catch(() => null);
+    if (!info) {
+      throw new Error(`[component-artifacts] missing full-server Prisma migration tool input: ${entry.sourcePath}`);
+    }
+  }
+  return entries;
+}
+
+async function hashServerRuntimeSupportPath({
+  hash,
+  rootPath,
+  relativePath,
+}: {
+  hash: ReturnType<typeof createHash>;
+  rootPath: string;
+  relativePath: string;
+}): Promise<void> {
+  const path = relativePath ? join(rootPath, relativePath) : rootPath;
+  const info = await lstat(path);
+  const normalizedPath = relativePath.replaceAll('\\', '/') || '.';
+  if (info.isDirectory()) {
+    hash.update(`dir\0${normalizedPath}\0`);
+    const entries = await readdir(path, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      // Payload finalization removes package-manager shims, so their source topology
+      // must not create a distinct reusable server-support artifact identity.
+      if (entry.name === '.bin') continue;
+      await hashServerRuntimeSupportPath({
+        hash,
+        rootPath,
+        relativePath: relativePath ? join(relativePath, entry.name) : entry.name,
+      });
+    }
+    return;
+  }
+  if (info.isFile()) {
+    hash.update(`file\0${normalizedPath}\0${info.size}\0`);
+    for await (const chunk of createReadStream(path)) {
+      hash.update(chunk);
+    }
+    hash.update('\0');
+    return;
+  }
+  if (info.isSymbolicLink()) {
+    hash.update(`link\0${normalizedPath}\0${await readlink(path)}\0`);
+    return;
+  }
+  throw new Error(`[component-artifacts] unsupported server runtime support entry: ${path}`);
+}
+
+/**
+ * Hashes exactly the owner-selected Prisma/native support closure that is copied
+ * beside a managed server binary. The server artifact owner uses this identity
+ * for its immutable support artifact; it deliberately excludes static web UI.
+ */
+export async function readServerRuntimeSupportIdentity({
+  entries,
+  toolIdentityEntries = [],
+  toolInputs = [],
+  target,
+  serverComponent,
+  buildDbProviders,
+}: {
+  entries: readonly StageEntry[];
+  toolIdentityEntries?: readonly StageEntry[];
+  toolInputs?: readonly string[];
+  target: BinaryTarget;
+  serverComponent: ServerComponent;
+  buildDbProviders: string;
+}): Promise<ServerRuntimeSupportIdentity> {
+  const hash = createHash('sha256');
+  hash.update('happier:server-runtime-support:v1\0');
+  hash.update(`target\0${target.os}\0${target.arch}\0${target.bunTarget}\0${target.exeExt}\0`);
+  hash.update(`component\0${serverComponent}\0`);
+  hash.update(`db-providers\0${String(buildDbProviders ?? '').trim()}\0`);
+  const orderedEntries = [...entries].sort((left, right) =>
+    left.targetPath.replaceAll('\\', '/').localeCompare(right.targetPath.replaceAll('\\', '/')),
+  );
+  for (const entry of orderedEntries) {
+    hash.update(`runtime-entry\0${entry.targetPath.replaceAll('\\', '/')}\0`);
+    await hashServerRuntimeSupportPath({ hash, rootPath: entry.sourcePath, relativePath: '' });
+  }
+  const orderedToolEntries = [...toolIdentityEntries].sort((left, right) =>
+    left.targetPath.replaceAll('\\', '/').localeCompare(right.targetPath.replaceAll('\\', '/')),
+  );
+  for (const entry of orderedToolEntries) {
+    hash.update(`tool-entry\0${entry.targetPath.replaceAll('\\', '/')}\0`);
+    await hashServerRuntimeSupportPath({ hash, rootPath: entry.sourcePath, relativePath: '' });
+  }
+  for (const toolInput of [...toolInputs].map((value) => String(value).trim()).filter(Boolean).sort()) {
+    hash.update(`tool\0${toolInput}\0`);
+  }
+  return {
+    fingerprint: hash.digest('hex').slice(0, 16),
+    entryCount: orderedEntries.length + orderedToolEntries.length,
+  };
+}
+
+export async function resolveServerBinarySidecarEntries({
+  repoRoot,
+  uiWebDistPath,
+  target,
+  serverComponent = 'happier-server-light',
+  buildDbProviders,
+  env = process.env,
+  runCommand = execOrThrow,
+  commandProbe = commandExists,
+}: {
+  repoRoot: string;
+  uiWebDistPath: string;
+  target?: BinaryTarget;
+  serverComponent?: ServerComponent;
+  buildDbProviders?: string;
+  env?: NodeJS.ProcessEnv;
+  runCommand?: RunCommand;
+  commandProbe?: (cmd: string) => boolean;
+}): Promise<StageEntry[]> {
+  const entries = await resolveServerRuntimeSupportEntries({
+    repoRoot,
+    target,
+    serverComponent,
+    buildDbProviders,
+    env,
+    runCommand,
+    commandProbe,
+  });
+  const uiDistInfo = await stat(uiWebDistPath).catch(() => null);
+  if (!uiDistInfo?.isDirectory()) {
+    throw new Error(`[component-artifacts] missing prepared ui web dist directory: ${uiWebDistPath}`);
+  }
+  return [
+    ...entries,
+    {
+      sourcePath: uiWebDistPath,
+      targetPath: join('ui-web', 'current'),
+    },
+  ];
 }

@@ -8,6 +8,23 @@ import {
   resolveStackPidOwnership,
 } from './listener_ownership.mjs';
 
+test('spawned listener proof keeps the production ownership deadline at three seconds', async () => {
+  let timeoutMs;
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listListenPidsWithStatusImpl: async (_port, options) => {
+        timeoutMs = options.timeoutMs;
+        return { status: 'ok', supported: true, pids: [301] };
+      },
+      getProcessGroupIdImpl: async (candidatePid) => candidatePid,
+    },
+  );
+
+  assert.equal(pid, 301);
+  assert.ok(timeoutMs >= 1_900 && timeoutMs <= 2_000);
+});
+
 test('spawned listener proof prefers a delayed process-group result over inconclusive broad discovery', async () => {
   const observations = [];
   const pid = await resolveSpawnedProcessGroupListenPid(
@@ -30,6 +47,69 @@ test('spawned listener proof prefers a delayed process-group result over inconcl
   assert.equal(pid, 301);
   assert.equal(observations.some((options) => options.processGroupId === 301), true);
   assert.equal(observations.some((options) => options.processGroupId == null), false);
+});
+
+test('spawned listener proof retries a transient empty process-group observation before accepting readiness', async () => {
+  let groupAttempts = 0;
+  let broadAttempts = 0;
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 100,
+      listenerOwnershipRetryDelayMs: 0,
+      listListenPidsWithStatusImpl: async (_port, { processGroupId }) => {
+        if (processGroupId) {
+          groupAttempts += 1;
+          return groupAttempts === 1
+            ? { status: 'ok', supported: true, pids: [] }
+            : { status: 'ok', supported: true, pids: [301] };
+        }
+        broadAttempts += 1;
+        return { status: 'ok', supported: true, pids: [] };
+      },
+      getProcessGroupIdImpl: async (candidatePid) => candidatePid,
+    },
+  );
+
+  assert.equal(pid, 301);
+  assert.equal(groupAttempts, 2);
+  assert.equal(broadAttempts, 0);
+});
+
+test('spawned listener proof lets one process-group discovery consume its reserved subdeadline', async () => {
+  let processGroupAttempts = 0;
+  let broadAttempts = 0;
+  const timeoutBudgets = [];
+  const pid = await resolveSpawnedProcessGroupListenPid(
+    { port: 4101, spawnedPid: 301 },
+    {
+      listenerOwnershipTimeoutMs: 2_100,
+      listenerOwnershipRetryDelayMs: 0,
+      listListenPidsWithStatusImpl: async (_port, { processGroupId, signal, timeoutMs }) => {
+        if (!processGroupId) {
+          broadAttempts += 1;
+          return { status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' };
+        }
+        processGroupAttempts += 1;
+        timeoutBudgets.push(timeoutMs);
+        return await new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            resolve({ status: 'ok', supported: true, pids: [301] });
+          }, 1_100);
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            resolve({ status: 'timeout', supported: true, pids: [], reason: 'listener-discovery-timeout' });
+          }, { once: true });
+        });
+      },
+      getProcessGroupIdImpl: async (candidatePid) => candidatePid,
+    },
+  );
+
+  assert.equal(pid, 301);
+  assert.equal(processGroupAttempts, 1);
+  assert.equal(broadAttempts, 0);
+  assert.ok(timeoutBudgets[0] > 1_100);
 });
 
 test('spawned listener proof fails closed when group and broad discovery stay inconclusive', async () => {

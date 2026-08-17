@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -19,11 +19,20 @@ import {
   startLocalDaemonWithAuth,
   stopLocalDaemon,
 } from './daemon.mjs';
+import { writeCliDistBuildManifest } from './utils/cli/cliDistIntegrity.mjs';
 import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
 import {
   writeStubCliDistBuildManifest,
   writeStubHappierCliFiles,
 } from './testkit/core/stub_happier_cli_files.mjs';
+import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
+import { resolveCliDistBuildLockPath, withCliDistBuildLock } from './utils/proc/cliDistBuildLock.mjs';
+import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from '../../../packages/cli-common/cliRuntimeSidecars.mjs';
+import {
+  PINNED_RUNNER_MANAGED_PROVIDER_RUNTIME_RELATIVE_PATH,
+  resolveNewestReadyPinnedRunnerSnapshot,
+} from '../../../packages/cli-common/pinnedRunnerSnapshot.mjs';
 
 const CLI_DIST_BUILD_MANIFEST_MODULE_URL = new URL(
   '../../../packages/cli-common/cliDistBuildManifest.cjs',
@@ -81,6 +90,211 @@ test('watch startup admits a validated prior CLI publication without waiting for
   assert.equal(result.built, false);
   assert.equal(result.reason, 'admitted-prior-dist-for-watch-startup');
   assert.equal(result.fallbackFingerprint, fingerprint);
+});
+
+test('watch startup admits the newest ready immutable runner when the mutable CLI publication is stale', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-runner-snapshot-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps', 'cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  const snapshotEntrypoint = join(
+    cliDir,
+    '.runner-snapshots',
+    `${'b'.repeat(16)}-${'c'.repeat(64)}-${'d'.repeat(64)}-package-dist-v4`,
+    'package-dist',
+    'index.mjs',
+  );
+  await writeHappyMonorepoMarkers(repoDir);
+  await writeFile(join(repoDir, 'package.json'), '{ "private": true }\n', 'utf-8');
+  await writeFile(join(repoDir, 'yarn.lock'), '# test lock\n', 'utf-8');
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+  await mkdir(dirname(cliBin), { recursive: true });
+  await mkdir(dirname(distEntrypoint), { recursive: true });
+  await writeFile(distEntrypoint, 'export {};\n', 'utf-8');
+  writeCliDistBuildManifest(distEntrypoint, {
+    outputDir: dirname(distEntrypoint),
+    builtAt: '2026-08-14T00:00:00.000Z',
+    workspaceRuntimeIdentity: 'a'.repeat(64),
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let buildCalls = 0;
+  const probes = [];
+  const result = await ensureHappierCliDistExists(
+    {
+      cliBin,
+      admitPriorDistImmediately: true,
+      env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        throw new Error('watch startup must not build before admitting a ready immutable runner');
+      },
+      probeCliDistRuntimeImportImpl: async (entrypoint) => {
+        probes.push(entrypoint);
+      },
+      readCliWorkspaceRuntimeIdentityImpl: () => ({ fingerprint: 'e'.repeat(64) }),
+      resolveNewestReadyPinnedSnapshotLocationImpl: () => ({
+        snapshotEntrypoint,
+        fingerprint: 'b'.repeat(16),
+      }),
+    },
+  );
+
+  assert.equal(buildCalls, 0);
+  assert.deepEqual(probes, [snapshotEntrypoint]);
+  assert.equal(result.ok, true);
+  assert.equal(result.current, true);
+  assert.equal(result.degraded, true);
+  assert.equal(result.distEntrypoint, snapshotEntrypoint);
+  assert.equal(result.fallbackFingerprint, 'b'.repeat(16));
+  assert.equal(result.reason, 'admitted-pinned-runner-for-watch-startup');
+});
+
+test('watch startup materializes and verifies a required workspace runtime closure before admitting a prior CLI publication', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-workspace-runtime-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps', 'cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  const workspaceRuntimeIdentity = 'a'.repeat(64);
+  await writeHappyMonorepoMarkers(repoDir);
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+  await mkdir(dirname(cliBin), { recursive: true });
+  await mkdir(dirname(distEntrypoint), { recursive: true });
+  await writeFile(distEntrypoint, 'export {};\n', 'utf-8');
+  writeCliDistBuildManifest(distEntrypoint, {
+    outputDir: join(cliDir, 'dist'),
+    builtAt: '2026-07-09T00:00:00.000Z',
+    workspaceRuntimeIdentity,
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let buildCalls = 0;
+  let verifiedAfterPublication = false;
+  const result = await ensureHappierCliDistExists(
+    {
+      cliBin,
+      admitPriorDistImmediately: true,
+      env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        return { built: false, current: true, reason: 'up_to_date' };
+      },
+      readCliWorkspaceRuntimeIdentityImpl: () => {
+        if (buildCalls === 0) {
+          throw new Error('workspace runtime has not been materialized');
+        }
+        verifiedAfterPublication = true;
+        return { fingerprint: workspaceRuntimeIdentity };
+      },
+    },
+  );
+
+  assert.equal(buildCalls, 1);
+  assert.equal(verifiedAfterPublication, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.current, true);
+});
+
+test('watch startup revalidates a required workspace runtime closure after probing a prior CLI publication', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-workspace-runtime-probe-race-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps', 'cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  const workspaceRuntimeIdentity = 'c'.repeat(64);
+  await writeHappyMonorepoMarkers(repoDir);
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+  await mkdir(dirname(cliBin), { recursive: true });
+  await mkdir(dirname(distEntrypoint), { recursive: true });
+  await writeFile(distEntrypoint, 'export {};\n', 'utf-8');
+  writeCliDistBuildManifest(distEntrypoint, {
+    outputDir: join(cliDir, 'dist'),
+    builtAt: '2026-07-09T00:00:00.000Z',
+    workspaceRuntimeIdentity,
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let buildCalls = 0;
+  let workspaceRuntimeCurrent = true;
+  let probes = 0;
+  const result = await ensureHappierCliDistExists(
+    {
+      cliBin,
+      admitPriorDistImmediately: true,
+      env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        workspaceRuntimeCurrent = true;
+        return { built: false, current: true, reason: 'up_to_date' };
+      },
+      probeCliDistRuntimeImportImpl: async () => {
+        probes += 1;
+        workspaceRuntimeCurrent = false;
+      },
+      readCliWorkspaceRuntimeIdentityImpl: () => ({
+        fingerprint: workspaceRuntimeCurrent ? workspaceRuntimeIdentity : 'd'.repeat(64),
+      }),
+    },
+  );
+
+  assert.equal(probes, 1);
+  assert.equal(buildCalls, 1, 'a workspace identity changed during probe must use the canonical publisher');
+  assert.equal(result.ok, true);
+  assert.equal(result.current, true);
+});
+
+test('watch startup rejects a prior CLI publication whose required workspace runtime closure remains unavailable', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-workspace-runtime-missing-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps', 'cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  await writeHappyMonorepoMarkers(repoDir);
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+  await mkdir(dirname(cliBin), { recursive: true });
+  await mkdir(dirname(distEntrypoint), { recursive: true });
+  await writeFile(distEntrypoint, 'export {};\n', 'utf-8');
+  writeCliDistBuildManifest(distEntrypoint, {
+    outputDir: join(cliDir, 'dist'),
+    builtAt: '2026-07-09T00:00:00.000Z',
+    workspaceRuntimeIdentity: 'b'.repeat(64),
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let buildCalls = 0;
+  const result = await ensureHappierCliDistExists(
+    {
+      cliBin,
+      admitPriorDistImmediately: true,
+      env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        return { built: false, current: true, reason: 'up_to_date' };
+      },
+      readCliWorkspaceRuntimeIdentityImpl: () => {
+        throw new Error('workspace runtime has not been materialized');
+      },
+    },
+  );
+
+  assert.equal(buildCalls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.current, false);
+  assert.equal(result.reason, 'workspace_runtime_unavailable');
 });
 
 test('watch startup retries a transient atomic CLI publication gap before waiting on the shared build lock', async (t) => {
@@ -461,25 +675,378 @@ assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must rele
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
-test('source daemon final admission uses a validated fallback when the explicit fingerprint is whitespace', () => {
-  const fallbackFingerprint = '1111111111111111';
+test('source daemon final launch rejects a workspace runtime identity changed during daemon stop', async (t) => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'hstack-source-final-workspace-runtime-race-'));
+  t.after(async () => rm(fixtureRoot, { recursive: true, force: true }));
+  const daemonModuleUrl = new URL('./daemon.mjs', import.meta.url).href;
+  const cliDistBuildManifestModuleUrl = CLI_DIST_BUILD_MANIFEST_MODULE_URL;
+  const script = `
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const cliDistBuildManifestModule = await import(${JSON.stringify(cliDistBuildManifestModuleUrl)});
+const cliDistBuildManifest = cliDistBuildManifestModule.default ?? cliDistBuildManifestModule;
+const { readCliNodeWorkspaceRuntimeIdentity } = await import('@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload');
+
+const root = ${JSON.stringify(fixtureRoot)};
+const repoDir = join(root, 'repo');
+const cliDir = join(repoDir, 'apps', 'cli');
+const cliBin = join(cliDir, 'bin', 'happier.mjs');
+const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+const cliHomeDir = join(root, 'home');
+const daemonStopMarker = join(root, 'daemon-stop.txt');
+const daemonStartMarker = join(root, 'daemon-start.txt');
+const runtimePackageDir = join(cliDir, 'node_modules', '@happier-dev', 'protocol');
+const runtimePackagePath = join(runtimePackageDir, 'package.json');
+const source = [
+  'import { appendFileSync, writeFileSync } from "node:fs";',
+  'const action = process.argv.at(-1);',
+  'if (action === "stop") {',
+  '  writeFileSync(process.env.WORKSPACE_RUNTIME_PACKAGE_PATH, JSON.stringify({ name: "@happier-dev/protocol", version: "2.0.0" }) + "\\\\n", "utf-8");',
+  '  appendFileSync(process.env.DAEMON_STOP_MARKER, "stop\\\\n");',
+  '} else if (action === "start") {',
+  '  appendFileSync(process.env.DAEMON_START_MARKER, "start\\\\n");',
+  '}',
+].join('\\n');
+
+fs.mkdirSync(join(repoDir, 'apps', 'ui'), { recursive: true });
+fs.mkdirSync(join(repoDir, 'apps', 'server'), { recursive: true });
+fs.mkdirSync(join(repoDir, 'packages', 'protocol'), { recursive: true });
+fs.mkdirSync(dirname(cliBin), { recursive: true });
+fs.mkdirSync(dirname(distEntrypoint), { recursive: true });
+fs.mkdirSync(runtimePackageDir, { recursive: true });
+fs.writeFileSync(join(repoDir, 'apps', 'ui', 'package.json'), '{}\\n', 'utf-8');
+fs.writeFileSync(join(repoDir, 'apps', 'server', 'package.json'), '{}\\n', 'utf-8');
+fs.writeFileSync(join(repoDir, 'packages', 'protocol', 'package.json'), JSON.stringify({ name: '@happier-dev/protocol' }) + '\\n', 'utf-8');
+fs.writeFileSync(join(cliDir, 'package.json'), JSON.stringify({
+  name: '@happier-dev/cli',
+  bundledDependencies: ['@happier-dev/protocol'],
+}) + '\\n', 'utf-8');
+fs.writeFileSync(join(runtimePackageDir, 'package.json'), JSON.stringify({
+  name: '@happier-dev/protocol',
+  version: '1.0.0',
+}) + '\\n', 'utf-8');
+fs.writeFileSync(cliBin, '#!/usr/bin/env node\\n', 'utf-8');
+fs.writeFileSync(distEntrypoint, source, 'utf-8');
+const workspaceRuntimeIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: repoDir }).fingerprint;
+const admittedFingerprint = cliDistBuildManifest.writeCliDistBuildManifest(distEntrypoint, {
+  outputDir: dirname(distEntrypoint),
+  workspaceRuntimeIdentity,
+  workspaceRuntimePackages: ['@happier-dev/protocol'],
+}).manifest.fingerprint;
+
+const { startLocalDaemonWithAuth } = await import(${JSON.stringify(daemonModuleUrl)});
+let failure = null;
+try {
+  await startLocalDaemonWithAuth({
+    cliBin,
+    cliHomeDir,
+    internalServerUrl: 'http://127.0.0.1:43123',
+    publicServerUrl: 'http://localhost:43123',
+    isShuttingDown: () => false,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_REPO_DIR: repoDir,
+      HAPPIER_STACK_STACK: 'dev',
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0',
+      HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '100',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      HAPPIER_STACK_TUI: '0',
+      WORKSPACE_RUNTIME_PACKAGE_PATH: runtimePackagePath,
+      DAEMON_STOP_MARKER: daemonStopMarker,
+      DAEMON_START_MARKER: daemonStartMarker,
+    },
+    stackName: 'dev',
+    admittedDistClosureFingerprint: admittedFingerprint,
+  });
+} catch (error) {
+  failure = error;
+}
+
+assert.equal(fs.existsSync(daemonStopMarker), true, 'the awaited daemon stop must mutate the workspace runtime payload');
+assert.equal(fs.existsSync(daemonStartMarker), false, 'no daemon start command may spawn after the workspace runtime changes during stop');
+assert.equal(failure?.code, 'ECLIDISTSTALECOLDSTART');
+const remainingLifecycleLocks = fs.existsSync(join(cliHomeDir, 'locks'))
+  ? fs.readdirSync(join(cliHomeDir, 'locks')).filter((name) => name.startsWith('daemon-lifecycle-'))
+  : [];
+assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must release the existing lifecycle lock');
+`;
+
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test('source daemon releases the publication lease during stop and holds it through a paused start', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-start-publication-lease-'));
+  const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+  const cliDir = join(tmp, 'apps', 'cli');
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const eventsPath = join(tmp, 'daemon-events.log');
+  const cliBin = await writeDelayedStopStubHappyCli({
+    cliDir,
+    stopDelayMs: 750,
+    startDelayMs: 500,
+  });
+  const lockPath = resolveCliDistBuildLockPath(tmp);
+  let startPromise = null;
+  let stopPublisherPromise = null;
+  let startPublisherPromise = null;
+  let daemonEnv = null;
+  let shouldShutdown = false;
+  try {
+    await writeHappyMonorepoMarkers(tmp);
+    await prepareCurrentSourceCliFixture(tmp, cliDir);
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    const admittedDistClosureFingerprint = String(
+      JSON.parse(await readFile(join(cliDir, 'dist', '.build-manifest.json'), 'utf-8')).fingerprint,
+    );
+    assert.equal(
+      isGuardedSourceCliDistEntrypoint({
+        cliBin,
+        distEntrypoint: join(cliDir, 'dist', 'index.mjs'),
+        activeCliDir: cliDir,
+      }),
+      true,
+      'fixture must exercise the source-dist admission path',
+    );
+    const env = buildDaemonDistGuardEnv({
+      HAPPIER_STACK_REPO_DIR: tmp,
+      HAPPIER_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_HOME_DIR: join(tmp, 'hstack-home'),
+      HAPPIER_STACK_TUI: '0',
+      HAPPIER_STACK_CLI_ROOT_DIR: '',
+      HAPPIER_STACK_RUNTIME_MODE: '',
+      HAPPIER_STACK_RUNTIME_DIR: '',
+      HAPPIER_STACK_NODE: '',
+      HAPPIER_STACK_ENV_FILE: '',
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '',
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '',
+      HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: '',
+      HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '3000',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '300',
+      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
+      HAPPIER_TEST_DAEMON_EVENTS_PATH: eventsPath,
+    });
+    daemonEnv = env;
+
+    startPromise = startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => shouldShutdown,
+      forceRestart: true,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+      admittedDistClosureFingerprint,
+    });
+
+    const waitForEvent = async (event) => {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const events = await readFile(eventsPath, 'utf-8').catch(() => '');
+        if (events.split(/\n+/).includes(event)) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const events = await readFile(eventsPath, 'utf-8').catch(() => '');
+      assert.fail(`expected daemon ${event} command to begin; observed events=${JSON.stringify(events)}`);
+    };
+
+    await waitForEvent('stop');
+    let stopPublisherEntered = false;
+    stopPublisherPromise = withCliDistBuildLock(
+      async () => {
+        stopPublisherEntered = true;
+      },
+      { lockPath, timeoutMs: 10_000, pollIntervalMs: 5 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    assert.equal(
+      stopPublisherEntered,
+      true,
+      'a delayed daemon stop must not retain the source publication lease',
+    );
+    await stopPublisherPromise;
+
+    await waitForEvent('start');
+    let startPublisherEntered = false;
+    startPublisherPromise = withCliDistBuildLock(
+      async () => {
+        startPublisherEntered = true;
+      },
+      { lockPath, timeoutMs: 10_000, pollIntervalMs: 5 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    assert.equal(
+      startPublisherEntered,
+      false,
+      'a competing CLI publisher must remain outside the final start-to-stable critical section',
+    );
+    await startPromise;
+    await startPublisherPromise;
+    assert.equal(startPublisherEntered, true, 'the publisher may proceed only after daemon startup releases the lease');
+  } finally {
+    shouldShutdown = true;
+    await startPromise?.catch(() => {});
+    await stopPublisherPromise?.catch(() => {});
+    await startPublisherPromise?.catch(() => {});
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+      env: daemonEnv ?? buildDaemonDistGuardEnv({
+        HAPPIER_STACK_REPO_DIR: tmp,
+        HAPPIER_HOME_DIR: cliHomeDir,
+        HAPPIER_STACK_HOME_DIR: join(tmp, 'hstack-home'),
+      }),
+      stackName: 'dev',
+    }).catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ordinary source restart derives its daemon closure inside the final publication lease', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-final-publication-'));
+  const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+  const cliDir = join(tmp, 'apps', 'cli');
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+  const eventsPath = join(tmp, 'daemon-events.log');
+  const closureEnvMarker = join(tmp, 'daemon-closure-env.json');
+  const cliBin = await writeDelayedStopStubHappyCli({
+    cliDir,
+    stopDelayMs: 500,
+  });
+  await tagStubCliDistLaunchSource({ cliDir, tag: 'ordinary-source-restart' });
+  let daemonEnv = null;
+  let restart = null;
+  let restartError = null;
+  try {
+    await writeHappyMonorepoMarkers(tmp);
+    await prepareCurrentSourceCliFixture(tmp, cliDir);
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+    const initialFingerprint = String(
+      JSON.parse(await readFile(join(cliDir, 'dist', '.build-manifest.json'), 'utf-8')).fingerprint,
+    );
+    const env = buildDaemonDistGuardEnv({
+      HAPPIER_STACK_REPO_DIR: tmp,
+      HAPPIER_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_HOME_DIR: join(tmp, 'hstack-home'),
+      HAPPIER_STACK_TUI: '0',
+      HAPPIER_STACK_CLI_ROOT_DIR: '',
+      HAPPIER_STACK_RUNTIME_MODE: '',
+      HAPPIER_STACK_RUNTIME_DIR: '',
+      HAPPIER_STACK_NODE: '',
+      HAPPIER_STACK_ENV_FILE: '',
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '',
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '',
+      HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: '',
+      HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '3000',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
+      HAPPIER_TEST_DAEMON_EVENTS_PATH: eventsPath,
+      HAPPIER_TEST_DAEMON_CLOSURE_ENV_MARKER: closureEnvMarker,
+    });
+    daemonEnv = env;
+
+    restart = startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      runtimeStatePath,
+      isShuttingDown: () => false,
+      forceRestart: true,
+      admitPriorDistImmediately: true,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+    restart.catch((error) => {
+      restartError = error;
+    });
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const events = await readFile(eventsPath, 'utf-8').catch(() => '');
+      if (events.split(/\n+/).includes('stop')) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.match(
+      await readFile(eventsPath, 'utf-8').catch(() => ''),
+      /(^|\n)stop(\n|$)/,
+      `the test must mutate the source publication while the old daemon is stopping${
+        restartError ? `; restart failed: ${String(restartError?.stack ?? restartError)}` : ''
+      }`,
+    );
+
+    const mutableEntrypoint = join(cliDir, 'dist', 'index.mjs');
+    await writeFile(
+      mutableEntrypoint,
+      `${await readFile(mutableEntrypoint, 'utf-8')}\n// publication B\n`,
+      'utf-8',
+    );
+    const finalFingerprint = writeStubCliDistBuildManifest(cliDir).manifest.fingerprint;
+    assert.notEqual(finalFingerprint, initialFingerprint);
+
+    await restart;
+    assert.deepEqual(JSON.parse(await readFile(closureEnvMarker, 'utf-8')), {
+      distEntrypoint: mutableEntrypoint,
+      subprocessEntrypoint: null,
+      preferTsx: null,
+      fingerprint: finalFingerprint,
+    });
+  } finally {
+    await restart?.catch(() => {});
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+      env: daemonEnv ?? buildDaemonDistGuardEnv({
+        HAPPIER_STACK_REPO_DIR: tmp,
+        HAPPIER_HOME_DIR: cliHomeDir,
+        HAPPIER_STACK_HOME_DIR: join(tmp, 'hstack-home'),
+      }),
+      stackName: 'dev',
+    }).catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('source daemon final admission fences only an explicitly admitted fingerprint', () => {
+  const admittedFingerprint = '1111111111111111';
+  const finalFingerprint = '2222222222222222';
 
   assert.equal(
     assertFinalSourceDaemonDistAdmission({
       admittedDistClosureFingerprint: '   ',
-      fallbackFingerprint,
-      finalFingerprint: fallbackFingerprint,
+      finalFingerprint,
     }),
-    fallbackFingerprint,
+    finalFingerprint,
   );
 
   let spawned = false;
   assert.throws(
     () => {
       assertFinalSourceDaemonDistAdmission({
-        admittedDistClosureFingerprint: '   ',
-        fallbackFingerprint,
-        finalFingerprint: '2222222222222222',
+        admittedDistClosureFingerprint: admittedFingerprint,
+        finalFingerprint,
       });
       spawned = true;
     },
@@ -769,8 +1336,12 @@ function startFakePingAwareDaemon(statePath) {
     detached: true,
     stdio: 'ignore',
   });
+  const ready = new Promise((resolve, reject) => {
+    child.once('spawn', () => resolve());
+    child.once('error', reject);
+  });
   child.unref();
-  return child.pid;
+  return { child, ready };
 }
 `;
 }
@@ -785,13 +1356,13 @@ import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === '--help') process.exit(0);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 const state = join(home, 'daemon.state.json');
 
 ${fakePingAwareDaemonSpawnerSource()}
-
-const sub = args[1] || '';
 
 if (sub === 'stop') {
   if (existsSync(state)) {
@@ -846,8 +1417,16 @@ async function tagStubCliDistLaunchSource({ cliDir, tag }) {
       `if (process.env.HAPPIER_TEST_DAEMON_SOURCE_MARKER) {\n` +
       `  writeHappierTestLaunchMarker(process.env.HAPPIER_TEST_DAEMON_SOURCE_MARKER, ${JSON.stringify(`${tag}\n`)}, 'utf-8');\n` +
       `}\n` +
-      `if (process.env.HAPPIER_TEST_DAEMON_LOCK_MARKER) {\n` +
+      `if (process.env.HAPPIER_TEST_DAEMON_LOCK_MARKER && process.argv[2] === 'daemon' && process.argv[3] === 'start') {\n` +
       `  writeHappierTestLaunchMarker(process.env.HAPPIER_TEST_DAEMON_LOCK_MARKER, process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD || '', 'utf-8');\n` +
+      `}\n` +
+      `if (process.env.HAPPIER_TEST_DAEMON_CLOSURE_ENV_MARKER && process.argv[2] === 'daemon' && process.argv[3] === 'start') {\n` +
+      `  writeHappierTestLaunchMarker(process.env.HAPPIER_TEST_DAEMON_CLOSURE_ENV_MARKER, JSON.stringify({\n` +
+      `    distEntrypoint: process.env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT || null,\n` +
+      `    subprocessEntrypoint: process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT || null,\n` +
+      `    preferTsx: process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX || null,\n` +
+      `    fingerprint: process.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT || null,\n` +
+      `  }) + '\\n', 'utf-8');\n` +
       `}\n` +
       original,
     'utf-8',
@@ -855,7 +1434,7 @@ async function tagStubCliDistLaunchSource({ cliDir, tag }) {
   writeStubCliDistBuildManifest(cliDir);
 }
 
-async function writeSlowStartStubHappyCli({ cliDir }) {
+async function writeSlowStartStubHappyCli({ cliDir, eventsPath = '' }) {
   const distScript = `
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -863,8 +1442,11 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === '--help') process.exit(0);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
-const eventsPath = process.env.HAPPIER_TEST_DAEMON_EVENTS_PATH;
+const eventsPath = ${JSON.stringify(String(eventsPath))} || process.env.HAPPIER_TEST_DAEMON_EVENTS_PATH;
 if (!home) process.exit(2);
 const state = join(home, 'daemon.state.json');
 
@@ -873,9 +1455,6 @@ ${fakePingAwareDaemonSpawnerSource()}
 function event(name) {
   if (eventsPath) appendFileSync(eventsPath, name + '\\n', 'utf-8');
 }
-
-if (args[0] !== 'daemon') process.exit(0);
-const sub = args[1] || '';
 
 if (sub === 'stop') {
   event('stop');
@@ -910,7 +1489,7 @@ process.exit(0);
   return join(cliBinDir, 'happier.mjs');
 }
 
-async function writeDelayedStopStubHappyCli({ cliDir }) {
+async function writeDelayedStopStubHappyCli({ cliDir, stopDelayMs = 250, startDelayMs = 0 }) {
   const distScript = `
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -918,6 +1497,9 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
+if (args[0] !== 'daemon') process.exit(0);
+const sub = args[1] || '';
+if (sub === '--help') process.exit(0);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 const eventsPath = process.env.HAPPIER_TEST_DAEMON_EVENTS_PATH;
 if (!home) process.exit(2);
@@ -929,12 +1511,9 @@ function event(name) {
   if (eventsPath) appendFileSync(eventsPath, name + '\\n', 'utf-8');
 }
 
-if (args[0] !== 'daemon') process.exit(0);
-const sub = args[1] || '';
-
 if (sub === 'stop') {
   event('stop');
-  await delay(250);
+  await delay(${Number(stopDelayMs)});
   if (existsSync(state)) {
     try {
       const pid = Number(JSON.parse(readFileSync(state, 'utf-8')).pid);
@@ -949,7 +1528,8 @@ if (sub === 'stop') {
 
 if (sub === 'start') {
   event('start');
-  startFakePingAwareDaemon(state);
+  await delay(${Number(startDelayMs)});
+  await startFakePingAwareDaemon(state).ready;
   process.exit(0);
 }
 
@@ -1464,6 +2044,111 @@ test('source daemon admission cold-starts runnable prior dist and preserves the 
 
 test('CLI-root-only source daemon admission cold-starts runnable prior dist and preserves the exact live daemon', async (t) => {
   await assertRunnablePriorSourceDaemonAdmission(t, (tmp) => ({ HAPPIER_STACK_CLI_ROOT_DIR: tmp }));
+});
+
+test('source daemon cold-start executes a ready immutable runner while retaining the mutable dist closure origin', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-pinned-runner-cold-start-'));
+  const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+  const cliDir = join(tmp, 'apps', 'cli');
+  const cliBin = await writeStubHappyCli({ cliDir });
+  const mutableDistEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  const launchMarker = join(tmp, 'daemon-launch-source.txt');
+  const closureEnvMarker = join(tmp, 'daemon-closure-env.json');
+  await tagStubCliDistLaunchSource({ cliDir, tag: 'immutable-runner' });
+  const manifest = JSON.parse(await readFile(join(cliDir, 'dist', '.build-manifest.json'), 'utf-8'));
+  const workspaceRuntimeIdentity = 'd'.repeat(64);
+  const snapshotsDir = join(cliDir, '.runner-snapshots');
+  const stagingSnapshotRoot = join(snapshotsDir, '.immutable-runner-staging');
+  const stagingEntrypoint = join(stagingSnapshotRoot, 'package-dist', 'index.mjs');
+  await mkdir(stagingSnapshotRoot, { recursive: true });
+  await cp(join(cliDir, 'dist'), join(stagingSnapshotRoot, 'package-dist'), { recursive: true });
+  for (const sidecar of CLI_RUNTIME_SIDECAR_ENTRIES) {
+    const sidecarPath = join(stagingSnapshotRoot, 'scripts', ...sidecar);
+    if (sidecar.length === 1 && (sidecar[0] === 'runtime' || sidecar[0] === 'shims')) {
+      await mkdir(sidecarPath, { recursive: true });
+    } else {
+      await mkdir(dirname(sidecarPath), { recursive: true });
+      await writeFile(sidecarPath, 'module.exports = {};\n', 'utf-8');
+    }
+  }
+  const managedRuntimePath = join(
+    stagingSnapshotRoot,
+    ...PINNED_RUNNER_MANAGED_PROVIDER_RUNTIME_RELATIVE_PATH,
+  );
+  await mkdir(dirname(managedRuntimePath), { recursive: true });
+  await writeFile(managedRuntimePath, 'managed-runtime\n', 'utf-8');
+  const runtimeAsset = cliDistBuildManifest.writeCliRuntimeAssetBuildManifest({
+    runtimeRoot: stagingSnapshotRoot,
+    entrypoint: stagingEntrypoint,
+    relativePath: PINNED_RUNNER_MANAGED_PROVIDER_RUNTIME_RELATIVE_PATH.join('/'),
+  }).runtimeAsset;
+  const snapshotIdentity = `${manifest.fingerprint}-${runtimeAsset.sha256}-${workspaceRuntimeIdentity}-package-dist-v4`;
+  const snapshotRoot = join(snapshotsDir, snapshotIdentity);
+  await rename(stagingSnapshotRoot, snapshotRoot);
+  await writeFile(join(snapshotRoot, '.fingerprint'), `${manifest.fingerprint}\n`, 'utf-8');
+  await writeFile(join(snapshotRoot, '.workspace-runtime-identity'), `${workspaceRuntimeIdentity}\n`, 'utf-8');
+
+  // Keep the canonical mutable path present but deliberately inadmissible. The last-known-good
+  // immutable runner must boot without waiting for or rewriting this in-flight publication.
+  await rm(join(cliDir, 'dist'), { recursive: true, force: true });
+  await mkdir(join(cliDir, 'dist'), { recursive: true });
+  await writeFile(mutableDistEntrypoint, 'export {};\n', 'utf-8');
+  assert.equal(
+    resolveNewestReadyPinnedRunnerSnapshot(mutableDistEntrypoint)?.snapshotEntrypoint,
+    join(snapshotRoot, 'package-dist', 'index.mjs'),
+  );
+  await writeHappyMonorepoMarkers(tmp);
+  await writeFile(join(tmp, 'package.json'), '{ "private": true }\n', 'utf-8');
+  await writeFile(join(tmp, 'yarn.lock'), '# root yarn\n', 'utf-8');
+
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  const statePath = join(cliHomeDir, 'daemon.state.json');
+  const runtimeStatePath = join(tmp, 'stack', 'stack.runtime.json');
+  await mkdir(cliHomeDir, { recursive: true });
+  await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+  await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+  const env = buildDaemonDistGuardEnv({
+    HAPPIER_STACK_REPO_DIR: tmp,
+    HAPPIER_HOME_DIR: cliHomeDir,
+    HAPPIER_STACK_HOME_DIR: join(tmp, 'hstack-home'),
+    HAPPIER_STACK_CLI_BUILD: '0',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+    HAPPIER_TEST_DAEMON_SOURCE_MARKER: launchMarker,
+    HAPPIER_TEST_DAEMON_CLOSURE_ENV_MARKER: closureEnvMarker,
+  });
+  t.after(async () => {
+    await stopLocalDaemon({
+      cliBin,
+      internalServerUrl,
+      cliHomeDir,
+      env,
+      stackName: 'dev',
+    }).catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  await startLocalDaemonWithAuth({
+    cliBin,
+    cliHomeDir,
+    internalServerUrl,
+    publicServerUrl,
+    runtimeStatePath,
+    isShuttingDown: () => false,
+    forceRestart: false,
+    admitPriorDistImmediately: true,
+    env,
+    stackName: 'dev',
+    cliIdentity: 'default',
+  });
+
+  assert.ok((await readDaemonPid(statePath)) > 1);
+  assert.equal(await readFile(launchMarker, 'utf-8'), 'immutable-runner\n');
+  assert.deepEqual(JSON.parse(await readFile(closureEnvMarker, 'utf-8')), {
+    distEntrypoint: mutableDistEntrypoint,
+    subprocessEntrypoint: null,
+    preferTsx: '0',
+    fingerprint: manifest.fingerprint,
+  });
 });
 
 test('source daemon cold start uses an unchanged runnable prior dist when the current build fails', async (t) => {
@@ -2114,6 +2799,7 @@ import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 if (args[0] !== 'daemon') process.exit(0);
+if (args[1] === '--help') process.exit(0);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 const state = join(home, 'daemon.state.json');
@@ -2490,7 +3176,12 @@ test('startLocalDaemonWithAuth repoints stale fixture cliBin to the active check
       });
 
       assert.equal(await readFile(markerPath, 'utf-8'), 'active\n');
-      assert.equal(await readFile(lockMarkerPath, 'utf-8'), '');
+      const inheritedLease = JSON.parse(await readFile(lockMarkerPath, 'utf-8'));
+      assert.equal(
+        inheritedLease.path,
+        resolveCliDistBuildLockPath(await realpath(activeRoot)),
+      );
+      assert.match(String(inheritedLease.token ?? ''), /^[a-f0-9-]{36}$/i);
     } finally {
       await stopLocalDaemon({
         cliBin: staleCliBin,
@@ -3187,6 +3878,116 @@ test('startLocalDaemonWithAuth kills the daemon from daemon.state.json when daem
       env,
     });
   } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('failed Stack restart preserves a concurrently published successor lock and state byte-for-byte', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-successor-publication-'));
+  const successor = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    detached: true,
+    env: { PATH: process.env.PATH ?? '' },
+    stdio: 'ignore',
+  });
+  successor.unref();
+  try {
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    const binDir = join(tmp, 'bin');
+    const cliCommand = 'happier-successor-publication-fixture';
+    const commandPath = join(binDir, cliCommand);
+    const lsofPath = join(binDir, 'lsof');
+    await mkdir(binDir, { recursive: true });
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const baseEnv = buildDaemonDistGuardEnv({
+      HAPPIER_STACK_CLI_BUILD: '0',
+      HAPPIER_STACK_TUI: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '75',
+      HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
+      HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    });
+    const daemonEnv = getDaemonEnv({
+      baseEnv,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+    const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({
+      cliHomeDir,
+      serverUrl: internalServerUrl,
+      env: daemonEnv,
+    });
+    const successorStateRaw = `${JSON.stringify({
+      pid: successor.pid,
+      httpPort: 65534,
+      startedAt: 7_777,
+      startedWithCliVersion: '0.0.0-successor',
+      controlToken: 'successor-control-token',
+    }, null, 2)}\n`;
+    const successorLockRaw = `${JSON.stringify({
+      t: 'happier_daemon_lock_v1',
+      pid: successor.pid,
+      ownerToken: '00000000-0000-4000-8000-000000000001',
+      processStartedAtMs: 7_777,
+      createdAtMs: 7_777,
+    })}\n`;
+    await writeFile(commandPath, `#!/bin/sh
+case "$1:$2" in
+  daemon:stop)
+    mkdir -p "$(dirname "$HAPPIER_TEST_SUCCESSOR_STATE_PATH")"
+    printf '%s' "$HAPPIER_TEST_SUCCESSOR_STATE_RAW" > "$HAPPIER_TEST_SUCCESSOR_STATE_PATH"
+    printf '%s' "$HAPPIER_TEST_SUCCESSOR_LOCK_RAW" > "$HAPPIER_TEST_SUCCESSOR_LOCK_PATH"
+    exit 0
+    ;;
+  daemon:start)
+    exit 47
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+`, 'utf-8');
+    await chmod(commandPath, 0o755);
+    await writeFile(lsofPath, '#!/bin/sh\nprintf "COMMAND PID USER FD TYPE NAME\\nfixture 1 user 1r REG /unrelated\\n"\n', 'utf-8');
+    await chmod(lsofPath, 0o755);
+
+    await assert.rejects(
+      () => startLocalDaemonWithAuth({
+        cliBin: join(tmp, 'runtime', 'cli', 'happier'),
+        cliCommand,
+        cliHomeDir,
+        internalServerUrl,
+        publicServerUrl,
+        isShuttingDown: () => false,
+        forceRestart: true,
+        env: {
+          ...baseEnv,
+          HAPPIER_TEST_SUCCESSOR_STATE_PATH: statePath,
+          HAPPIER_TEST_SUCCESSOR_LOCK_PATH: lockPath,
+          HAPPIER_TEST_SUCCESSOR_STATE_RAW: successorStateRaw,
+          HAPPIER_TEST_SUCCESSOR_LOCK_RAW: successorLockRaw,
+        },
+        stackName: 'dev',
+        cliIdentity: 'default',
+      }),
+      /Failed to start daemon/,
+    );
+
+    assert.equal(await readFile(statePath, 'utf-8'), successorStateRaw);
+    assert.equal(await readFile(lockPath, 'utf-8'), successorLockRaw);
+  } finally {
+    try {
+      process.kill(successor.pid, 'SIGKILL');
+    } catch {
+      // already exited
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });
