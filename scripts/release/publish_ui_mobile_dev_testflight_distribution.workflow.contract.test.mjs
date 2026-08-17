@@ -13,4 +13,5 @@ test('publish-ui-mobile-dev keeps TestFlight external distribution logic inside 
   assert.match(src, /APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS:\s*\$\{\{\s*vars\.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS\s*\}\}/);
   assert.doesNotMatch(src, /node scripts\/pipeline\/run\.mjs expo-testflight-distribute/);
   assert.match(src, /--build-json "\/tmp\/eas_build\.ios\.json"/);
+  assert.equal(src.match(/--preflight-only/g)?.length, 2);
 });

@@ -387,6 +387,20 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
+      - name: Validate configured external TestFlight groups
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --preflight-only \
+            --secrets-source env
+
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn
 
@@ -458,6 +472,20 @@ jobs:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Validate configured external TestFlight groups
+        env:
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: ${{ vars.APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs ui-mobile-release \
+            --environment dev \
+            --action native_submit \
+            --platform ios \
+            --profile dev \
+            --preflight-only \
+            --secrets-source env
 
       - name: Enable Corepack (Yarn)
         uses: ./.github/actions/enable-corepack-yarn

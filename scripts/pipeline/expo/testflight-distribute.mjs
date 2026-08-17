@@ -16,7 +16,7 @@ import {
 } from './mobile-release-environments.mjs';
 import { buildAscBuildsListUrl } from './testflight-asc-builds-url.mjs';
 import { buildEasBuildViewArgs } from './testflight-eas-cli-args.mjs';
-import { isAscResourceId, resolveExternalGroupSelections } from './testflight-group-resolution.mjs';
+import { resolveExternalGroupSelections } from './testflight-group-resolution.mjs';
 import { readIosIpaMetadata } from './read-ios-ipa-metadata.mjs';
 import { ensureBetaReviewSubmission } from './testflight-beta-review.mjs';
 
@@ -307,13 +307,25 @@ async function resolveBuildForDistribution({ request, ascAppId, buildNumber, app
 }
 
 async function resolveExternalGroups({ request, ascAppId, externalGroupNames }) {
-  const needsNameLookup = externalGroupNames.some((selection) => !isAscResourceId(selection));
-  const groups = needsNameLookup
-    ? await ascListAll({ request, url: buildAscBaseUrl(`/v1/apps/${ascAppId}/betaGroups?limit=200`) })
-    : [];
+  const groups = await ascListAll({ request, url: buildAscBaseUrl(`/v1/apps/${ascAppId}/betaGroups?limit=200`) });
   const resolved = resolveExternalGroupSelections({ groups, selections: externalGroupNames });
+  const availableExternalGroups = groups
+    .filter((group) => group?.attributes?.isInternalGroup !== true)
+    .map((group) => {
+      const id = String(group?.id ?? '').trim();
+      const name = String(group?.attributes?.name ?? '').trim();
+      return name && id ? `${name} (${id})` : name || id;
+    })
+    .filter(Boolean);
   return resolved.map((group, index) => {
-    if (!group) fail(`Unable to find external TestFlight group '${externalGroupNames[index]}' for app ${ascAppId}.`);
+    if (!group) {
+      fail(
+        [
+          `Unable to find external TestFlight group '${externalGroupNames[index]}' for app ${ascAppId}.`,
+          `Available external groups: ${availableExternalGroups.length > 0 ? availableExternalGroups.join(', ') : '<none>'}.`,
+        ].join('\n'),
+      );
+    }
     return group;
   });
 }
@@ -355,6 +367,7 @@ async function main() {
       'wait-processing': { type: 'string', default: 'true' },
       'processing-timeout-seconds': { type: 'string', default: '3600' },
       'eas-cli-version': { type: 'string', default: '' },
+      'validate-groups-only': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -371,6 +384,7 @@ async function main() {
   const requestedProfile = String(values.profile ?? '').trim();
   const submitProfile = normalizeMobileReleaseProfile(requestedProfile) || requestedProfile || environment;
   const dryRun = values['dry-run'] === true;
+  const validateGroupsOnly = values['validate-groups-only'] === true;
   const waitProcessing = parseBool(values['wait-processing'], '--wait-processing');
   const submitBetaReview = parseChoice(values['submit-beta-review'], '--submit-beta-review', ['auto', 'true', 'false']);
   const timeoutSeconds = Number.parseInt(String(values['processing-timeout-seconds'] ?? '').trim(), 10);
@@ -403,7 +417,7 @@ async function main() {
     if (!buildNumber) buildNumber = resolved.buildNumber;
     if (!appVersion) appVersion = resolved.appVersion;
   }
-  if (!buildNumber && !dryRun) {
+  if (!buildNumber && !dryRun && !validateGroupsOnly) {
     fail('A build number is required. Provide --build-number directly, or pass --eas-build-id / --build-json for EAS-backed or local artifact resolution.');
   }
 
@@ -432,6 +446,14 @@ async function main() {
     ...input,
     token: createJwt(ascCredentials),
   });
+  const groups = await resolveExternalGroups({ request, ascAppId, externalGroupNames: externalGroups });
+  for (const group of groups) {
+    const groupId = String(group?.id ?? '').trim();
+    const groupName = String(group?.attributes?.name ?? '').trim();
+    console.log(`[pipeline] validated external TestFlight group ${groupName || groupId}${groupName ? ` (${groupId})` : ''}`);
+  }
+  if (validateGroupsOnly) return;
+
   const build = await resolveBuildForDistribution({
     request,
     ascAppId,
@@ -440,7 +462,6 @@ async function main() {
     waitProcessing,
     timeoutSeconds,
   });
-  const groups = await resolveExternalGroups({ request, ascAppId, externalGroupNames: externalGroups });
   await attachBuildToGroups({ request, build, groups });
   await ensureBetaReviewSubmission({
     build,

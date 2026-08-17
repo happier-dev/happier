@@ -92,3 +92,41 @@ test('ui-mobile-release native_submit auto-distributes dev iOS builds using the 
   assert.match(out, /--external-groups"\s+"dev-group-id"/);
   assert.match(out, /--build-json"\s+"\/tmp\/eas_build\.ios\.json"/);
 });
+
+test('ui-mobile-release can validate TestFlight groups without starting a native build', () => {
+  const out = execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+      'ui-mobile-release',
+      '--environment',
+      'dev',
+      '--action',
+      'native_submit',
+      '--platform',
+      'ios',
+      '--profile',
+      'dev',
+      '--preflight-only',
+      '--dry-run',
+      '--secrets-source',
+      'env',
+    ],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        APPLE_API_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n',
+        APP_STORE_CONNECT_PUBLICDEV_EXTERNAL_GROUPS: 'Happier (dev)',
+      },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+
+  assert.match(out, /scripts\/pipeline\/expo\/testflight-distribute\.mjs/);
+  assert.match(out, /--validate-groups-only/);
+  assert.doesNotMatch(out, /scripts\/pipeline\/expo\/native-build\.mjs/);
+  assert.doesNotMatch(out, /scripts\/pipeline\/expo\/submit\.mjs/);
+});
