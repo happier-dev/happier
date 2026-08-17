@@ -246,6 +246,67 @@ describe('requestSessionStop marker fallback', () => {
     expect(mocks.waitForTrackedRunnerProcessesExit).not.toHaveBeenCalled();
   });
 
+  it('does not report a post-ambiguity marker refusal with a pre-signal reason', async () => {
+    // The tenth instance of the arm-guarantee class, at its producer.
+    //
+    // The marker fallback runs here only BECAUSE the daemon transport was
+    // ambiguous — the daemon may have accepted and executed Stop and lost only
+    // its answer, which is precisely why its markers are then gone or its
+    // runner absent. Reporting the fallback's own refusal reason hands the
+    // caller a `physical_stop_unconfirmed` reason from the set that proves
+    // "nothing was signalled", and the Agent transition turns that into
+    // `rejected('source_stop_failed')` with `sourceEffect: 'none'` — the UI
+    // offers Keep editing in front of a runtime that is already dead.
+    const attachmentId = 'attachment-ambiguous-then-gone';
+    mocks.stopDaemonSession.mockRejectedValue(new Error('local control timeout'));
+    // Markers are gone: the daemon that (may have) stopped the session removed
+    // them. The fallback therefore answers `not_found`.
+    mocks.listSessionMarkers.mockResolvedValue([]);
+    const sessionsDir = join(happyHomeDir, 'terminal', 'sessions');
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(join(sessionsDir, 'sess-marker-stop.json'), JSON.stringify({
+      version: 2,
+      attachmentId,
+      sessionId: 'sess-marker-stop',
+      handle: {
+        attachmentId,
+        kind: 'zellij',
+        sessionName: 'ambiguous-host',
+        paneId: 'terminal_1',
+        socketDir: '/tmp/ambiguous-zellij',
+        attachMetadata: {
+          attachStrategy: 'terminal_host',
+          topology: 'shared',
+          locality: 'same_machine',
+          liveProbe: 'required',
+        },
+      },
+      terminal: {
+        mode: 'zellij',
+        zellij: {
+          sessionName: 'ambiguous-host',
+          paneId: 'terminal_1',
+          socketDirV1: '/tmp/ambiguous-zellij',
+        },
+      },
+      updatedAt: 1,
+    }), 'utf8');
+
+    const { requestSessionStop } = await import('./requestSessionStop');
+    const result = await requestSessionStop({ credentials, idOrPrefix: 'sess-marker-stop' });
+
+    expect(result).toMatchObject({ ok: true, stopped: false });
+    // The fallback really ran — otherwise this asserts nothing.
+    expect(mocks.listSessionMarkers).toHaveBeenCalled();
+    // The reason must not be one that a consumer may read as "nothing was
+    // signalled"; the ambiguity that caused the fallback is what it reports.
+    expect(result).not.toMatchObject({
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'local_session_not_found' },
+    });
+    expect(JSON.stringify((result as { stopOutcome?: unknown }).stopOutcome))
+      .toContain('transport_ambiguous');
+  });
+
   it('does not let pre-existing inactive metadata turn a daemon-incomplete stop into success', async () => {
     mocks.stopDaemonSession.mockResolvedValue({
       status: 'incomplete',
@@ -513,7 +574,12 @@ describe('requestSessionStop marker fallback', () => {
       ok: true,
       sessionId: 'sess-marker-stop',
       stopped: false,
-      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'attachment_mismatch' },
+      // The refusal itself is unchanged and still fails closed — nothing is
+      // destroyed. Only the REPORTED reason moved: `attachment_mismatch` is one
+      // of the reasons a consumer reads as proof that nothing was signalled,
+      // and after an ambiguous daemon stop that proof does not exist. The
+      // ambiguity that caused the fallback is the honest answer.
+      stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
     });
     expect(mocks.disposeTerminalHost).not.toHaveBeenCalled();
   });

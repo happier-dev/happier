@@ -309,6 +309,27 @@ export async function requestSessionStop(params: Readonly<{
       }).catch(
         (): StopSessionAttemptResult => ({ status: 'incomplete', reason: 'marker_fallback_failed' }),
       );
+      // A fallback that ran BECAUSE the daemon transport was ambiguous cannot
+      // prove that nothing was signalled: the daemon may have accepted and
+      // executed Stop and lost only its answer — which is precisely why its
+      // markers are then gone (`not_found`) or its tracked runner absent.
+      // Reporting the fallback's own refusal reason would emit a
+      // `physical_stop_unconfirmed` reason from the set consumers read as
+      // pre-signal proof, and the Agent transition turns that into
+      // `rejected('source_stop_failed')` — `sourceEffect: 'none'`, which the UI
+      // offers as Keep editing in front of a runtime that may already be dead.
+      // The ambiguity that caused the fallback is the honest answer.
+      // Only the `physical_stop_unconfirmed` reasons carry that false pre-signal
+      // claim. A `stopped_cleanup_incomplete` outcome already proves the host
+      // WAS destroyed and names a strictly more informative residue, so it is
+      // left exactly as the fallback reported it.
+      if (
+        mayRunExactAmbiguousFallback
+        && physicalStopResult.status !== 'stopped'
+        && stopOutcomeFromAttemptResult(physicalStopResult).status === 'physical_stop_unconfirmed'
+      ) {
+        physicalStopResult = { status: 'incomplete', reason: 'transport_ambiguous' };
+      }
     }
     if (physicalStopResult.status !== 'stopped') {
       return {
