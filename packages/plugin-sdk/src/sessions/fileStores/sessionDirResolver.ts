@@ -1,11 +1,17 @@
+/** @moduleRealm daemon */
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { SessionFileStoreProductDescriptorV1 } from './productDescriptor.js';
 import type { SessionFileStoreRootDescriptorV1 } from './sessionRootDescriptor.js';
-import { canonicalizePath, canonicalizePathSync, resolveConfiguredPath } from './paths.js';
+import {
+  canonicalizePath,
+  canonicalizePathSync,
+  expandHomePath,
+  resolveHomeDirFromEnvironment,
+  resolveConfiguredPath,
+} from './paths.js';
 import { validateSessionFileStoreRootDescriptor } from './sessionRootDescriptor.js';
 
 export type SessionFileStoreDirSource =
@@ -33,6 +39,30 @@ function readNonEmpty(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+/**
+ * Materializes the one vendor environment slot used by a file-backed Agent.
+ * A declared per-Agent setting wins over the daemon's ambient environment so
+ * two plugins may safely target vendors which happen to reuse the same key.
+ */
+export function resolveSessionFileStoreLaunchEnvironment(input: Readonly<{
+  product: SessionFileStoreProductDescriptorV1;
+  settings?: Readonly<Record<string, unknown>>;
+  env?: Readonly<Record<string, string | undefined>>;
+}>): Readonly<Record<string, string>> {
+  const env = input.env ?? {};
+  const settingId = input.product.agentDirSettingId;
+  const configured = settingId ? readNonEmpty(input.settings?.[settingId]) : null;
+  const ambient = readNonEmpty(env[input.product.agentDirEnvVar]);
+  const selected = configured
+    ? resolveConfiguredPath(configured, {
+      homeDir: resolveHomeDirFromEnvironment(env),
+    })
+    : ambient;
+  return Object.freeze(selected
+    ? { [input.product.agentDirEnvVar]: selected }
+    : {});
+}
+
 function validateGrantedRootSync(
   input: SessionFileStoreResolutionInputV1,
   env: Readonly<Record<string, string | undefined>>,
@@ -49,7 +79,7 @@ function validateGrantedRootSync(
 }
 
 function defaultAgentDir(product: SessionFileStoreProductDescriptorV1, homeDir?: string): string {
-  return join(homeDir ?? homedir(), ...product.defaultAgentDirSegments);
+  return join(expandHomePath('~', homeDir), ...product.defaultAgentDirSegments);
 }
 
 async function readSettingsSessionDir(params: Readonly<{

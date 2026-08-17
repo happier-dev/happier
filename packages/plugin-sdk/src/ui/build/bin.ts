@@ -10,6 +10,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep, relative } 
 import { defineHostedWebViteBuildPreset } from '../hostedWebBuild.js';
 import { defineReactNativeRepackBuildPreset } from '../reactNativeBuild.js';
 import { defineReactNativeWebViteBuildPreset } from '../reactNativeWebBuild.js';
+import { readRelativeBuildPath } from '../buildPaths.js';
 import {
     buildUiArtifacts,
     PluginUiBuildError,
@@ -17,7 +18,9 @@ import {
     type PluginUiBuildSurfaceV1,
 } from './buildUiArtifacts.js';
 import {
-    PLUGIN_UI_BUILD_CONFIG_BASENAMES,
+    BUILD_CONFIG_BASENAMES,
+    DEFAULT_PLUGIN_UI_BUILD_OUT_DIR,
+    resolvePluginUiSurfaceOutDir,
     type PluginUiBuildConfig,
     type PluginUiBuildTarget,
 } from './config.js';
@@ -28,6 +31,7 @@ import {
     type ManagedBundlerExecService,
     type ManagedPluginUiBuildVersionsV1,
 } from './managedBundler.js';
+import { prepareManagedPluginUiBuildOperation } from './managedBuildConfig.js';
 
 export type PluginBuildUiCliLoadConfigV1 = (
     context: Readonly<{ projectRoot: string; configPath: string | null }>,
@@ -65,10 +69,10 @@ function helpText(): string {
         '  happier-plugin-build-ui --help',
         '',
         'Config discovery:',
-        `  ${PLUGIN_UI_BUILD_CONFIG_BASENAMES.join(', ')}`,
+        `  ${BUILD_CONFIG_BASENAMES.join(', ')}`,
         '',
         'Config export contract:',
-        '  export default definePluginUiBuildConfig({ projectRoot?, outDir?, targets: [...] })',
+        '  export default defineBuildConfig({ projectRoot?, outDir?, targets: [...] })',
         '',
         'outDir is managed bundler work output, not the install artifact root.',
         'The host selects Vite/Re.Pack and stages verified files into dist/happier-plugin-ui.',
@@ -183,6 +187,21 @@ function resolvePackageBin(
     return join(dirname(require.resolve(`${packageName}/package.json`)), binRelativePath);
 }
 
+function createManagedBundlerChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    const childEnv = { ...env };
+    // The workspace builder grants this process authority over its staged dist
+    // tree. Vite/Re.Pack are work-artifact producers, not nested package
+    // builders, so passing that authority through lets their dependency
+    // lifecycle scripts replace the parent package's staged TypeScript output.
+    // Environment names are case-insensitive on Windows; clear every alias.
+    for (const name of Object.keys(childEnv)) {
+        if (name.toLowerCase() === 'happier_workspace_dist_output_dir') {
+            delete childEnv[name];
+        }
+    }
+    return childEnv;
+}
+
 async function runNodeBin(
     binPath: string,
     args: readonly string[],
@@ -192,6 +211,7 @@ async function runNodeBin(
     return await new Promise<ManagedBundlerExecResult>((resolveResult, reject) => {
         const child = spawn(process.execPath, [binPath, ...args], {
             cwd,
+            env: createManagedBundlerChildEnv(),
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         const timeout = timeoutMs
@@ -264,7 +284,7 @@ async function defaultListEmittedFiles(
 const defaultLoadConfig: PluginBuildUiCliLoadConfigV1 = async ({ projectRoot, configPath }) => {
     const candidates = configPath
         ? [configPath]
-        : PLUGIN_UI_BUILD_CONFIG_BASENAMES.map((name) => resolve(projectRoot, name));
+        : BUILD_CONFIG_BASENAMES.map((name) => resolve(projectRoot, name));
     for (const candidate of candidates) {
         if (!await pathExists(candidate)) {
             continue;
@@ -275,10 +295,32 @@ const defaultLoadConfig: PluginBuildUiCliLoadConfigV1 = async ({ projectRoot, co
         'config_not_found',
         [
             `No plugin UI build config found (looked for ${candidates.join(', ')})`,
-            'Create pluginUiBuild.mjs (or .js/.ts) exporting definePluginUiBuildConfig({ targets }), or pass --config <path>.',
+            'Create pluginUiBuild.mjs (or .js/.ts) exporting defineBuildConfig({ targets }), or pass --config <path>.',
         ].join('. '),
     );
 };
+
+function normalizeBundlerConfigPath(value: unknown, targetIndex: number): string {
+    if (typeof value !== 'string') {
+        throw new PluginUiBuildError(
+            'config_invalid',
+            `Plugin UI build config target[${targetIndex}] bundlerConfig must be a string`,
+        );
+    }
+    try {
+        return readRelativeBuildPath(value, 'bundlerConfig');
+    } catch (cause) {
+        throw new PluginUiBuildError(
+            'config_invalid',
+            `Plugin UI build config target[${targetIndex}] ${(cause as Error).message}`,
+        );
+    }
+}
+
+function targetProducesViteSurface(target: PluginUiBuildTarget): boolean {
+    if (target.kind === 'hostedWeb') return true;
+    return target.platforms.some((platform) => platform === 'web' || platform === 'desktop');
+}
 
 function assertConfig(input: unknown, configPath: string): PluginUiBuildConfig {
     if (typeof input !== 'object' || input === null) {
@@ -302,67 +344,176 @@ function assertConfig(input: unknown, configPath: string): PluginUiBuildConfig {
         throw new PluginUiBuildError('no_targets', `Plugin UI build config ${configPath} did not declare any targets`);
     }
     const targetIdentities = new Set<string>();
+    const normalizedTargets: PluginUiBuildTarget[] = [];
     for (const [index, target] of config.targets.entries()) {
         if (typeof target !== 'object' || target === null) {
             throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must be an object`);
         }
-        const unknownTargetKey = Object.keys(target).find((key) => !['rendererId', 'entry', 'kind', 'platforms', 'module'].includes(key));
-        if (unknownTargetKey) {
-            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] contains unknown field "${unknownTargetKey}"`);
-        }
-        if (typeof target.rendererId !== 'string' || target.rendererId.trim() === '') {
-            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare rendererId`);
-        }
-        if (typeof target.entry !== 'string' || target.entry.trim() === '') {
-            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare entry`);
-        }
-        if (target.kind !== 'hostedWeb' && target.kind !== 'reactNative') {
+        // `loadConfig` is an untrusted module boundary. Keep the narrow cast
+        // local and validate every field before it reaches the typed builder.
+        const targetRecord = target as Record<string, unknown>;
+        if (targetRecord.kind !== 'hostedWeb' && targetRecord.kind !== 'reactNative') {
             throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] has unsupported kind`);
         }
-        if (!Array.isArray(target.platforms) || target.platforms.length === 0) {
+        const allowedTargetKeys = targetRecord.kind === 'hostedWeb'
+            ? ['rendererId', 'entry', 'kind', 'bundlerConfig']
+            : ['rendererId', 'entry', 'kind', 'platforms', 'bundlerConfig', 'module', 'collectionMigrations'];
+        const unknownTargetKey = Object.keys(targetRecord).find((key) => !allowedTargetKeys.includes(key));
+        if (unknownTargetKey) {
+            if (targetRecord.kind === 'hostedWeb' && unknownTargetKey === 'platforms') {
+                throw new PluginUiBuildError(
+                    'config_invalid',
+                    `Plugin UI build config target[${index}] hostedWeb does not accept platforms; it emits one portable web graph`,
+                );
+            }
+            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] contains unknown field "${unknownTargetKey}"`);
+        }
+        if (typeof targetRecord.rendererId !== 'string' || targetRecord.rendererId.trim() === '') {
+            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare rendererId`);
+        }
+        if (typeof targetRecord.entry !== 'string' || targetRecord.entry.trim() === '') {
+            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare entry`);
+        }
+        const rendererId = targetRecord.rendererId;
+        const entry = targetRecord.entry;
+        const bundlerConfig = targetRecord.bundlerConfig === undefined
+            ? undefined
+            : normalizeBundlerConfigPath(targetRecord.bundlerConfig, index);
+        const identity = `${targetRecord.kind}:${rendererId}`;
+        if (targetIdentities.has(identity)) {
+            throw new PluginUiBuildError('config_invalid', `Plugin UI build config contains duplicate target "${identity}"`);
+        }
+        targetIdentities.add(identity);
+
+        if (targetRecord.kind === 'hostedWeb') {
+            normalizedTargets.push(Object.freeze({
+                rendererId,
+                entry,
+                kind: 'hostedWeb',
+                ...(bundlerConfig === undefined ? {} : { bundlerConfig }),
+            }));
+            continue;
+        }
+
+        const platforms = targetRecord.platforms;
+        if (!Array.isArray(platforms) || platforms.length === 0) {
             throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare platforms[]`);
         }
-        const invalidPlatform = target.platforms.find(
+        const invalidPlatform = platforms.find(
             (platform: unknown) => typeof platform !== 'string'
                 || !['web', 'ios', 'android', 'desktop'].includes(platform),
         );
         if (invalidPlatform) {
             throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] has unsupported platform "${invalidPlatform}"`);
         }
-        if (new Set(target.platforms).size !== target.platforms.length) {
+        if (new Set(platforms).size !== platforms.length) {
             throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] contains duplicate platforms`);
         }
-        if (target.kind === 'reactNative' && target.platforms.some((platform: unknown) => platform === 'ios' || platform === 'android')) {
-            const module = target.module as Record<string, unknown> | undefined;
-            if (!module || Object.keys(module).some((key) => !['containerName', 'modulePath', 'exportName'].includes(key))) {
+        const moduleValue = targetRecord.module;
+        let module: Readonly<{ containerName: string; modulePath: string; exportName: string }> | undefined;
+        if (moduleValue !== undefined) {
+            if (
+                typeof moduleValue !== 'object'
+                || moduleValue === null
+                || Array.isArray(moduleValue)
+                || Object.keys(moduleValue).some((key) => !['containerName', 'modulePath', 'exportName'].includes(key))
+            ) {
                 throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare exact module containerName/modulePath/exportName for native platforms`);
             }
+            const moduleRecord = moduleValue as Record<string, unknown>;
             for (const key of ['containerName', 'modulePath', 'exportName'] as const) {
-                if (typeof module[key] !== 'string' || module[key].trim() === '') {
+                if (typeof moduleRecord[key] !== 'string' || moduleRecord[key].trim() === '') {
                     throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] module.${key} must be a non-empty string`);
                 }
             }
+            module = Object.freeze({
+                containerName: moduleRecord.containerName as string,
+                modulePath: moduleRecord.modulePath as string,
+                exportName: moduleRecord.exportName as string,
+            });
         }
-        const identity = `${target.kind}:${target.rendererId}`;
-        if (targetIdentities.has(identity)) {
-            throw new PluginUiBuildError('config_invalid', `Plugin UI build config contains duplicate target "${identity}"`);
+        if (platforms.some((platform: unknown) => platform === 'ios' || platform === 'android') && !module) {
+            throw new PluginUiBuildError('config_invalid', `Plugin UI build config target[${index}] must declare exact module containerName/modulePath/exportName for native platforms`);
         }
-        targetIdentities.add(identity);
+        const collectionMigrationsValue = targetRecord.collectionMigrations;
+        let collectionMigrations: Readonly<{ exportName: string }> | undefined;
+        if (collectionMigrationsValue !== undefined) {
+            if (
+                typeof collectionMigrationsValue !== 'object'
+                || collectionMigrationsValue === null
+                || Array.isArray(collectionMigrationsValue)
+                || Object.keys(collectionMigrationsValue).some((key) => key !== 'exportName')
+            ) {
+                throw new PluginUiBuildError(
+                    'config_invalid',
+                    `Plugin UI build config target[${index}] must declare exact collectionMigrations.exportName`,
+                );
+            }
+            const collectionMigrationsRecord = collectionMigrationsValue as Record<string, unknown>;
+            if (
+                typeof collectionMigrationsRecord.exportName !== 'string'
+                || collectionMigrationsRecord.exportName.trim() === ''
+            ) {
+                throw new PluginUiBuildError(
+                    'config_invalid',
+                    `Plugin UI build config target[${index}] collectionMigrations.exportName must be a non-empty string`,
+                );
+            }
+            collectionMigrations = Object.freeze({ exportName: collectionMigrationsRecord.exportName });
+        }
+        normalizedTargets.push(Object.freeze({
+            rendererId,
+            entry,
+            kind: 'reactNative',
+            platforms: Object.freeze([...platforms]) as readonly ('web' | 'ios' | 'android' | 'desktop')[],
+            ...(bundlerConfig === undefined ? {} : { bundlerConfig }),
+            ...(module === undefined ? {} : { module }),
+            ...(collectionMigrations === undefined ? {} : { collectionMigrations }),
+        }));
     }
-    return config as PluginUiBuildConfig;
+    return Object.freeze({
+        ...(config.projectRoot === undefined ? {} : { projectRoot: config.projectRoot }),
+        ...(config.outDir === undefined ? {} : { outDir: config.outDir }),
+        targets: Object.freeze(normalizedTargets),
+    });
 }
 
 function replaceOutputRoot<TSurface extends PluginUiBuildSurfaceV1>(
     surface: TSurface,
     outputRoot: string,
+    bundlerConfigPath?: string,
 ): TSurface {
     return Object.freeze({
         ...surface,
+        ...(bundlerConfigPath === undefined ? {} : { bundlerConfigPath }),
         preset: Object.freeze({
             ...surface.preset,
             output: Object.freeze({ ...surface.preset.output, root: outputRoot }),
         }),
     }) as TSurface;
+}
+
+function resolveTargetViteConfigPath(
+    projectRoot: string,
+    target: PluginUiBuildTarget,
+): string | undefined {
+    if (target.bundlerConfig === undefined) {
+        return undefined;
+    }
+    const bundlerConfigPath = resolve(projectRoot, target.bundlerConfig);
+    const relativeConfigPath = relative(projectRoot, bundlerConfigPath);
+    if (
+        relativeConfigPath === '..'
+        || relativeConfigPath.startsWith(`..${sep}`)
+        || isAbsolute(relativeConfigPath)
+    ) {
+        throw new PluginUiBuildError(
+            'config_invalid',
+            `Plugin UI build target "${target.rendererId}" bundlerConfig must remain inside projectRoot`,
+            target.rendererId,
+        );
+    }
+    return bundlerConfigPath;
 }
 
 function createManagedBuildSurfaces(
@@ -378,6 +529,12 @@ function createManagedBuildSurfaces(
     const relativeWorkRoot = (rawRelativeWorkRoot || '.').split(sep).join('/');
     const surfaces: PluginUiBuildSurfaceV1[] = [];
     for (const target of config.targets) {
+        // Public `bundlerConfig` selects only an advanced Vite extension. Native
+        // Re.Pack always receives the builder-materialized config later in
+        // this operation; one path cannot safely represent both formats.
+        const viteConfigPath = targetProducesViteSurface(target)
+            ? resolveTargetViteConfigPath(projectRoot, target)
+            : undefined;
         if (target.kind === 'hostedWeb') {
             if (!versions.viteVersion) throw new PluginUiBuildError('bundler_version_missing', 'Managed Vite version is unavailable');
             const preset = defineHostedWebViteBuildPreset({
@@ -385,17 +542,20 @@ function createManagedBuildSurfaces(
                 sourceEntry: target.entry,
                 viteVersion: versions.viteVersion,
                 hostUiApiVersion: versions.hostUiApiVersion,
-                reactVersion: versions.reactVersion,
             });
             surfaces.push(replaceOutputRoot({
                 kind: 'hostedWeb',
                 preset,
                 hostUiApiVersion: versions.hostUiApiVersion,
-                reactVersion: versions.reactVersion,
-            }, `${relativeWorkRoot}/hosted-web/${target.rendererId}`));
+            }, resolvePluginUiSurfaceOutDir({
+                kind: 'hostedWeb',
+                rendererId: target.rendererId,
+                outDir: relativeWorkRoot,
+            }), viteConfigPath));
             continue;
         }
         if (!versions.reactNativeVersion) throw new PluginUiBuildError('bundler_version_missing', 'Managed React Native version is unavailable');
+        if (!versions.reactVersion) throw new PluginUiBuildError('bundler_version_missing', 'Managed React version is unavailable');
         if (target.platforms.some((platform) => platform === 'web' || platform === 'desktop')) {
             if (!versions.viteVersion) throw new PluginUiBuildError('bundler_version_missing', 'Managed Vite version is unavailable');
             const preset = defineReactNativeWebViteBuildPreset({
@@ -403,6 +563,7 @@ function createManagedBuildSurfaces(
                 sourceEntry: target.entry,
                 viteVersion: versions.viteVersion,
                 hostUiApiVersion: versions.hostUiApiVersion,
+                ...(target.collectionMigrations ? { collectionMigrations: target.collectionMigrations } : {}),
                 compatibility: {
                     reactVersion: versions.reactVersion,
                     reactNativeVersion: versions.reactNativeVersion,
@@ -416,7 +577,12 @@ function createManagedBuildSurfaces(
                     reactVersion: versions.reactVersion,
                     reactNativeVersion: versions.reactNativeVersion,
                 },
-            }, `${relativeWorkRoot}/react-native-web/${target.rendererId}`));
+            }, resolvePluginUiSurfaceOutDir({
+                kind: 'reactNative',
+                rendererId: target.rendererId,
+                platform: 'web',
+                outDir: relativeWorkRoot,
+            }), viteConfigPath));
         }
         for (const platform of target.platforms) {
             if (platform !== 'ios' && platform !== 'android') continue;
@@ -426,6 +592,7 @@ function createManagedBuildSurfaces(
                 platform,
                 sourceEntry: target.entry,
                 module: target.module!,
+                ...(target.collectionMigrations ? { collectionMigrations: target.collectionMigrations } : {}),
                 repackVersion: versions.repackVersion,
                 hostUiApiVersion: versions.hostUiApiVersion,
                 compatibility: {
@@ -441,7 +608,12 @@ function createManagedBuildSurfaces(
                     reactVersion: versions.reactVersion,
                     reactNativeVersion: versions.reactNativeVersion,
                 },
-            }, `${relativeWorkRoot}/react-native/${target.rendererId}/${platform}`));
+            }, resolvePluginUiSurfaceOutDir({
+                kind: 'reactNative',
+                rendererId: target.rendererId,
+                platform,
+                outDir: relativeWorkRoot,
+            })));
         }
     }
     return Object.freeze(surfaces);
@@ -487,29 +659,34 @@ export async function runPluginBuildUiCli(input: RunPluginBuildUiCliInputV1): Pr
         const config = assertConfig(loaded, parsed.configPath ?? '<injected>');
         const configBase = parsed.configPath === null ? parsed.projectRoot : dirname(parsed.configPath);
         const projectRoot = resolve(configBase, config.projectRoot ?? '.');
-        const workRoot = resolve(projectRoot, config.outDir ?? 'dist/ui');
+        const workRoot = resolve(projectRoot, config.outDir ?? DEFAULT_PLUGIN_UI_BUILD_OUT_DIR);
         const resolveVersions = input.resolveManagedBuildVersions ?? resolveManagedPluginUiBuildVersions;
         const versions = resolveVersions(projectRoot, config.targets);
         const surfaces = createManagedBuildSurfaces(config, projectRoot, workRoot, versions);
-        const runBundler = createManagedRuntimeBundlerRunner({
-            exec: input.exec ?? createStandaloneManagedBundlerExec(projectRoot),
-            emittedRoot: workRoot,
-            listEmittedFiles: defaultListEmittedFiles,
-            toArtifactRelativePath: (surface, absolutePath) => {
-                const surfaceOutputRoot = resolve(projectRoot, surface.preset.output.root);
-                const relativeToSurface = relative(surfaceOutputRoot, absolutePath).split(sep).join('/');
-                const artifactDirectory = dirname(surface.preset.output.entry).split(sep).join('/');
-                return `${artifactDirectory}/${relativeToSurface}`;
-            },
-        });
-        const result = await buildUiArtifacts({
-            projectRoot,
-            surfaces,
-            runBundler,
-        });
-        assertDeclarationArtifactEquality(surfaces, result);
-        input.onSuccess?.(result);
-        return 0;
+        const prepared = await prepareManagedPluginUiBuildOperation({ projectRoot, surfaces });
+        try {
+            const runBundler = createManagedRuntimeBundlerRunner({
+                exec: input.exec ?? createStandaloneManagedBundlerExec(projectRoot),
+                emittedRoot: workRoot,
+                listEmittedFiles: defaultListEmittedFiles,
+                toArtifactRelativePath: (surface, absolutePath) => {
+                    const surfaceOutputRoot = resolve(projectRoot, surface.preset.output.root);
+                    const relativeToSurface = relative(surfaceOutputRoot, absolutePath).split(sep).join('/');
+                    const artifactDirectory = dirname(surface.preset.output.entry).split(sep).join('/');
+                    return `${artifactDirectory}/${relativeToSurface}`;
+                },
+            });
+            const result = await buildUiArtifacts({
+                projectRoot,
+                surfaces: prepared.surfaces,
+                runBundler,
+            });
+            assertDeclarationArtifactEquality(prepared.surfaces, result);
+            input.onSuccess?.(result);
+            return 0;
+        } finally {
+            await prepared.cleanup();
+        }
     } catch (cause) {
         const code = cause instanceof PluginUiBuildError ? `[${cause.code}] ` : '';
         reportError(`happier-plugin-build-ui: ${code}${(cause as Error).message}`);

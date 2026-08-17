@@ -45,7 +45,7 @@ function spawnExclusiveLockWorker(input: Readonly<{
 }>): ReturnType<typeof spawn> {
   const source = `
 import { stat, writeFile } from 'node:fs/promises';
-import { withExclusiveFileLock } from '@happier-dev/plugin-sdk/experimental/fs';
+import { withExclusiveFileLock } from '@happier-dev/plugin-sdk/fs';
 await withExclusiveFileLock({
   lockPath: process.env.HAPPIER_TEST_LOCK_PATH,
   timeoutMs: Number(process.env.HAPPIER_TEST_TIMEOUT_MS),
@@ -80,16 +80,51 @@ async function waitForChild(child: ReturnType<typeof spawn>): Promise<number | n
   });
 }
 
-describe('experimental fs helpers', () => {
-  it('publishes the fs helper experimental subpath', () => {
+describe('fs helpers', () => {
+  it('does not retain the dormant predecessor filesystem service declarations', () => {
+    const source = readFileSync(new URL('./fs.ts', import.meta.url), 'utf8');
+
+    for (const predecessorDeclaration of [
+      'FsCreateTempDirectoryInputV1',
+      'FsEntryV1',
+      'FsPathInputV1',
+      'FsRuntimeServiceV1',
+      'FsScopedPathListDiagnosticCodeV1',
+      'FsScopedPathListDiagnosticV1',
+      'FsScopedPathListFileInputV1',
+      'FsScopedPathListFileResultV1',
+      'FsStatV1',
+      'FsTempDirectoryV1',
+      'FsTempTextFileInputV1',
+      'FsWriteTextInputV1',
+    ]) {
+      expect(source, predecessorDeclaration).not.toContain(predecessorDeclaration);
+    }
+  });
+
+  it('publishes the canonical fs subpath', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
     ) as { exports?: Record<string, unknown> };
 
-    expect(packageJson.exports).toHaveProperty('./experimental/fs', {
-      types: './dist/fs.d.ts',
-      default: './dist/fs.js',
+    expect(packageJson.exports).toHaveProperty('./fs', {
+      types: './dist/fs/index.d.ts',
+      default: './dist/fs/index.js',
     });
+  });
+
+  it('projects the canonical environment-aware home resolver through the daemon fs subpath', async () => {
+    const fs = await import('./fs/index.js') as Readonly<{
+      resolveHomeDirFromEnvironment(
+        env: NodeJS.ProcessEnv,
+        platform?: NodeJS.Platform,
+      ): string;
+    }>;
+
+    expect(fs.resolveHomeDirFromEnvironment({
+      HOME: '/home/alice',
+      USERPROFILE: 'C:\\Users\\alice',
+    }, 'win32')).toBe('C:\\Users\\alice');
   });
 
   it('keeps exact-owner compatibility controls out of the author-facing fs module', async () => {

@@ -2,11 +2,12 @@ import {
     ConnectedServiceCredentialRecordV1Schema,
     ConnectedServiceCredentialRevisionV1Schema,
     type ConnectedServiceCredentialRecordV1 as ProtocolConnectedServiceCredentialRecordV1,
-    type ConnectedServiceCredentialRevisionV1,
-    type ConnectedServiceId as ProtocolConnectedServiceId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
+import type {
+    ConnectedServiceId as ProtocolConnectedServiceId,
+} from '@happier-dev/protocol/connect/connected-service-bindings';
 
-import type { FetchRuntimeServiceV1 } from '../fetch.js';
+import type { HttpService } from '../services/io.js';
 
 export {
     PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1,
@@ -26,43 +27,52 @@ export {
     ConnectedServiceAuthGroupIdSchema,
     ConnectedServiceBindingsV1Schema,
     ConnectedServiceProfileIdSchema,
+} from '@happier-dev/protocol/connect/connected-service-bindings';
+export {
     ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1Schema,
     ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema,
+} from '@happier-dev/protocol/sessions/work-state';
+export {
     ConnectedServiceQuotaRecoveryCreditKindV1Schema,
     ConnectedServiceQuotaRecoveryCreditStatusV1Schema,
     ConnectedServiceQuotaRecoveryCreditV1Schema,
     ConnectedServiceQuotaRecoveryCreditsV1Schema,
     ConnectedServiceQuotaSnapshotV1Schema,
-    buildConnectedServiceCredentialRecord,
-    normalizeConnectedServiceLimitCategoryV1,
-    resolveConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 export {
-    getProviderConnectedServicesAdapter,
-    readSessionMetadataConnectedServiceBindings,
-} from '@happier-dev/agents';
+    buildConnectedServiceCredentialRecord,
+} from '@happier-dev/protocol/connect/build-connected-service-credential-record';
+export {
+    normalizeConnectedServiceLimitCategoryV1,
+} from '@happier-dev/protocol/connect/connected-service-limit-category';
+export {
+    resolveConnectedServicesProviderStateSharingPolicyV1,
+} from '@happier-dev/protocol/account/settings/connected-services';
 export type {
-    AccountSettings,
     ConnectedServiceAuthGroupId,
+    ConnectedServiceId,
+    ConnectedServiceProfileId,
+} from '@happier-dev/protocol/connect/connected-service-bindings';
+export type {
     ConnectedServiceCredentialRecordV1,
     ConnectedServiceCredentialRevisionV1,
-    ConnectedServiceId,
-    ConnectedServiceLimitCategoryV1,
-    ConnectedServiceProfileId,
-    ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
-    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
     ConnectedServiceQuotaRecoveryCreditKindV1,
     ConnectedServiceQuotaRecoveryCreditStatusV1,
     ConnectedServiceQuotaRecoveryCreditV1,
     ConnectedServiceQuotaRecoveryCreditsV1,
     ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaSnapshotV1,
-    ConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-schemas';
 export type {
-    ProviderConnectedServicesAdapter,
-    SessionMetadataConnectedServiceBinding,
-} from '@happier-dev/agents';
+    ConnectedServiceLimitCategoryV1,
+} from '@happier-dev/protocol/connect/connected-service-limit-category';
+export type {
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+} from '@happier-dev/protocol/sessions/work-state';
+export type {
+    ConnectedServicesProviderStateSharingPolicyV1,
+} from '@happier-dev/protocol/account/settings/connected-services';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -370,7 +380,8 @@ export class ConnectedServiceQuotaFetchError extends Error {
 export type CloudCustomAuthenticatorContextV1 = Readonly<{
     signal: AbortSignal;
     now(): number;
-    fetch: FetchRuntimeServiceV1;
+    /** Cloud authentication has request authority only; it cannot open sockets. */
+    fetch: Pick<HttpService, 'request'>;
     browser: Readonly<{
         open(url: string): Promise<CloudAuthOpenBrowserResultV1>;
     }>;

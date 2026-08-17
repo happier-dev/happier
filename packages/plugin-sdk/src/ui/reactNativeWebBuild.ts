@@ -1,9 +1,13 @@
+/** @moduleRealm build */
 import {
     PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS,
     PluginUiArtifactsManifestEntryV1Schema,
-    type PluginUiArtifactFileV1,
-    type PluginUiArtifactsManifestEntryV1,
 } from '@happier-dev/protocol/plugins/ui';
+import type {
+    PluginUiArtifactFileV1,
+    PluginUiArtifactsManifestEntryV1,
+    PluginUiHostRuntimeExternalSpecifierV1,
+} from './publicContract.js';
 
 import {
     readOutputPathSegment,
@@ -12,8 +16,10 @@ import {
 } from './buildPaths.js';
 import {
     createPluginUiHostRuntimeExternalsVitePlugin,
-    type PluginUiHostRuntimeExternalsVitePlugin,
 } from './hostRuntimeExternalsBuildPlugin.js';
+import {
+    createPluginUiPackageInstanceVitePlugin,
+} from './build/pluginUiPackageIdentity.js';
 
 /**
  * RN-WEB-LOADER item 2 — LEDGER DEC-6: `reactNative` mode is the flagship
@@ -25,8 +31,8 @@ import {
  *
  * Bundle contract is intentionally IDENTICAL to the native Re.Pack contract
  * (`reactNativeBuild.ts` / `PluginReactNativeSurfaceModule`): the source
- * exports `renderSurface` (and optionally `acknowledgeHostRuntime`) as a
- * named export, NOT via a `defaultExportFactory` wrapper. React/RNW
+ * exports `renderSurface` as a named export, NOT via a `defaultExportFactory`
+ * wrapper. React/RNW
  * singleton sharing does not need a factory-injection parameter here — the
  * `resolve.alias` (`react-native` -> `react-native-web`) plus the
  * host-runtime-externals virtual-module plugin (item 1,
@@ -36,18 +42,36 @@ import {
  * authoring contract across native and web, per DEC-6.
  */
 
-const REACT_NATIVE_BUNDLES_FEATURE_ID = 'plugins.ui.reactNativeBundles';
-const REACT_NATIVE_WEB_REQUIRED_FEATURE_IDS = Object.freeze([REACT_NATIVE_BUNDLES_FEATURE_ID] as const);
-const REACT_NATIVE_WEB_ALIAS = Object.freeze([
+const REACT_NATIVE_BUNDLES_FEATURE_ID: 'plugins.ui.reactNativeBundles' = 'plugins.ui.reactNativeBundles';
+const REACT_NATIVE_WEB_REQUIRED_FEATURE_IDS: readonly ['plugins.ui.reactNativeBundles'] =
+    Object.freeze([REACT_NATIVE_BUNDLES_FEATURE_ID] as const);
+const REACT_NATIVE_WEB_ALIAS: readonly [Readonly<{ find: 'react-native'; replacement: 'react-native-web' }>] = Object.freeze([
     Object.freeze({ find: 'react-native', replacement: 'react-native-web' }),
 ] as const);
-const EMPTY_ROLLUP_EXTERNALS = Object.freeze([] as const);
+const EMPTY_ROLLUP_EXTERNALS: readonly [] = Object.freeze([] as const);
+
+export type ReactNativeWebViteBuildArtifactInput = Readonly<{
+    contributionId: string;
+    entry: string;
+    files: readonly PluginUiArtifactFileV1[];
+    digest: string;
+    viteVersion: string;
+    hostUiApiVersion: string;
+    /** The web loader imports the entry module, so this is its only true module fact. */
+    collectionMigrations?: Readonly<{ exportName: string }>;
+    compatibility: Readonly<{
+        reactVersion: string;
+        reactNativeVersion: string;
+    }>;
+}>;
 
 export type ReactNativeWebViteBuildPresetInput = Readonly<{
     contributionId: string;
     sourceEntry: string;
     viteVersion: string;
     hostUiApiVersion: string;
+    /** The web loader imports the entry module, so this is its only true module fact. */
+    collectionMigrations?: Readonly<{ exportName: string }>;
     compatibility: Readonly<{
         reactVersion: string;
         reactNativeVersion: string;
@@ -60,26 +84,17 @@ export type ReactNativeWebViteBuildPreset = Readonly<{
     contributionId: string;
     platform: 'web';
     sourceEntry: string;
-    output: Readonly<{
-        root: string;
-        entry: string;
-    }>;
+    collectionMigrations?: Readonly<{ exportName: string }>;
+    output: Readonly<{ root: string; entry: string }>;
     vite: Readonly<{
         version: string;
         mode: 'library';
         format: 'es';
         base: './';
-        resolve: Readonly<{ alias: typeof REACT_NATIVE_WEB_ALIAS }>;
-        /**
-         * Logically external to the plugin author (they still write plain
-         * `import ... from 'react'` / `'react-native'`), but NOT declared to
-         * Rollup as `external` — `createReactNativeWebVitePlugins()` MUST be
-         * included in the author's `vite.config.ts` `plugins` array; it
-         * intercepts these specifiers and resolves them to a generated
-         * virtual module instead, so the built output never contains an
-         * unresolved bare specifier (RNWEB-SPIKE §Q1(c)).
-         */
-        hostRuntimeExternalSpecifiers: typeof PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS;
+        resolve: Readonly<{
+            alias: readonly [Readonly<{ find: 'react-native'; replacement: 'react-native-web' }>];
+        }>;
+        hostRuntimeExternalSpecifiers: readonly PluginUiHostRuntimeExternalSpecifierV1[];
         external: readonly [];
         sourcemap: false;
     }>;
@@ -88,28 +103,17 @@ export type ReactNativeWebViteBuildPreset = Readonly<{
         reactVersion: string;
         reactNativeVersion: string;
     }>;
-    requiredFeatureIds: readonly [typeof REACT_NATIVE_BUNDLES_FEATURE_ID];
+    requiredFeatureIds: readonly ['plugins.ui.reactNativeBundles'];
     runtime: Readonly<{
         kind: 'hostGated';
-        requiredFeatureId: typeof REACT_NATIVE_BUNDLES_FEATURE_ID;
+        requiredFeatureId: 'plugins.ui.reactNativeBundles';
     }>;
 }>;
 
-export type ReactNativeWebViteBuildArtifactInput = Readonly<{
-    contributionId: string;
-    entry: string;
-    files: readonly PluginUiArtifactFileV1[];
-    digest: string;
-    viteVersion: string;
-    hostUiApiVersion: string;
-    compatibility: Readonly<{
-        reactVersion: string;
-        reactNativeVersion: string;
-    }>;
-}>;
-
-function readPresetInput(input: ReactNativeWebViteBuildPresetInput) {
-    return {
+export function defineReactNativeWebViteBuildPreset(
+    input: ReactNativeWebViteBuildPresetInput,
+): ReactNativeWebViteBuildPreset {
+    const parsed = {
         contributionId: readOutputPathSegment(input.contributionId, 'contributionId'),
         sourceEntry: readRelativeBuildPath(input.sourceEntry, 'sourceEntry'),
         viteVersion: readRequiredString(input.viteVersion, 'viteVersion'),
@@ -119,19 +123,22 @@ function readPresetInput(input: ReactNativeWebViteBuildPresetInput) {
             input.compatibility.reactNativeVersion,
             'compatibility.reactNativeVersion',
         ),
+        ...(input.collectionMigrations ? {
+            collectionMigrations: readRequiredString(
+                input.collectionMigrations.exportName,
+                'collectionMigrations.exportName',
+            ),
+        } : {}),
     };
-}
-
-export function defineReactNativeWebViteBuildPreset(
-    input: ReactNativeWebViteBuildPresetInput,
-): ReactNativeWebViteBuildPreset {
-    const parsed = readPresetInput(input);
     return Object.freeze({
         tier: 'reactNative',
         bundler: 'vite',
         contributionId: parsed.contributionId,
         platform: 'web',
         sourceEntry: parsed.sourceEntry,
+        ...(parsed.collectionMigrations ? {
+            collectionMigrations: Object.freeze({ exportName: parsed.collectionMigrations }),
+        } : {}),
         output: Object.freeze({
             root: `dist/happier-plugin-ui/react-native-web/${parsed.contributionId}`,
             entry: `react-native-web/${parsed.contributionId}/entry.mjs`,
@@ -160,18 +167,25 @@ export function defineReactNativeWebViteBuildPreset(
 }
 
 /**
- * The real Vite plugin instances an author's `vite.config.ts` MUST spread
- * into `plugins: [...]` alongside `@vitejs/plugin-react` (or equivalent) to
- * make `defineReactNativeWebViteBuildPreset`'s `resolve.alias` +
- * `hostRuntimeExternalSpecifiers` actually resolve at build time. Kept as a
- * function (not baked into the frozen data preset) so the preset itself
- * stays a plain serializable description, matching every other
- * `define*BuildPreset` helper in this file's siblings.
+ * The managed UI builder installs these plugin instances in every generated
+ * React Native Web Vite config, including when an author supplies an advanced
+ * Vite extension. Direct Vite integrations may still use this helper, but a
+ * `defineBuildConfig` author must not recreate the managed compiler path or
+ * remember this guard themselves. Kept as a function (not baked into the
+ * frozen data preset) so the preset itself stays a plain serializable
+ * description, matching every other `define*BuildPreset` helper in this
+ * file's siblings.
  */
-export function createReactNativeWebVitePlugins(): readonly [PluginUiHostRuntimeExternalsVitePlugin] {
-    return [createPluginUiHostRuntimeExternalsVitePlugin({
-        specifiers: PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS,
-    })];
+export function createReactNativeWebVitePlugins(): readonly [
+    ReturnType<typeof createPluginUiHostRuntimeExternalsVitePlugin>,
+    ReturnType<typeof createPluginUiPackageInstanceVitePlugin>,
+] {
+    return [
+        createPluginUiHostRuntimeExternalsVitePlugin({
+            specifiers: PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS,
+        }),
+        createPluginUiPackageInstanceVitePlugin(),
+    ] as const;
 }
 
 export function defineReactNativeWebViteBuildArtifact(
@@ -191,6 +205,14 @@ export function defineReactNativeWebViteBuildArtifact(
         files,
         digest: input.digest,
         builtWith: { bundler: 'vite', version: readRequiredString(input.viteVersion, 'viteVersion') },
+        ...(input.collectionMigrations ? {
+            collectionMigrations: {
+                exportName: readRequiredString(
+                    input.collectionMigrations.exportName,
+                    'collectionMigrations.exportName',
+                ),
+            },
+        } : {}),
         hostUiApiVersion: readRequiredString(input.hostUiApiVersion, 'hostUiApiVersion'),
         compat: {
             react: readRequiredString(input.compatibility.reactVersion, 'compatibility.reactVersion'),
@@ -203,5 +225,6 @@ export function defineReactNativeWebViteBuildArtifact(
 }
 
 export type {
+    PluginUiHostRuntimeExternalSpecifierV1,
     PluginUiArtifactsManifestEntryV1,
-} from '@happier-dev/protocol/plugins/ui';
+} from './publicContract.js';

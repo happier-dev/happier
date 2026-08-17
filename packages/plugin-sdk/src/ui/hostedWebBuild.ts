@@ -23,7 +23,6 @@ export type HostedWebStaticAssetsBinding = Readonly<{
 
 const HOSTED_WEB_FEATURE_ID = 'plugins.ui.hostedWeb';
 const HOSTED_WEB_REQUIRED_FEATURE_IDS = Object.freeze([HOSTED_WEB_FEATURE_ID] as const);
-const HOSTED_WEB_BUNDLED_DEPENDENCIES = Object.freeze(['react-native-web'] as const);
 const EMPTY_EXTERNALS = Object.freeze([] as const);
 
 export type HostedWebViteBuildPresetInput = Readonly<{
@@ -31,7 +30,6 @@ export type HostedWebViteBuildPresetInput = Readonly<{
     sourceEntry: string;
     viteVersion: string;
     hostUiApiVersion: string;
-    reactVersion: string;
 }>;
 
 export type HostedWebViteBuildPreset = Readonly<{
@@ -48,14 +46,12 @@ export type HostedWebViteBuildPreset = Readonly<{
         mode: 'app';
         base: './';
         assetsDir: 'assets';
-        bundledDependencies: readonly ['react-native-web'];
         external: readonly [];
         sourcemap: false;
     }>;
     security: PluginHostedWebSecurityPolicyV1;
     compatibility: Readonly<{
         hostUiApiVersion: string;
-        reactVersion: string;
     }>;
     requiredFeatureIds: readonly [typeof HOSTED_WEB_FEATURE_ID];
 }>;
@@ -67,7 +63,6 @@ export type HostedWebViteBuildArtifactInput = Readonly<{
     digest: string;
     viteVersion: string;
     hostUiApiVersion: string;
-    reactVersion: string;
 }>;
 
 export function defineHostedWebStaticAssets(input: Readonly<{
@@ -104,7 +99,6 @@ function readVitePresetInput(input: HostedWebViteBuildPresetInput) {
         sourceEntry: readRelativeBuildPath(input.sourceEntry, 'sourceEntry'),
         viteVersion: readRequiredString(input.viteVersion, 'viteVersion'),
         hostUiApiVersion: readRequiredString(input.hostUiApiVersion, 'hostUiApiVersion'),
-        reactVersion: readRequiredString(input.reactVersion, 'reactVersion'),
     };
 }
 
@@ -126,14 +120,12 @@ export function defineHostedWebViteBuildPreset(
             mode: 'app',
             base: './',
             assetsDir: 'assets',
-            bundledDependencies: HOSTED_WEB_BUNDLED_DEPENDENCIES,
             external: EMPTY_EXTERNALS,
             sourcemap: false,
         }),
         security: createDenyByDefaultHostedWebSecurity(),
         compatibility: Object.freeze({
             hostUiApiVersion: parsed.hostUiApiVersion,
-            reactVersion: parsed.reactVersion,
         }),
         requiredFeatureIds: HOSTED_WEB_REQUIRED_FEATURE_IDS,
     });
@@ -158,7 +150,7 @@ function defineViteBuildArtifact(
         digest: input.digest,
         builtWith: { bundler: 'vite', version: readRequiredString(input.viteVersion, 'viteVersion') },
         hostUiApiVersion: readRequiredString(input.hostUiApiVersion, 'hostUiApiVersion'),
-        compat: { react: readRequiredString(input.reactVersion, 'reactVersion') },
+        compat: {},
     });
 }
 

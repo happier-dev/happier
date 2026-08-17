@@ -1,7 +1,7 @@
 import {
     SCM_OPERATION_ERROR_CODES,
     type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm';
 import { describe, expect, it } from 'vitest';
 
 import { evaluateScmRemoteMutationPreconditions } from './remoteMutationPreconditions.js';

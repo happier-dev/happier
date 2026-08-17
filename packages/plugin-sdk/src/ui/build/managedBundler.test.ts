@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+    PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_RUNTIME_GLOBAL_KEY,
     PluginUiArtifactsManifestV1Schema,
 } from '@happier-dev/protocol/plugins/ui';
@@ -29,7 +30,7 @@ import {
 
 type ManagedBundlerLaunch = Parameters<ManagedBundlerExecService['run']>[0];
 
-const hostUiApiVersion = '1.0.0';
+const hostUiApiVersion = PLUGIN_UI_HOST_API_VERSION_V1;
 const reactVersion = '19.2.0';
 
 describe('resolveManagedPluginUiBuildVersions', () => {
@@ -61,11 +62,24 @@ describe('resolveManagedPluginUiBuildVersions', () => {
             kind: 'reactNative',
             platforms: ['web', 'ios', 'android'],
         }])).toEqual({
-            hostUiApiVersion: '1.0.0',
+            hostUiApiVersion,
             viteVersion: '7.3.1',
             repackVersion: '5.2.5',
             reactVersion,
             reactNativeVersion: '0.83.4',
+        });
+    });
+
+    it('does not require React to resolve a hosted-web-only build', async () => {
+        await rm(join(projectRoot, 'node_modules', 'react'), { recursive: true, force: true });
+
+        expect(resolveManagedPluginUiBuildVersions(projectRoot, [{
+            rendererId: 'hosted',
+            entry: 'ui/hosted.js',
+            kind: 'hostedWeb',
+        }])).toEqual({
+            hostUiApiVersion,
+            viteVersion: '7.3.1',
         });
     });
 });
@@ -101,10 +115,8 @@ describe('createManagedRuntimeBundlerRunner dispatch', () => {
                 sourceEntry: 'ui/panel.web.tsx',
                 viteVersion: '7.3.1',
                 hostUiApiVersion,
-                reactVersion,
             }),
             hostUiApiVersion,
-            reactVersion,
         };
         const runner = createManagedRuntimeBundlerRunner({
             exec,
@@ -203,6 +215,40 @@ describe('createManagedRuntimeBundlerRunner dispatch', () => {
         });
     });
 
+    it('forwards a declared Re.Pack config through the canonical `--config` argv', async () => {
+        const { exec, calls } = createCapturingExec(OK);
+        const surface = {
+            kind: 'reactNative' as const,
+            preset: defineReactNativeRepackBuildPreset({
+                contributionId: 'fixtureConfiguredRepack',
+                platform: 'ios',
+                sourceEntry: 'ui/panel.native.tsx',
+                module: { containerName: 'fixture_configured_native', modulePath: './renderSurface', exportName: 'renderSurface' },
+                repackVersion: '5.2.5',
+                hostUiApiVersion,
+                compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
+            }),
+            hostUiApiVersion,
+            compatibility: { reactVersion, reactNativeVersion: '0.83.4' },
+            bundlerConfigPath: '/fixture/project/build/rspack.ios.config.mjs',
+        } satisfies PluginUiBuildSurfaceV1 & Readonly<{ bundlerConfigPath: string }>;
+        const runner = createManagedRuntimeBundlerRunner({
+            exec,
+            emittedRoot: '/fixture/dist/happier-plugin-ui',
+            listEmittedFiles: async () => [],
+        });
+
+        await runner(surface, { projectRoot: '/fixture/project' });
+
+        expect(calls[0]).toMatchObject({
+            installableId: 'plugin-ui.bundler.repack',
+            args: [
+                'bundle', '--platform', 'ios', '--dev', 'false', '--minify', 'false', '--reset-cache',
+                '--config', '/fixture/project/build/rspack.ios.config.mjs',
+            ],
+        });
+    });
+
     it('honors per-bundler installable id overrides', async () => {
         const { exec, calls } = createCapturingExec(OK);
         const surface: PluginUiBuildSurfaceV1 = {
@@ -244,10 +290,8 @@ describe('createManagedRuntimeBundlerRunner dispatch', () => {
                 sourceEntry: 'ui/panel.web.tsx',
                 viteVersion: '7.3.1',
                 hostUiApiVersion,
-                reactVersion,
             }),
             hostUiApiVersion,
-            reactVersion,
         };
         const runner = createManagedRuntimeBundlerRunner({
             exec,
@@ -297,6 +341,17 @@ describe('resolveRepackBundleCommandOptions (direct-path parity)', () => {
 
     it('omits the config path when the author relies on rspack.config auto-discovery', () => {
         expect(resolveRepackBundleCommandOptions(repackSurface)).not.toHaveProperty('config');
+    });
+
+    it('uses the resolved surface config for the in-process Re.Pack command too', () => {
+        const configuredSurface = {
+            ...repackSurface,
+            bundlerConfigPath: '/plugin/build/rspack.ios.config.mjs',
+        } satisfies PluginUiBuildSurfaceV1 & Readonly<{ bundlerConfigPath: string }>;
+
+        expect(resolveRepackBundleCommandOptions(configuredSurface)).toMatchObject({
+            config: '/plugin/build/rspack.ios.config.mjs',
+        });
     });
 
     it('rejects non-repack surfaces instead of inventing repack options', () => {
@@ -389,7 +444,6 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
             sourceEntry: 'src/main.js',
             viteVersion: '7.3.1',
             hostUiApiVersion,
-            reactVersion,
         });
 
         // Author-owned vite.config.mjs, auto-discovered by `vite build` from
@@ -410,7 +464,6 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
             kind: 'hostedWeb',
             preset,
             hostUiApiVersion,
-            reactVersion,
         };
 
         const artifactsRoot = join(projectRoot, 'dist/happier-plugin-ui');
@@ -472,10 +525,32 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
                 '',
             ].join('\n'),
         );
-        await mkdir(join(projectRoot, 'src'), { recursive: true });
+        const pluginUiRoot = join(projectRoot, 'node_modules/@happier-dev/plugin-ui');
+        await Promise.all([
+            mkdir(join(projectRoot, 'src'), { recursive: true }),
+            mkdir(pluginUiRoot, { recursive: true }),
+        ]);
+        // The SDK-owned build guard requires the artifact to contain the one
+        // physical plugin-ui provider/consumer package. Keep this JSX-runtime
+        // fixture minimal while exercising that exact graph invariant.
+        await writeFile(
+            join(pluginUiRoot, 'package.json'),
+            '{"name":"@happier-dev/plugin-ui","type":"module"}\n',
+            'utf8',
+        );
+        await writeFile(
+            join(pluginUiRoot, 'index.js'),
+            'export const pluginUiSentinel = "bundled-plugin-ui";\n',
+            'utf8',
+        );
         await writeFile(
             join(projectRoot, 'src', 'main.tsx'),
-            "export { renderAutomaticJsx, renderExplicitJsx } from './transitive';\n",
+            [
+                "import { pluginUiSentinel } from '@happier-dev/plugin-ui';",
+                "export { renderAutomaticJsx, renderExplicitJsx } from './transitive';",
+                'export const bundledPluginUiSentinel = pluginUiSentinel;',
+                '',
+            ].join('\n'),
         );
         await writeFile(
             join(projectRoot, 'src', 'transitive.tsx'),

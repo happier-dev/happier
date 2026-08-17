@@ -1,12 +1,10 @@
+import type {
+    ProviderWireProtocol,
+} from '@happier-dev/protocol';
+
 import type { JsonValue } from '../identity.js';
 
-type AgentProviderWireProtocol =
-    | 'anthropic'
-    | 'openai-chat'
-    | 'openai-responses'
-    | 'ollama-native';
-
-type AgentProviderBindingModel = Readonly<{
+export type AgentProviderBindingModel = Readonly<{
     id: string;
     name: string;
     capabilities?: Readonly<{
@@ -16,7 +14,7 @@ type AgentProviderBindingModel = Readonly<{
 
 export type AgentProviderCredentialTransport = Readonly<{
     id: string;
-    protocols: readonly AgentProviderWireProtocol[];
+    protocols: readonly ProviderWireProtocol[];
     uses: readonly ('probe' | 'runtime' | 'management')[];
     destination:
         | Readonly<{
@@ -31,28 +29,27 @@ export type AgentProviderCredentialTransport = Readonly<{
         }>;
 }>;
 
-type AgentProviderBindingEnvironmentEntry = Readonly<{
+export type AgentProviderBindingEnvironmentEntry = Readonly<{
     name: string;
     value: string | null;
     source: 'provider';
 }>;
 
-type AgentProviderBindingMaterializationBase = Readonly<{
+export type AgentProviderBindingMaterialization = Readonly<{
     v: 1;
     env: readonly AgentProviderBindingEnvironmentEntry[];
     additionalRedactionValues?: readonly string[];
-}>;
-
-export type AgentProviderBindingMaterialization =
-    | (AgentProviderBindingMaterializationBase & Readonly<{ kind: 'spawnEnv' }>)
-    | (AgentProviderBindingMaterializationBase & Readonly<{
+}> & (
+    | Readonly<{ kind: 'spawnEnv' }>
+    | Readonly<{
         kind: 'engineConfig';
         engineConfig: Readonly<Record<string, JsonValue>>;
-    }>)
-    | (AgentProviderBindingMaterializationBase & Readonly<{
+    }>
+    | Readonly<{
         kind: 'configFile';
         files: readonly Readonly<{ relativePath: string; utf8: string }>[];
-    }>);
+    }>
+);
 
 export type AgentProviderBindingPrepareInput = Readonly<{
     v: 1;
@@ -61,7 +58,7 @@ export type AgentProviderBindingPrepareInput = Readonly<{
     reservedBindingCandidate?: Readonly<{
         contributionKey: string;
         endpointTemplateId: string;
-        protocol: AgentProviderWireProtocol;
+        protocol: ProviderWireProtocol;
         normalizedUrl: string;
     }>;
 }>;
@@ -91,7 +88,7 @@ export type AgentProviderBindingResolvedFacts = Readonly<{
     endpoint: Readonly<{
         endpointTemplateId: string;
         normalizedUrl: string;
-        protocol: AgentProviderWireProtocol;
+        protocol: ProviderWireProtocol;
         publicHeaders: Readonly<Record<string, string>>;
     }>;
     runtimeCredentialTransport: AgentProviderCredentialTransport | null;
@@ -112,8 +109,4 @@ export type AgentProviderBindingAdapter = Readonly<{
     materialize(
         input: AgentProviderBindingMaterializeInput,
     ): AgentProviderBindingMaterialization | Promise<AgentProviderBindingMaterialization>;
-}>;
-
-export type AgentRuntimeRegistrationOptions = Readonly<{
-    providerBinding?: AgentProviderBindingAdapter;
 }>;

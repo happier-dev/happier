@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    PLUGIN_UI_HOST_API_VERSION_V1,
     PluginUiArtifactsManifestV1Schema,
     computePluginUiArtifactFileSetSha256DigestV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -18,7 +19,7 @@ import {
     type PluginUiBuildSurfaceV1,
 } from './buildUiArtifacts.js';
 
-const hostUiApiVersion = '1.0.0';
+const hostUiApiVersion = PLUGIN_UI_HOST_API_VERSION_V1;
 const reactVersion = '19.2.0';
 
 let projectRoot: string;
@@ -32,14 +33,12 @@ const hostedWebPreset = defineHostedWebViteBuildPreset({
     sourceEntry: 'ui/reviewPanel.web.tsx',
     viteVersion: '7.0.0',
     hostUiApiVersion,
-    reactVersion,
 });
 
 const hostedWebSurface: PluginUiBuildSurfaceV1 = {
     kind: 'hostedWeb',
     preset: hostedWebPreset,
     hostUiApiVersion,
-    reactVersion,
 };
 
 function bundlerEmitting(

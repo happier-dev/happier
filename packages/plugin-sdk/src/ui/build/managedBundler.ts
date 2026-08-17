@@ -69,7 +69,7 @@ export type ManagedPluginUiBuildVersionsV1 = Readonly<{
     hostUiApiVersion: string;
     viteVersion?: string;
     repackVersion?: string;
-    reactVersion: string;
+    reactVersion?: string;
     reactNativeVersion?: string;
 }>;
 
@@ -111,7 +111,7 @@ export function resolveManagedPluginUiBuildVersions(
         hostUiApiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
         ...(needsVite ? { viteVersion: readInstalledPackageVersion(projectRoot, 'vite') } : {}),
         ...(needsRepack ? { repackVersion: readInstalledPackageVersion(projectRoot, '@callstack/repack') } : {}),
-        reactVersion: readInstalledPackageVersion(projectRoot, 'react'),
+        ...(needsReactNative ? { reactVersion: readInstalledPackageVersion(projectRoot, 'react') } : {}),
         ...(needsReactNative
             ? { reactNativeVersion: readInstalledPackageVersion(projectRoot, 'react-native') }
             : {}),
@@ -170,26 +170,27 @@ export type PluginUiBundlerInstallableOverridesV1 = Readonly<{
  * residual NATIVE-PIPELINE.md documented). Each preset's own build config,
  * not CLI flags, owns entry/output wiring:
  *
- * - Vite (`hostedWeb`, and the `reactNative` web/vite tier): `vite build` —
- *   vite auto-discovers the author-owned `vite.config.{ts,mjs,js,...}` at
- *   `cwd` (== `context.projectRoot`), exactly like the hand-run `vite build`
- *   npm script every Vite-built plugin already ships. That config is where
- *   `preset.output.root` / `preset.vite.base` / `sourceEntry` are wired (see
- *   `packages/plugins/inspector/vite.config.ts` for the canonical shape).
+ * - Vite (`hostedWeb`, and the `reactNative` web/vite tier): every target
+ *   receives a builder-materialized, operation-local config through
+ *   `vite build --config <path>`. An explicit, project-contained advanced
+ *   Vite config is merged only as an extension; it cannot replace the SDK's
+ *   canonical entry/root/output, while the React Native Web tier also keeps
+ *   its SDK-owned host-runtime and physical-package plugins.
  * - Re.Pack (`reactNative` ios/android tier): Re.Pack ships no standalone
  *   bin at all; the resolved `plugin-ui.bundler.repack` installable is the
  *   react-native-community-cli entry point (`binary.commands:
- *   ['react-native']` on the descriptor) with Re.Pack's `commands/rspack`
- *   registered via the author's `react-native.config.js`. The `bundle`
+ *   ['react-native']` on the descriptor). The builder registers Re.Pack's
+ *   `commands/rspack` only in its operation-local work root and always passes
+ *   the materialized Re.Pack config through `--config`; no author-owned
+ *   React Native CLI config or Rspack auto-discovery participates. The `bundle`
  *   subcommand's REAL flags are `--platform`, `--dev`, `--minify`,
  *   `--reset-cache`, `--config`, `--entry-file`, `--bundle-output` (verified
  *   against `@callstack/repack/dist/commands/options.js`'s
  *   `bundleCommandOptions`). Every plugin-UI `reactNative` build surface
  *   ships as a Module Federation "remote" container (never a standalone RN
  *   app entry — see the inspector's `rspack.config.mjs` doc comment), so
- *   entry/output are baked into the author's `rspack.config.*`
- *   (auto-discovered by Re.Pack's own `getConfigFilePath` convention, same
- *   as Vite's config auto-discovery) rather than passed as
+ *   entry/output are baked into the builder-materialized `rspack.config.*`
+ *   rather than passed as
  *   `--entry-file`/`--bundle-output` flags — those would inject an unwanted
  *   standalone-app entry into what is actually an exposed-module container.
  */
@@ -209,12 +210,16 @@ export function resolvePluginUiBundlerInvocation(
                 '--minify',
                 String(PLUGIN_UI_REPACK_BUNDLE_SETTINGS_V1.minify),
                 ...(PLUGIN_UI_REPACK_BUNDLE_SETTINGS_V1.resetCache ? ['--reset-cache'] : []),
+                ...(surface.bundlerConfigPath === undefined ? [] : ['--config', surface.bundlerConfigPath]),
             ]),
         });
     }
     return Object.freeze({
         installableId: overrides?.viteInstallableId ?? DEFAULT_VITE_INSTALLABLE_ID,
-        args: Object.freeze(['build']),
+        args: Object.freeze([
+            'build',
+            ...(surface.bundlerConfigPath === undefined ? [] : ['--config', surface.bundlerConfigPath]),
+        ]),
     });
 }
 
@@ -243,10 +248,11 @@ export function resolveRepackBundleCommandOptions(
             `Surface "${surface.preset.contributionId}" is not a Re.Pack build surface (bundler: '${surface.preset.bundler}')`,
         );
     }
+    const configPath = input?.configPath ?? surface.bundlerConfigPath;
     return Object.freeze({
         platform: surface.preset.platform,
         ...PLUGIN_UI_REPACK_BUNDLE_SETTINGS_V1,
-        ...(input?.configPath ? { config: input.configPath } : {}),
+        ...(configPath === undefined ? {} : { config: configPath }),
     });
 }
 
@@ -267,7 +273,7 @@ export function createManagedRuntimeBundlerRunner(
                 kind: 'managed-installable',
                 installableId: invocation.installableId,
                 args: invocation.args,
-                cwd: context.projectRoot,
+                cwd: surface.bundlerWorkingDirectory ?? context.projectRoot,
                 sourcePreference: 'managed-first',
             },
             { timeoutMs: input.timeoutMs },

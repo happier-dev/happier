@@ -68,16 +68,6 @@ export type AgentSessionRealtimeStartResult =
         diagnostic: PluginDiagnosticData;
       }>;
 
-export type PluginVoiceAgentSessionRealtimeService = Readonly<{
-    inspect(
-        options?: Readonly<{ signal?: AbortSignal }>,
-    ): Promise<AgentSessionRealtimeAvailability>;
-    start(
-        input: AgentSessionRealtimeStartInput,
-        options?: Readonly<{ signal?: AbortSignal }>,
-    ): Promise<AgentSessionRealtimeStartResult>;
-}>;
-
 export interface AgentSessionRealtimeConversation {
     inspect(
         options?: Readonly<{ signal?: AbortSignal }>,

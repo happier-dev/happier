@@ -33,17 +33,38 @@ scope, and a user-readable reason:
 ```
 
 Current public required HostAccess families are `network`, `network.client`,
-`filesystem`, `process`, `environment`, `connectedAccounts`, `sessions`,
-`terminal`, `storage.account`, and `mcp`. Their `scope` objects are
+`filesystem`, `process`, `environment`, `connectedAccounts`,
+`sessions`, `terminal`, `storage.account`, and `mcp`. Their `scope` objects are
 capability-specific and strict. Only `connectedAccounts`, `sessions`,
 `storage.account`, and `mcp` may be optional.
 
-`terminal` is available only through the host-owned Agent-session terminal
-lifecycle. The Protocol retains `network.intercept`, `browser`, `clipboard`,
-and `externalLinks` as internal declarations, but they are not public HostAccess
-capabilities or `definePlugin(...)` input. The public SDK rejects them until a
-named maintained product consumer proves the complete owner and lifecycle. The
-publication pipeline records each family's current disposition in
+`terminal` is available only through the host-owned Agent-session terminal lifecycle.
+`requestInterceptors` is a trusted installation-wide declaration, not a generic
+`hostAccess` permission. The installer reviews and displays each declaration's exact
+origins and methods before the canonical host policy chain registers it.
+`network.intercept` is not a public HostAccess capability; no public `hostAccess`
+request is required for a request interceptor. The canonical host policy chain can
+deny a matching request or continue it with an in-scope URL, method, or
+non-protected-header rewrite; it does not rewrite bodies, inject provider
+authentication, or add a second fetch or interception chain.
+
+Credential, identity, cookie, token, signature, and API-key headers require an
+explicit closed policy rather than name heuristics. The host always hides and
+protects the exact credential-header names it injects for
+the current request. It also hides and protects the closed V1 standard set:
+`authorization`, `proxy-authorization`, `cookie`, `set-cookie`,
+`www-authenticate`, `proxy-authenticate`, `authentication-info`,
+`proxy-authentication-info`, `dpop`, `signature`, `signature-input`, `host`,
+`origin`, `referer`, `forwarded`, `x-api-key`, `api-key`, `x-auth-token`,
+`x-client-ip`, `x-real-ip`, `x-signature`, `x-hub-signature-256`, and headers
+whose names begin with `sec-` or `x-forwarded-`. Other caller-supplied headers
+are visible and mutable to a matching trusted installation-wide interceptor;
+Happier does not infer additional protected headers from words such as “token” or
+“identity”.
+
+The Protocol retains `browser`, `clipboard`, and `externalLinks` as internal declarations;
+the public SDK rejects them until a named maintained product consumer proves the complete
+owner and lifecycle. The publication pipeline records each family's current disposition in
 `packages/plugin-sdk/capability-matrix.json`; consult the matrix emitted with the
 package rather than treating an internal Protocol declaration as author
 availability.

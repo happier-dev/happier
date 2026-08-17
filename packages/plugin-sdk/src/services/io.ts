@@ -1,6 +1,7 @@
+/** @moduleRealm daemon */
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef } from '../identity.js';
-import type { Disposable } from '../lifecycle.js';
+import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
@@ -17,7 +18,50 @@ export type PluginFetchCredentialBinding =
         parameters: Readonly<Record<string, JsonValue>>;
     }>;
 
-export interface PluginFetchService {
+/** A redaction-aware header supplied during a host-vended WebSocket handshake. */
+export type PluginWebSocketHeader = Readonly<{
+    name: string;
+    value: string;
+    sensitive?: boolean;
+}>;
+
+export type PluginWebSocketMessage =
+    | Readonly<{ kind: 'text'; text: string }>
+    | Readonly<{ kind: 'binary'; data: Uint8Array }>;
+
+export type PluginWebSocketClose = Readonly<{
+    kind: 'remote' | 'local' | 'aborted' | 'generationRetired' | 'hostShutdown' | 'error';
+    code?: number;
+    reason?: string;
+    wasClean: boolean;
+    diagnostic?: PluginDiagnosticData;
+}>;
+
+export type PluginWebSocketOpenInput = Readonly<{
+    url: string;
+    protocols?: readonly string[];
+    headers?: readonly PluginWebSocketHeader[];
+    allowInsecureWs?: boolean;
+    connectTimeoutMs?: number;
+    maxMessageBytes?: number;
+    maxPendingMessages?: number;
+    maxPendingBytes?: number;
+    maxBufferedSendBytes?: number;
+}>;
+
+export interface PluginWebSocketConnection extends Disposable {
+    readonly url: string;
+    readonly protocol: string;
+    readonly closed: Promise<PluginWebSocketClose>;
+    send(message: PluginWebSocketMessage, options?: PluginCancellationOptions): Promise<void>;
+    receive(options?: PluginCancellationOptions): Promise<PluginWebSocketMessage | Readonly<{
+        kind: 'closed';
+        close: PluginWebSocketClose;
+    }>>;
+    close(request?: Readonly<{ code?: number; reason?: string }>): void;
+}
+
+export interface HttpService {
     request(input: Readonly<{
         url: string;
         method?: HttpMethod;
@@ -32,6 +76,10 @@ export interface PluginFetchService {
         headers: Readonly<Record<string, string>>;
         body: Uint8Array;
     }>;
+    openWebSocket(
+        input: PluginWebSocketOpenInput,
+        options?: PluginCancellationOptions,
+    ): Promise<PluginWebSocketConnection>;
 }
 
 export type PluginPath =
@@ -39,7 +87,7 @@ export type PluginPath =
     | Readonly<{ root: 'workspace'; relativePath: string }>
     | Readonly<{ root: 'project'; projectId: string; relativePath: string }>;
 
-export interface PluginFileSystemService {
+export interface FileSystemService {
     readFile(path: PluginPath, options?: { maxBytes?: number; signal?: AbortSignal }): Promise<Uint8Array>;
     writeFile(path: PluginPath, data: Uint8Array, options?: { signal?: AbortSignal }): Promise<void>;
     stat(path: PluginPath, options?: { signal?: AbortSignal }): Promise<{ kind: 'file' | 'directory'; size: number; modifiedAtMs: number }>;
@@ -71,28 +119,6 @@ export type PluginAgentCliReadinessRequest = Readonly<{
 export type PluginAgentCliReadinessResult = Readonly<{
     launchable: readonly Readonly<{ agentId: string }>[];
 }>;
-export interface PluginAgentCliReadinessService {
-    checkReadiness(request: PluginAgentCliReadinessRequest): Promise<PluginAgentCliReadinessResult>;
-}
-export type PluginSystemToolResolveRequest = Readonly<{
-    toolId: string;
-    purpose: string;
-    cwd?: string;
-    preferredPath?: string | null;
-    signal?: AbortSignal;
-}>;
-export type PluginSystemToolDiagnostic = Readonly<{
-    code: string;
-    detail?: Readonly<Record<string, string | number>>;
-}>;
-export type PluginResolvedSystemTool = Readonly<{
-    executable: ManagedExecutableRef;
-    executablePath: string;
-    diagnostics?: readonly PluginSystemToolDiagnostic[];
-}>;
-export interface PluginSystemToolsService {
-    resolve(request: PluginSystemToolResolveRequest): Promise<PluginResolvedSystemTool>;
-}
 export type PluginProcessOutput = Readonly<{ sequence: number; stream: 'stdout' | 'stderr'; data: Uint8Array }>;
 export type PluginProcessObservedTermination =
     | Readonly<{ kind: 'exit'; exitCode: number }>
@@ -110,7 +136,6 @@ export type PluginProcessResult = Readonly<{
 }>;
 
 export interface PluginProcessHandle extends Disposable {
-    readonly pid: number | null;
     write(data: Uint8Array): Promise<void>;
     closeStdin(): Promise<void>;
     wait(): Promise<PluginProcessResult>;
@@ -179,71 +204,6 @@ export interface PluginProtocolClientHandle<K extends PluginProtocolClientKind =
     wait(): Promise<PluginProcessResult>;
     dispose(): Promise<void>;
 }
-export interface PluginProtocolClientsService {
+export interface ProtocolClientsService {
     spawn<K extends PluginProtocolClientKind>(spec: PluginProtocolClientSpecByKind<K>, options?: { signal?: AbortSignal }): Promise<PluginProtocolClientHandle<K>>;
-}
-export interface PluginExecService {
-    readonly agentCli: PluginAgentCliReadinessService;
-    readonly systemTools: PluginSystemToolsService;
-    run(request: PluginExecSpawnRequest & { timeoutMs?: number }, options?: { signal?: AbortSignal }): Promise<PluginProcessResult>;
-    spawn(request: PluginExecSpawnRequest, options?: { signal?: AbortSignal }): Promise<PluginProcessHandle>;
-    readonly clients: PluginProtocolClientsService;
-}
-
-export type ManagedDependencyStatus =
-    | Readonly<{ state: 'missing'; id: string; supported: true }>
-    | Readonly<{ state: 'ready'; id: string; version: string; sourceId: string; executable?: ManagedExecutableRef }>
-    | Readonly<{ state: 'updateAvailable'; id: string; version: string; availableVersion: string; sourceId: string; executable?: ManagedExecutableRef }>
-    | Readonly<{ state: 'unsupported' | 'failed'; id: string; code: string }>;
-export type ManagedDependencyReady = Extract<ManagedDependencyStatus, { state: 'ready' }>;
-export type ManagedServerCredential =
-    | Readonly<{ environment: { name: string; value: string }; httpHeader?: { name: string; value: string } }>
-    | Readonly<{ environment?: never; httpHeader: { name: string; value: string } }>;
-export type ManagedServerMode =
-    | Readonly<{ kind: 'managedSpawn'; host?: string; port?: number; baseUrl?: string; portArgument?: string; portEnvironmentKey?: string; baseUrlEnvironmentKey?: string; credential?: ManagedServerCredential }>
-    | Readonly<{ kind: 'externalAttach'; baseUrl: string; credential?: ManagedServerCredential }>;
-export type ManagedServerHealthCheck =
-    | Readonly<{ kind: 'http'; target?: { kind: 'serverPath'; path: string } | { kind: 'url'; url: string }; headers?: Readonly<Record<string, string>>; timeoutMs?: number }>
-    | Readonly<{ kind: 'command'; executable: ManagedExecutableRef; args?: readonly string[]; timeoutMs?: number }>;
-type ManagedServerSpecBase = Readonly<{
-    id: string;
-    healthCheck?: ManagedServerHealthCheck;
-    watchdog?: Readonly<{ intervalMs: number; missedIntervals: number }>;
-    startupTimeoutMs?: number;
-}>;
-export type ManagedServerSpec = ManagedServerSpecBase & (
-    | Readonly<{ mode: Extract<ManagedServerMode, { kind: 'managedSpawn' }>; launch: PluginExecSpawnRequest; durableLog?: { enabled: boolean; keepCount?: number } }>
-    | Readonly<{ mode: Extract<ManagedServerMode, { kind: 'externalAttach' }>; launch?: never; durableLog?: never }>
-);
-export type ManagedServerSnapshot = Readonly<{
-    id: string;
-    instanceId: string;
-    state: 'starting' | 'healthy' | 'unhealthy' | 'stopped';
-    mode: ManagedServerMode['kind'];
-    baseUrl: string | null;
-    port: number | null;
-    pid: number | null;
-    startedAtMs: number | null;
-    lastHealthyAtMs: number | null;
-    code?: string;
-}>;
-export interface ManagedServerHandle extends Disposable {
-    snapshot(): ManagedServerSnapshot;
-    waitUntilHealthy(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<ManagedServerSnapshot>;
-    stop(options?: { signal?: AbortSignal }): Promise<ManagedServerStopResult>;
-    dispose(): Promise<void>;
-}
-export type ManagedServerStopResult = Readonly<{ status: 'stopped' | 'detached' }>;
-export interface PluginManagedDependenciesService {
-    status(id: string, options?: { signal?: AbortSignal }): Promise<ManagedDependencyStatus>;
-    ensure(id: string, options?: { signal?: AbortSignal }): Promise<ManagedDependencyReady>;
-    update(id: string, options?: { signal?: AbortSignal }): Promise<ManagedDependencyReady>;
-    remove(id: string, options?: { signal?: AbortSignal }): Promise<void>;
-}
-export interface PluginManagedServersService {
-    supervise(spec: ManagedServerSpec, options?: { signal?: AbortSignal }): Promise<ManagedServerHandle>;
-}
-export interface PluginManagedService {
-    readonly dependencies: PluginManagedDependenciesService;
-    readonly servers: PluginManagedServersService;
 }

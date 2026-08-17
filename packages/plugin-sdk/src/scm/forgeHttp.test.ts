@@ -19,12 +19,13 @@ describe('requestScmForgeJson', () => {
         let mappedContext: ScmForgeHttpErrorContext | null = null;
 
         await expect(requestScmForgeJson({
-            url: 'https://api.github.com/repos/happier-dev/private',
+            url: 'https://alice:scm-userinfo-secret@api.github.com/repos/happier-dev/private?access_token=scm-query-secret&safe=yes',
             init: {
                 method: 'POST',
                 headers: {
                     Authorization: 'Bearer secret-token',
                     'X-Api-Key': 'secret-api-key',
+                    'X-Scm-Secret': 'unallowlisted-scm-secret',
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ name: 'private' }),
@@ -42,7 +43,7 @@ describe('requestScmForgeJson', () => {
 
         expect(fetchAuthorization).toBe('Bearer secret-token');
         expect(mappedContext).toMatchObject({
-            url: 'https://api.github.com/repos/happier-dev/private',
+            url: expect.stringContaining('api.github.com/repos/happier-dev/private'),
             method: 'POST',
             status: 403,
             statusText: 'Forbidden',
@@ -51,12 +52,18 @@ describe('requestScmForgeJson', () => {
                 headers: {
                     Authorization: '[redacted]',
                     'X-Api-Key': '[redacted]',
+                    'X-Scm-Secret': '[redacted]',
                     'Content-Type': 'application/json',
                 },
             },
         });
         expect(JSON.stringify(mappedContext)).not.toContain('secret-token');
         expect(JSON.stringify(mappedContext)).not.toContain('secret-api-key');
+        expect(JSON.stringify(mappedContext)).not.toContain('unallowlisted-scm-secret');
+        expect(JSON.stringify(mappedContext)).not.toContain('alice');
+        expect(JSON.stringify(mappedContext)).not.toContain('scm-userinfo-secret');
+        expect(JSON.stringify(mappedContext)).not.toContain('scm-query-secret');
+        expect(JSON.stringify(mappedContext)).toContain('safe=yes');
     });
 
     it('preserves non-JSON error response bodies from real fetch responses', async () => {

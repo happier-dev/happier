@@ -1,14 +1,4 @@
-export type TimeoutBudgetV1 = Readonly<{
-    startedAtMs: number;
-    timeoutMs: number;
-}>;
-
-export interface TimeoutRuntimeServiceV1 {
-    withMs<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>;
-    withBudget<T>(budget: TimeoutBudgetV1, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T>;
-}
-
-export type RaceWithTimeoutResultV1<T> =
+export type RaceWithTimeoutResult<T> =
     | Readonly<{ type: 'resolved'; value: T }>
     | Readonly<{ type: 'rejected'; error: unknown }>
     | Readonly<{ type: 'timeout' }>;
@@ -45,7 +35,7 @@ export async function sleepWithSignal(ms: number, signal?: AbortSignal | null): 
 export async function raceWithTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
-): Promise<RaceWithTimeoutResultV1<T>> {
+): Promise<RaceWithTimeoutResult<T>> {
     let timer: ReturnType<typeof setTimeout> | null = null;
     try {
         return await Promise.race([

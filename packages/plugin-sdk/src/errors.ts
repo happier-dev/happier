@@ -14,15 +14,15 @@ export type ClassifiedRuntimeErrorV1 = Readonly<{
     retryable: boolean;
 }>;
 
-export interface ErrorRuntimeServiceV1 {
-    classify(error: unknown): ClassifiedRuntimeErrorV1;
-    wrap(error: unknown, fallbackCode?: string): Error;
-    report(error: unknown, fields?: Readonly<Record<string, unknown>>): void;
-}
-
 import type { PluginRemediationData } from './availability.js';
 import type { PluginDiagnosticData } from './diagnostics.js';
 import type { JsonValue } from './identity.js';
+
+/**
+ * Set only by the canonical Actions host when it proves that the target
+ * handler did not begin. Absence deliberately means the outcome is unknown.
+ */
+export type PluginActionHandlerInvocation = 'notStarted';
 
 export type PluginErrorData = Readonly<{
     name: 'PluginError';
@@ -32,7 +32,12 @@ export type PluginErrorData = Readonly<{
     details?: JsonValue;
     remediation?: PluginRemediationData;
     diagnostics?: readonly PluginDiagnosticData[];
+    actionHandlerInvocation?: PluginActionHandlerInvocation;
 }>;
+
+export interface PluginError {
+    readonly actionHandlerInvocation?: PluginActionHandlerInvocation;
+}
 
 export class PluginError extends Error {
     readonly code: string;
@@ -50,6 +55,14 @@ export class PluginError extends Error {
         this.details = data.details;
         this.remediation = data.remediation;
         this.diagnostics = data.diagnostics;
+        if (data.actionHandlerInvocation !== undefined) {
+            Object.defineProperty(this, 'actionHandlerInvocation', {
+                value: data.actionHandlerInvocation,
+                enumerable: true,
+                writable: false,
+                configurable: false,
+            });
+        }
         this.data = {
             name: 'PluginError',
             code: data.code,
@@ -58,6 +71,23 @@ export class PluginError extends Error {
             ...(data.details === undefined ? {} : { details: data.details }),
             ...(data.remediation === undefined ? {} : { remediation: data.remediation }),
             ...(data.diagnostics === undefined ? {} : { diagnostics: data.diagnostics }),
+            ...(data.actionHandlerInvocation === undefined
+                ? {}
+                : { actionHandlerInvocation: data.actionHandlerInvocation }),
         };
     }
+}
+
+/**
+ * Accepts the closed public PluginError shape rather than requiring one SDK
+ * module instance, so an external plugin can consume the host's proof too.
+ */
+export function isPluginActionHandlerInvocationKnownNotStarted(error: unknown): boolean {
+    if (error === null || typeof error !== 'object') return false;
+    const candidate = error as Readonly<Record<string, unknown>>;
+    if (candidate.name !== 'PluginError') return false;
+    if (candidate.actionHandlerInvocation === 'notStarted') return true;
+    const data = candidate.data;
+    if (data === null || typeof data !== 'object') return false;
+    return (data as Readonly<Record<string, unknown>>).actionHandlerInvocation === 'notStarted';
 }

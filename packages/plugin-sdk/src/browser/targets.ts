@@ -1,16 +1,31 @@
 import {
     PluginBrowserTargetContributionV1Schema,
-    type PluginBrowserTargetContributionInputV1,
-    type PluginBrowserTargetContributionV1,
 } from '@happier-dev/protocol/plugins/contributions/browser';
+import type { BrowserAvailabilityDescriptor } from './actions.js';
+import type { JsonValue } from '../identity.js';
+import type { PluginLocalizedStringV2 } from '../manifest.js';
 
-export function defineBrowserTarget<const TContribution extends PluginBrowserTargetContributionInputV1>(
+export type BrowserTargetContributionInput = Readonly<{
+    id: string;
+    title: PluginLocalizedStringV2;
+    description?: PluginLocalizedStringV2;
+    availability?: BrowserAvailabilityDescriptor;
+    metadata?: Readonly<Record<string, JsonValue>>;
+    url: string;
+    launch?: 'newView' | 'currentView';
+    profile?: 'ephemeral' | 'session' | 'user' | 'plugin';
+}>;
+
+export type BrowserTargetContribution = Omit<
+    BrowserTargetContributionInput,
+    'launch' | 'profile'
+> & Readonly<{
+    launch: 'newView' | 'currentView';
+    profile: 'ephemeral' | 'session' | 'user' | 'plugin';
+}>;
+
+export function defineBrowserTarget<const TContribution extends BrowserTargetContributionInput>(
     contribution: TContribution,
-): PluginBrowserTargetContributionV1 {
+): BrowserTargetContribution {
     return PluginBrowserTargetContributionV1Schema.parse(contribution);
 }
-
-export type {
-    PluginBrowserTargetContributionInputV1,
-    PluginBrowserTargetContributionV1,
-} from '@happier-dev/protocol/plugins/contributions/browser';

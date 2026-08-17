@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review assistant</title>
+    <link rel="stylesheet" href="./ui/reviewPanel.css" />
+  </head>
+  <body>
+    <main id="root" data-status="loading">
+      <h1>Review assistant</h1>
+      <p data-role="status">Connecting to Happier…</p>
+      <p data-role="guide"></p>
+      <button type="button" data-role="summarize">Summarize review</button>
+      <output data-role="result"></output>
+    </main>
+    <script type="module" src="./ui/reviewPanel.web.tsx"></script>
+  </body>
+</html>

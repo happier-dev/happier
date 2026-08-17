@@ -1,12 +1,18 @@
+import { definePlugin } from '@happier-dev/plugin-sdk';
+
+import { publicAuthoringDefinition } from './definition.js';
+
+export const { manifest, activate } = definePlugin(publicAuthoringDefinition);
+
+// The author build emits this entry as `dist/daemon.js`; retain the locator
+// consumed by the separately emitted definition module as a named ESM export.
+export { reviewAgentRunnerFactory } from './daemon.js';
+
 export {
-    activate,
     createReviewAgentRuntime,
     observeSessionSpawned,
+    reviewReferenceProvider,
+    reviewSessionStatusResource,
+    resolveAgentContextCompanionComposition,
     runReviewSummary,
-} from './daemon';
-export { pluginUiBuildConfig } from './pluginUiBuild';
-export {
-    activate as activateAccountMediatedBrowserVoiceProvider,
-    requestMediatedClientAuth,
-    requestMediatedVoiceCatalog,
-} from './voiceProvider';
+} from './definition.js';

@@ -1,15 +1,10 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as runtime from './index.js';
-import type {
-  PluginServices,
-  PluginVoiceHostedConversationService,
-  PluginVoiceProviderRuntimeRegistration,
-  PluginVoiceSpeechRuntimeRegistration,
-} from './index.js';
+import type { PluginServices } from './index.js';
 import type { PluginApi, PluginInvocationContext } from '../index.js';
-// @ts-expect-error -- activation uses the canonical root PluginApi; the migration alias is not normal API.
-import type { PluginActivationApi } from './index.js';
+/* @sdk-negative-type-case:src-runtime-index-test-ts-37:LS0gYWN0aXZhdGlvbiB1c2VzIHRoZSBjYW5vbmljYWwgcm9vdCBQbHVnaW5BcGk7IHRoZSBtaWdyYXRpb24gYWxpYXMgaXMgbm90IG5vcm1hbCBBUEku:aW1wb3J0IHR5cGUgeyBQbHVnaW5BY3RpdmF0aW9uQXBpIH0gZnJvbSAnLi9pbmRleC5qcyc7 */
+type PluginActivationApi = never; /* @sdk-negative-type-case-end */
 
 describe('stable runtime entrypoint', () => {
   it('exports the public activation, invocation, service, error, and lifecycle contract', () => {
@@ -25,26 +20,6 @@ describe('stable runtime entrypoint', () => {
     expectTypeOf<PluginApi>().toHaveProperty('scm');
     expectTypeOf<PluginInvocationContext>().toHaveProperty('services');
     expectTypeOf<PluginServices>().toHaveProperty('availability');
-  });
-
-  it('exposes only the provider-native Voice leaf rather than a host controller', () => {
-    expectTypeOf<PluginVoiceHostedConversationService>().toHaveProperty('start');
-    expectTypeOf<PluginVoiceHostedConversationService>().toHaveProperty('complete');
-    expectTypeOf<PluginVoiceHostedConversationService>().toHaveProperty('abort');
-    expectTypeOf<PluginVoiceProviderRuntimeRegistration>().toHaveProperty('protocol');
-    expectTypeOf<PluginVoiceProviderRuntimeRegistration>().toHaveProperty('createConnection');
-    expectTypeOf<PluginVoiceProviderRuntimeRegistration>().not.toHaveProperty('start');
-    expectTypeOf<PluginVoiceProviderRuntimeRegistration>().not.toHaveProperty('stop');
-    expectTypeOf<PluginVoiceProviderRuntimeRegistration>().not.toHaveProperty('getSnapshot');
-  });
-
-  it('exposes the speech leaf as operations and schemas without a host controller', () => {
-    expectTypeOf<PluginVoiceSpeechRuntimeRegistration>().toHaveProperty('catalogProviders');
-    expectTypeOf<PluginVoiceSpeechRuntimeRegistration>().toHaveProperty('operations');
-    expectTypeOf<PluginVoiceSpeechRuntimeRegistration>().toHaveProperty('speechProviderIds');
-    expectTypeOf<PluginVoiceSpeechRuntimeRegistration>().toHaveProperty('schemas');
-    expectTypeOf<PluginVoiceSpeechRuntimeRegistration>().not.toHaveProperty('start');
-    expectTypeOf<PluginVoiceSpeechRuntimeRegistration>().not.toHaveProperty('stop');
   });
 
   it('does not expose retired runtime controllers or unpublished measured limits', () => {

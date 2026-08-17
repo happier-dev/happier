@@ -1,9 +1,15 @@
 # Multi-Mode Fallback Plugin Example
 
+> Packaged hosted-web rendering is unavailable on this platform because no Artifact-backed frame adapter has passed its platform feasibility gate.
+
+This is a maintained conformance/reference package. It is not an ordinary authoring template:
+start a new plugin with `happier plugins create` and declare ordinary contributions through
+`definePlugin(...)`; the canonical author build projects its cold manifest.
+
 One strict `.happier-plugin/plugin.json` view declares React Native primary, hosted web secondary, and
 declarative tertiary fallback. `pluginUiBuild.ts` supplies the two executable
 renderer inputs from one TSX source.
 
-This repository example is source and compile coverage. Use the public UI build
-helpers, pack the plugin, and validate fallback selection in a real host before
-distributing it.
+This repository example is source and compile coverage. Its hosted-web arm is
+blocked rather than an advertised fallback; only a passed frame adapter can
+make that arm eligible for host validation.

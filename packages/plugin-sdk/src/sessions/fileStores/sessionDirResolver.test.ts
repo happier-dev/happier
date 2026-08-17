@@ -8,6 +8,7 @@ type ProductDescriptor = Readonly<{
   productId: string;
   defaultAgentDirSegments: readonly string[];
   agentDirEnvVar: string;
+  agentDirSettingId?: string;
   legacySessionDirEnvVars: readonly string[];
   readsSettingsSessionDir: boolean;
   configDirName: string;
@@ -22,6 +23,11 @@ type RootDescriptor = Readonly<{
 }>;
 
 type ResolverModule = Readonly<{
+  resolveSessionFileStoreLaunchEnvironment(input: Readonly<{
+    product: ProductDescriptor;
+    settings?: Readonly<Record<string, unknown>>;
+    env?: Readonly<Record<string, string | undefined>>;
+  }>): Readonly<Record<string, string>>;
   listSessionFileStoreRoots(resolution: Readonly<{ sessionsRoot: string }>): Promise<readonly string[]>;
   resolveSessionFileStoreDirs(input: Readonly<{
     product: ProductDescriptor;
@@ -211,6 +217,26 @@ describe('session file-store directory resolver', () => {
       sessionsRoot: join(await realpath(configuredAgentDir), 'sessions'),
       resolvedFrom: 'agentDirEnv',
     });
+  });
+
+  it('projects a per-Agent configured root over the ambient vendor environment', async () => {
+    const resolver = await loadResolver();
+    const configured = resolver.resolveSessionFileStoreLaunchEnvironment({
+      product: { ...product, agentDirSettingId: 'genericAgentDir' },
+      settings: { genericAgentDir: '  ~/isolated-agent  ' },
+      env: {
+        HOME: '/home/alice',
+        GENERIC_FILE_AGENT_DIR: '/ambient/shared-agent',
+      },
+    });
+    const ambient = resolver.resolveSessionFileStoreLaunchEnvironment({
+      product: { ...product, agentDirSettingId: 'genericAgentDir' },
+      settings: {},
+      env: { GENERIC_FILE_AGENT_DIR: '/ambient/shared-agent' },
+    });
+
+    expect(configured).toEqual({ GENERIC_FILE_AGENT_DIR: '/home/alice/isolated-agent' });
+    expect(ambient).toEqual({ GENERIC_FILE_AGENT_DIR: '/ambient/shared-agent' });
   });
 
   it('enumerates existing child roots and skips symlinks', async () => {

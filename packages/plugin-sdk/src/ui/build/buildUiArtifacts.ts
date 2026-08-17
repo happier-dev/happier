@@ -56,7 +56,10 @@ export type PluginUiHostedWebBuildSurfaceV1 = Readonly<{
     kind: 'hostedWeb';
     preset: HostedWebViteBuildPreset;
     hostUiApiVersion: string;
-    reactVersion: string;
+    /** Absolute generated execution config; before preparation this can identify an author Vite extension. */
+    bundlerConfigPath?: string;
+    /** Builder-owned operation cwd for a generated bundler config, when needed. */
+    bundlerWorkingDirectory?: string;
 }>;
 
 export type PluginUiReactNativeBuildSurfaceV1 = Readonly<{
@@ -77,6 +80,10 @@ export type PluginUiReactNativeBuildSurfaceV1 = Readonly<{
         expoRuntimeVersion?: string;
         hermesVersion?: string;
     }>;
+    /** Absolute generated execution config; before preparation this can identify an author Vite extension. */
+    bundlerConfigPath?: string;
+    /** Builder-owned operation cwd for a generated bundler config, when needed. */
+    bundlerWorkingDirectory?: string;
 }>;
 
 export type PluginUiBuildSurfaceV1 =
@@ -193,6 +200,9 @@ function buildManifestEntry(
                 digest,
                 viteVersion: surface.preset.vite.version,
                 hostUiApiVersion: surface.hostUiApiVersion,
+                ...(surface.preset.collectionMigrations
+                    ? { collectionMigrations: surface.preset.collectionMigrations }
+                    : {}),
                 compatibility: surface.compatibility,
             });
         }
@@ -205,6 +215,9 @@ function buildManifestEntry(
             repackVersion: surface.preset.repack.version,
             hostUiApiVersion: surface.hostUiApiVersion,
             module: surface.preset.module,
+            ...(surface.preset.collectionMigrations
+                ? { collectionMigrations: surface.preset.collectionMigrations }
+                : {}),
             compatibility: surface.compatibility,
         });
     }
@@ -216,7 +229,6 @@ function buildManifestEntry(
         digest,
         viteVersion: surface.preset.vite.version,
         hostUiApiVersion: surface.hostUiApiVersion,
-        reactVersion: surface.reactVersion,
     });
 }
 

@@ -1,0 +1,33 @@
+{
+  "name": "@example/happier-hosted-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hosted-web Happier plugin example.",
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "keywords": [
+    "happier-plugin"
+  ],
+  "files": [
+    "dist",
+    ".happier-plugin"
+  ],
+  "scripts": {
+    "build": "happier plugins author build .",
+    "build:ui": "happier-plugin-build-ui --project-root .",
+    "typecheck": "happier plugins author typecheck .",
+    "test": "happier plugins test .",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "react": "19.2.0",
+    "vite": "7.3.1"
+  }
+}

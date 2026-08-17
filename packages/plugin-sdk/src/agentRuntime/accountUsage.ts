@@ -1,3 +1,5 @@
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+
 export type AgentAccountUsageRecordKey = Readonly<{
   providerId: string;
   accountSubjectId: string;
@@ -21,7 +23,7 @@ export type AgentAccountUsageRecordKey = Readonly<{
   quotaScopeId?: string;
 }>;
 
-type AgentAccountUsageQuotaSource =
+export type AgentAccountUsageQuotaSource =
   | 'provider_api'
   | 'background_fetch'
   | 'runtime_event'
@@ -33,14 +35,14 @@ type AgentAccountUsageQuotaSource =
   | 'cached'
   | 'unknown';
 
-type AgentAccountUsageQuotaConfidence =
+export type AgentAccountUsageQuotaConfidence =
   | 'exact'
   | 'derived'
   | 'estimated'
   | 'stale'
   | 'unknown';
 
-type AgentAccountUsageRecoveryCredit = Readonly<{
+export type AgentAccountUsageRecoveryCredit = Readonly<{
   id?: string;
   kind: 'usage_limit_reset' | 'rate_limit_reset' | 'quota_reset' | 'unknown';
   status:
@@ -60,7 +62,7 @@ type AgentAccountUsageRecoveryCredit = Readonly<{
   description?: string | null;
 }>;
 
-type AgentAccountUsageRecoveryCredits = Readonly<{
+export type AgentAccountUsageRecoveryCredits = Readonly<{
   availableCount: number;
   totalCount?: number;
   nextExpiresAtMs?: number | null;
@@ -69,7 +71,7 @@ type AgentAccountUsageRecoveryCredits = Readonly<{
   credits: AgentAccountUsageRecoveryCredit[];
 }>;
 
-type AgentAccountUsageMeter = Readonly<{
+export type AgentAccountUsageMeter = Readonly<{
   meterId: string;
   label: string;
   used: number | null;
@@ -142,7 +144,7 @@ type AgentAccountUsageMeter = Readonly<{
   }>;
 }>;
 
-type AgentAccountUsageDiagnostic = Readonly<{
+export type AgentAccountUsageDiagnostic = Readonly<{
   kind:
     | 'unavailable'
     | 'provider_http'
@@ -164,7 +166,6 @@ type AgentAccountUsageDiagnostic = Readonly<{
  */
 export type AgentAccountUsageSnapshot = Readonly<{
   v: 1;
-  recordId: string;
   recordKey: AgentAccountUsageRecordKey;
   providerId: string;
   accountSubject: Readonly<{
@@ -196,3 +197,8 @@ export type AgentAccountUsageSnapshot = Readonly<{
   meters: AgentAccountUsageMeter[];
   diagnostics?: AgentAccountUsageDiagnostic[];
 }>;
+
+/** Builds the explicit record identity required only by provisional-to-stable adoption. */
+export function buildAgentAccountUsageRecordId(recordKey: AgentAccountUsageRecordKey): string {
+  return buildProviderAccountUsageRecordId(recordKey);
+}

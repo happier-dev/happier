@@ -80,10 +80,10 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
         })).toThrow(/relative path/u);
     });
 
-    it('exposes the real host-runtime-externals Vite plugin instance authors must include', () => {
+    it('exposes the canonical host-runtime and physical-plugin-ui Vite checks the managed builder installs', () => {
         const plugins = createReactNativeWebVitePlugins();
 
-        expect(plugins).toHaveLength(1);
+        expect(plugins).toHaveLength(2);
         expect(plugins[0]).toMatchObject({ name: 'happier-plugin-ui-host-runtime-externals', enforce: 'pre' });
         expect(plugins[0].resolveId('react')).not.toBeNull();
         expect(plugins[0].resolveId('react/jsx-runtime')).not.toBeNull();
@@ -91,6 +91,7 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
         expect(plugins[0].resolveId('react-native-web')).not.toBeNull();
         expect(plugins[0].resolveId('@happier-dev/plugin-sdk/ui/client')).not.toBeNull();
         expect(plugins[0].resolveId('react/compiler-runtime')).toBeNull();
+        expect(plugins[1]).toMatchObject({ name: 'happier-plugin-ui-package-instance', enforce: 'post' });
     });
 
     it('defines a reactNative/web manifest artifact entry built with Vite', () => {
@@ -123,5 +124,26 @@ describe('React Native web (react-native-web federation) build SDK helper', () =
             hostUiApiVersion: '1.0.0',
             compat: { react: '19.2.0', reactNative: '0.83.4' },
         });
+    });
+
+    it('carries a candidate migration export through web without invented Re.Pack fields', () => {
+        const entry = defineReactNativeWebViteBuildArtifact({
+            contributionId: 'native-preview',
+            entry: 'react-native-web/native-preview/entry.mjs',
+            files: [{
+                relativePath: 'react-native-web/native-preview/entry.mjs',
+                digest: `sha256:${'a'.repeat(64)}`,
+                byteSize: 1,
+            }],
+            digest: `sha256:${'f'.repeat(64)}`,
+            viteVersion: '7.3.1',
+            hostUiApiVersion: '1.0.0',
+            collectionMigrations: { exportName: 'collectionMigrations' },
+            compatibility: { reactVersion: '19.2.0', reactNativeVersion: '0.83.4' },
+        });
+
+        expect(entry.collectionMigrations).toEqual({ exportName: 'collectionMigrations' });
+        expect(entry.collectionMigrations).not.toHaveProperty('containerName');
+        expect(entry.collectionMigrations).not.toHaveProperty('modulePath');
     });
 });

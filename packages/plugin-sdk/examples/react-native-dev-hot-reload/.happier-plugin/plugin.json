@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2, "id": "examples.react-native-dev-hot-reload", "version": "0.1.0", "displayName": "React Native Dev Hot Reload Example",
-  "description": "Development React Native source prepared for the host development loop.", "engines": { "happier": "^0.2.0" },
+  "description": "Development React Native source prepared for the host development loop.", "engines": { "happier": "0.2.10" },
   "runtime": { "apiVersion": 1 },
   "entrypoints": { "development": "./src/index.ts" }, "hostAccess": { "required": [], "optional": [] },
   "contributes": { "ui": {
-    "views": [{ "id": "panel", "placement": "session.details", "renderer": "panel-native-dev", "fallbackRenderers": ["panel-fallback"], "title": "RN development example" }],
+    "views": [{ "id": "panel", "container": "appPage", "target": { "kind": "app" }, "renderer": "panel-native-dev", "fallbackRenderers": ["panel-fallback"], "title": "RN development example" }],
     "renderers": [
       { "id": "panel-native-dev", "kind": "reactNative", "artifact": "panel-native-dev", "requiredHostMethods": ["context", "diagnostic"] },
       { "id": "panel-fallback", "kind": "declarative", "root": { "kind": "status", "label": "Development renderer", "value": "Waiting for a development build", "tone": "warning" } }

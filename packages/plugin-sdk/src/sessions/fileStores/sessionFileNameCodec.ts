@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 import { open } from 'node:fs/promises';
 import { basename } from 'node:path';
 

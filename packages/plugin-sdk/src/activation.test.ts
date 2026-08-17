@@ -4,16 +4,9 @@ import type {
     PluginApi,
     PluginActivationModule,
     PluginCleanup,
+    PluginMcpDiscoveredEndpoint,
     PluginMcpDiscoveryResult,
-    PluginVoiceConnectionMediaHost,
-    PluginVoiceProviderExecutionAuthority,
-    PluginVoiceProviderRuntimeRegistration,
-    PluginVoicePcmConnection,
-    PluginVoiceRealtimeCanonicalEvent,
 } from './activation.js';
-import type {
-    PluginVoiceAgentSessionRealtimeService,
-} from './experimental/agentRuntime/realtime.js';
 import type {
     AgentExternalSessionObservationContribution,
     AgentExternalSessionSource,
@@ -21,16 +14,13 @@ import type {
     AgentExternalSessionTakeoverResolveLaunchRequest,
     AgentExternalSessionsContribution,
     AgentExternalSessionsInvocation,
+    AgentExternalSessionsManagedEndpointServiceRequest,
     AgentExternalSessionsResult,
     AgentExternalSessionsResolveSourceResult,
-} from './sessions/index.js';
-import type { McpDiscoveryWarningV1, McpServerSpecV1 } from './mcp.js';
-import type {
-    VoiceRealtimeToolCallV1,
-    VoiceRealtimeToolResultV1,
-    VoiceRealtimeJsonValue,
-    VoiceTranscriptCanonicalEventV1,
-} from '@happier-dev/protocol';
+} from './sessions/external/index.js';
+import type { ManagedServiceSpec } from './managed-services/contract.js';
+import type { ExecService } from './exec.js';
+import type { McpDiscoveryWarningV1 } from './mcp.js';
 import type { Disposable } from './lifecycle.js';
 import type {
     PluginConnectedAccountAuthCompletionResult,
@@ -39,17 +29,21 @@ import type {
     PluginConnectedAccountBindingSummary,
     PluginConnectedAccountConnectedResult,
     PluginConnectedAccountMaterialization,
-    PluginConnectedAccountMaterializationKind,
+    PluginConnectedAccountMaterializationOptions,
     PluginConnectedAccountMaterializationRequest,
+    PluginConnectedAccountRef,
     PluginConnectedAccountRuntime,
     PluginConnectedAccountRuntimeConfiguration,
-    PluginConnectedAccountsService,
+    ConnectedAccountsService,
 } from './services/connectedAccounts.js';
 import type {
-    PluginConnectedAccountAuthenticationModeRuntime,
-    PluginConnectedAccountRuntimeConfiguration as RuntimePluginConnectedAccountRuntimeConfiguration,
-} from '@happier-dev/plugin-sdk/runtime';
-import type { PluginUiHostApi } from './ui/hostApi.js';
+    ConnectedAccountAuthenticationModeRuntime as PluginConnectedAccountAuthenticationModeRuntime,
+    ConnectedAccountRuntimeConfiguration as RuntimePluginConnectedAccountRuntimeConfiguration,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
+    ConnectedAccountMaterializationRequest,
+    PluginConnectedAccountMaterializationKind,
+} from '@happier-dev/protocol';
 
 describe('plugin activation contract', () => {
     it('makes every manifest-declared registration static and non-disposable', () => {
@@ -65,10 +59,9 @@ describe('plugin activation contract', () => {
         expectTypeOf<ReturnType<PluginApi['scm']['registerHostingProvider']>>().toEqualTypeOf<void>();
         expectTypeOf<ReturnType<PluginApi['scm']['registerBackend']>>().toEqualTypeOf<void>();
         expectTypeOf<ReturnType<PluginApi['mcp']['registerServer']>>().toEqualTypeOf<void>();
-        expectTypeOf<ReturnType<PluginApi['mcp']['registerDiscoveryProvider']>>().toEqualTypeOf<void>();
-        expectTypeOf<ReturnType<PluginApi['interceptors']['register']>>().toEqualTypeOf<void>();
+        expectTypeOf<ReturnType<PluginApi['mcp']['registerDiscoverySource']>>().toEqualTypeOf<void>();
         expectTypeOf<ReturnType<PluginApi['voiceProviders']['register']>>().toEqualTypeOf<void>();
-        expectTypeOf<ReturnType<PluginApi['voiceProviders']['registerSpeech']>>().toEqualTypeOf<void>();
+        expectTypeOf<keyof PluginApi['voiceProviders']>().toEqualTypeOf<'register'>();
         expectTypeOf<PluginApi>().not.toHaveProperty('lifecycle');
     });
 
@@ -119,6 +112,7 @@ describe('plugin activation contract', () => {
             | 'resolveLinkedIdentity'
             | 'pageTranscript'
             | 'readAfterTranscript'
+            | 'resolveManagedEndpointService'
         >();
         expectTypeOf<AgentExternalSessionsContribution>().not.toHaveProperty('status');
         expectTypeOf<AgentExternalSessionsContribution>().not.toHaveProperty('follow');
@@ -129,6 +123,7 @@ describe('plugin activation contract', () => {
         expectTypeOf<ResolveSourceRequest['signal']>().toEqualTypeOf<AbortSignal>();
         expectTypeOf<ResolveSourceRequest['deadlineAtMs']>().toEqualTypeOf<number>();
         expectTypeOf<ResolveSourceRequest['maxSerializedBytes']>().toEqualTypeOf<number>();
+        expectTypeOf<AgentExternalSessionsInvocation['exec']>().toEqualTypeOf<ExecService>();
 
         type ListRequest = Parameters<AgentExternalSessionsContribution['listCandidates']>[0];
         type PageRequest = Parameters<AgentExternalSessionsContribution['pageTranscript']>[0];
@@ -142,6 +137,12 @@ describe('plugin activation contract', () => {
         expectTypeOf<ReadAfterRequest>().not.toHaveProperty('linkData');
         expectTypeOf<Awaited<ReturnType<AgentExternalSessionsContribution['resolveSource']>>>()
             .toEqualTypeOf<AgentExternalSessionsResult<AgentExternalSessionsResolveSourceResult>>();
+        expectTypeOf<AgentExternalSessionsContribution['resolveManagedEndpointService']>()
+            .toEqualTypeOf<(
+                (request: AgentExternalSessionsManagedEndpointServiceRequest) => (
+                    Promise<ManagedServiceSpec | null> | ManagedServiceSpec | null
+                )
+            ) | undefined>();
     });
 
     it('registers exactly the three-method observation facet beside External Sessions', () => {
@@ -179,23 +180,30 @@ describe('plugin activation contract', () => {
         expectTypeOf<ReturnType<PluginActivationModule['activate']>>().toEqualTypeOf<
             void | PluginCleanup | Promise<void | PluginCleanup>
         >();
-        expectTypeOf<ReturnType<PluginConnectedAccountsService['watch']>>().toEqualTypeOf<Disposable>();
-        expectTypeOf<keyof PluginConnectedAccountsService>().toEqualTypeOf<
-            'getBinding' | 'requestSelection' | 'materialize' | 'watch'
+        expectTypeOf<ReturnType<ConnectedAccountsService['watch']>>().toEqualTypeOf<Disposable>();
+        expectTypeOf<keyof ConnectedAccountsService>().toEqualTypeOf<
+            | 'getBinding'
+            | 'listAccounts'
+            | 'materialize'
+            | 'materializeListedAccount'
+            | 'requestSelection'
+            | 'watch'
         >();
-        expectTypeOf<PluginConnectedAccountsService>().not.toHaveProperty('list');
-        expectTypeOf<PluginConnectedAccountsService>().not.toHaveProperty('get');
-        expectTypeOf<PluginConnectedAccountsService>().not.toHaveProperty('reportFailure');
-        expectTypeOf<PluginConnectedAccountsService>().not.toHaveProperty('refresh');
+        expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('list');
+        expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('get');
+        expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('reportFailure');
+        expectTypeOf<ConnectedAccountsService>().not.toHaveProperty('refresh');
         expectTypeOf<keyof PluginConnectedAccountBindingSummary>().toEqualTypeOf<
-            'purpose' | 'service' | 'target'
+            'purpose' | 'service' | 'account' | 'target'
         >();
+        expectTypeOf<PluginConnectedAccountBindingSummary['account']>()
+            .toEqualTypeOf<PluginConnectedAccountRef>();
         expectTypeOf<keyof PluginConnectedAccountBindingSummary['target']>().toEqualTypeOf<
             'kind' | 'displayName'
         >();
         expectTypeOf<PluginConnectedAccountBindingSummary['target']['kind']>()
             .toEqualTypeOf<'account' | 'group'>();
-        expectTypeOf<PluginConnectedAccountsService['getBinding']>()
+        expectTypeOf<ConnectedAccountsService['getBinding']>()
             .returns.resolves.toEqualTypeOf<PluginConnectedAccountBindingSummary | null>();
         expectTypeOf<PluginConnectedAccountBindingSummary>().not.toHaveProperty('accountId');
         expectTypeOf<PluginConnectedAccountBindingSummary>().not.toHaveProperty('groupId');
@@ -203,24 +211,35 @@ describe('plugin activation contract', () => {
         expectTypeOf<PluginConnectedAccountBindingSummary>().not.toHaveProperty('revision');
         expectTypeOf<keyof PluginConnectedAccountBindingEvent>().toEqualTypeOf<'kind'>();
         expectTypeOf<PluginConnectedAccountBindingEvent['kind']>().toEqualTypeOf<'resync'>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['getBinding']>[0]>()
+        expectTypeOf<Parameters<ConnectedAccountsService['getBinding']>[0]>()
             .toEqualTypeOf<string>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['getBinding']>[1]>()
-            .toEqualTypeOf<{ signal?: AbortSignal } | undefined>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['requestSelection']>[0]>()
+        expectTypeOf<Parameters<ConnectedAccountsService['getBinding']>[1]>()
+            .toEqualTypeOf<Readonly<{ signal?: AbortSignal }> | undefined>();
+        expectTypeOf<Parameters<ConnectedAccountsService['requestSelection']>[0]>()
             .toEqualTypeOf<Readonly<{ purpose: string; reason: string }>>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['requestSelection']>[1]>()
-            .toEqualTypeOf<{ signal?: AbortSignal } | undefined>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['materialize']>[0]>()
+        expectTypeOf<Parameters<ConnectedAccountsService['requestSelection']>[1]>()
+            .toEqualTypeOf<Readonly<{ signal?: AbortSignal }> | undefined>();
+        expectTypeOf<Parameters<ConnectedAccountsService['materialize']>[0]>()
             .toEqualTypeOf<string>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['materialize']>[1]>()
+        expectTypeOf<Parameters<ConnectedAccountsService['materialize']>[1]>()
             .toEqualTypeOf<PluginConnectedAccountMaterializationRequest>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['materialize']>[2]>()
-            .toEqualTypeOf<{ signal?: AbortSignal } | undefined>();
-        expectTypeOf<PluginConnectedAccountsService['materialize']>()
+        expectTypeOf<Parameters<ConnectedAccountsService['materialize']>[2]>()
+            .toEqualTypeOf<PluginConnectedAccountMaterializationOptions | undefined>();
+        expectTypeOf<Readonly<{
+            signal?: AbortSignal;
+        }>>().toMatchTypeOf<PluginConnectedAccountMaterializationOptions>();
+        expectTypeOf<Readonly<{
+            signal?: AbortSignal;
+            expectedAccount: PluginConnectedAccountRef;
+        }>>().toMatchTypeOf<PluginConnectedAccountMaterializationOptions>();
+        expectTypeOf<PluginConnectedAccountMaterializationOptions>()
+            .not.toHaveProperty('account');
+        expectTypeOf<ConnectedAccountsService['materialize']>()
             .returns.resolves.toEqualTypeOf<PluginConnectedAccountMaterialization>();
         expectTypeOf<PluginConnectedAccountMaterializationRequest['kind']>()
             .toEqualTypeOf<PluginConnectedAccountMaterializationKind>();
+        expectTypeOf<PluginConnectedAccountMaterializationRequest>()
+            .toEqualTypeOf<ConnectedAccountMaterializationRequest>();
         expectTypeOf<PluginConnectedAccountMaterialization['kind']>()
             .toEqualTypeOf<PluginConnectedAccountMaterializationKind>();
         expectTypeOf<keyof Extract<
@@ -259,66 +278,20 @@ describe('plugin activation contract', () => {
             PluginConnectedAccountMaterialization,
             { kind: 'files' }
         >['files']>().toEqualTypeOf<Readonly<Record<string, Uint8Array>>>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['watch']>[0]>()
+        expectTypeOf<Parameters<ConnectedAccountsService['watch']>[0]>()
             .toEqualTypeOf<string>();
-        expectTypeOf<Parameters<PluginConnectedAccountsService['watch']>[1]>()
+        expectTypeOf<Parameters<ConnectedAccountsService['watch']>[1]>()
             .toEqualTypeOf<(event: PluginConnectedAccountBindingEvent) => void>();
         expectTypeOf<Disposable['dispose']>().toBeFunction();
     });
 
-    it('removes V1 names without changing the active MCP and Voice contracts', () => {
-        expectTypeOf<NonNullable<PluginMcpDiscoveryResult['servers']>[number]>()
-            .toEqualTypeOf<McpServerSpecV1>();
+    it('removes V1 names without changing the active MCP contract', () => {
+        expectTypeOf<NonNullable<PluginMcpDiscoveryResult['endpoints']>[number]>()
+            .toEqualTypeOf<PluginMcpDiscoveredEndpoint>();
+        expectTypeOf<keyof PluginMcpDiscoveredEndpoint>()
+            .toEqualTypeOf<'id' | 'name' | 'kind' | 'url'>();
         expectTypeOf<McpDiscoveryWarningV1>().toMatchTypeOf<
             NonNullable<PluginMcpDiscoveryResult['warnings']>[number]
         >();
-        expectTypeOf<VoiceTranscriptCanonicalEventV1>().toMatchTypeOf<
-            Extract<PluginVoiceRealtimeCanonicalEvent, { type: 'transcript' }>['event']
-        >();
-        expectTypeOf<VoiceRealtimeToolCallV1>().toMatchTypeOf<
-            Extract<PluginVoiceRealtimeCanonicalEvent, { type: 'tool_calls' }>['calls'][number]
-        >();
-        expectTypeOf<Extract<
-            PluginVoiceRealtimeCanonicalEvent,
-            { type: 'provider_event' }
-        >>().toEqualTypeOf<never>();
-        expectTypeOf<VoiceRealtimeToolResultV1>().toMatchTypeOf<
-            Parameters<PluginVoiceProviderRuntimeRegistration['encodeToolResults']>[0][number]
-        >();
-    });
-
-    it('gives Voice connection operations the existing UI action host and caller lifetime', () => {
-        type ConnectionInput = Parameters<PluginVoiceProviderRuntimeRegistration['createConnection']>[0];
-        expectTypeOf<keyof ConnectionInput>().toEqualTypeOf<
-            'session' | 'attemptId' | 'mic' | 'interruption' | 'levels' | 'media' | 'tools' | 'ui' | 'signal' | 'execution'
-        >();
-        expectTypeOf<ConnectionInput['ui']>().toEqualTypeOf<PluginUiHostApi>();
-        expectTypeOf<ConnectionInput['signal']>().toEqualTypeOf<AbortSignal>();
-        expectTypeOf<ConnectionInput['media']>().toEqualTypeOf<PluginVoiceConnectionMediaHost>();
-        expectTypeOf<ConnectionInput['execution']>().toEqualTypeOf<PluginVoiceProviderExecutionAuthority>();
-        expectTypeOf<Extract<
-            ConnectionInput['execution'],
-            { kind: 'experimental_agent_session_realtime' }
-        >['agentSessionRealtime']>().toEqualTypeOf<PluginVoiceAgentSessionRealtimeService>();
-        expectTypeOf<Parameters<ConnectionInput['media']['createWebRtcConnection']>[0]>()
-            .toEqualTypeOf<Readonly<{
-                signaling: Readonly<{
-                    exchangeOffer(input: Readonly<{
-                        offerSdp: string;
-                        signal: AbortSignal;
-                    }>): Promise<Readonly<{ answerSdp: string }>>;
-                }>;
-                control: Readonly<{
-                    label: string;
-                    onOpen(input: Readonly<{
-                        sendJson(value: VoiceRealtimeJsonValue): Promise<void>;
-                    }>): void | Promise<void>;
-                }>;
-            }>>();
-        expectTypeOf<ReturnType<ConnectionInput['media']['createPcmConnection']>>()
-            .toEqualTypeOf<PluginVoicePcmConnection>();
-        expectTypeOf<Parameters<ConnectionInput['media']['createPcmConnection']>[0]>().not.toHaveProperty('mic');
-        expectTypeOf<Parameters<ConnectionInput['media']['createPcmConnection']>[0]['output']>()
-            .not.toHaveProperty('retainedOutputMaxMs');
     });
 });

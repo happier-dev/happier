@@ -1,17 +1,49 @@
-import type { AgentRuntimeContext } from './context.js';
-import type { AgentLaunchEnvironment, AgentSessionInput } from './session.js';
+import type { AgentLaunchEnvironment } from './session.js';
 import type {
-  SessionStateFieldId,
-  SessionStateFieldValue,
-} from '@happier-dev/protocol';
+  AgentTerminalSessionStateUpdate,
+  AttachSurface,
+  CheckpointSurface,
+} from './projections.js';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 
-type AgentTerminalSessionStateUpdate<
-  TField extends SessionStateFieldId = SessionStateFieldId,
-> = Readonly<{
-  fieldId: TField;
-  value: SessionStateFieldValue<TField>;
-  updatedAt?: number;
-}>;
+export type {
+  AgentTerminalSessionIdentityFieldId,
+  AgentTerminalSessionStateUpdate,
+  AttachSurface,
+  CheckpointSurface,
+} from './projections.js';
+
+export type AgentTerminalLaunchMetadata = Readonly<Partial<{
+  terminalRuntime: Readonly<Partial<{
+    claudeArgs: readonly string[];
+    codexArgs: readonly string[];
+    promptInteractive: boolean;
+    conversationId: string;
+    continueLatest: boolean;
+    sandbox: boolean;
+    logFile: string;
+    print: boolean;
+    unsafeSkipPermissions: boolean;
+  }>>;
+  antigravity: Readonly<Partial<{
+    promptInteractive: boolean;
+    conversationId: string;
+    continueLatest: boolean;
+    sandbox: boolean;
+    logFile: string;
+    print: boolean;
+    unsafeSkipPermissions: boolean;
+  }>>;
+  providerSessionId: string;
+  codexSessionId: string;
+  resumeId: string;
+  permissionMode: string;
+  codexArgs: readonly string[];
+  claudeArgs: readonly string[];
+  fallbackModel: string;
+  customSystemPrompt: string;
+  appendSystemPrompt: string;
+}>>;
 
 export type AgentTerminalControlPresentation = Readonly<{
   target: 'local' | 'remote';
@@ -38,7 +70,8 @@ export type AgentTerminalLaunchPlan = Readonly<{
 export type AgentTerminalLaunchRequest = Readonly<{
   sessionId: string;
   cwd: string;
-  metadata: Readonly<Record<string, unknown>>;
+  metadata: AgentTerminalLaunchMetadata;
+  modelSelection: ProviderBoundModelRef | null;
 }>;
 
 export interface AgentTerminalSurface {
@@ -49,11 +82,6 @@ export interface AgentTerminalSurface {
 
 export interface AgentRuntimeSurfaces {
   readonly terminal?: AgentTerminalSurface;
-}
-
-export interface AgentRuntimeMessages {
-  augmentOutgoing(
-    message: AgentSessionInput,
-    context: AgentRuntimeContext,
-  ): AgentSessionInput | Promise<AgentSessionInput>;
+  readonly attach?: AttachSurface;
+  readonly checkpoint?: CheckpointSurface;
 }

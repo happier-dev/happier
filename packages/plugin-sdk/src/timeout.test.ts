@@ -2,15 +2,13 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import type { RaceWithTimeoutResult } from './timeout.js';
+
 type TimeoutModule = Readonly<{
   raceWithTimeout<T>(
     promise: Promise<T>,
     timeoutMs: number,
-  ): Promise<
-    | Readonly<{ type: 'resolved'; value: T }>
-    | Readonly<{ type: 'rejected'; error: unknown }>
-    | Readonly<{ type: 'timeout' }>
-  >;
+  ): Promise<RaceWithTimeoutResult<T>>;
   sleep(ms: number): Promise<void>;
   sleepWithSignal(ms: number, signal?: AbortSignal | null): Promise<void>;
 }>;
@@ -21,15 +19,15 @@ async function loadTimeout(): Promise<TimeoutModule> {
   return loaded as TimeoutModule;
 }
 
-describe('experimental timeout helpers', () => {
-  it('publishes the timeout helper experimental subpath', () => {
+describe('async timeout helpers', () => {
+  it('publishes timeout helpers through the canonical async subpath', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
     ) as { exports?: Record<string, unknown> };
 
-    expect(packageJson.exports).toHaveProperty('./experimental/timeout', {
-      types: './dist/timeout.d.ts',
-      default: './dist/timeout.js',
+    expect(packageJson.exports).toHaveProperty('./async', {
+      types: './dist/async/index.d.ts',
+      default: './dist/async/index.js',
     });
   });
 

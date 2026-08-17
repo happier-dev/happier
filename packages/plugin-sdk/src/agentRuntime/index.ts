@@ -1,3 +1,4 @@
+export { buildAgentAccountUsageRecordId } from './accountUsage.js';
 export type {
   AgentAcpAuthenticationContext,
   AgentAcpAuthenticationDefinition,
@@ -17,25 +18,67 @@ export type {
   AgentRuntimeProtocolComposers,
 } from './acp.js';
 export type {
+  AgentAccountUsageRecordKey,
+  AgentAccountUsageDiagnostic,
+  AgentAccountUsageMeter,
+  AgentAccountUsageQuotaConfidence,
+  AgentAccountUsageQuotaSource,
+  AgentAccountUsageRecoveryCredit,
+  AgentAccountUsageRecoveryCredits,
+  AgentAccountUsageSnapshot,
+} from './accountUsage.js';
+export type {
+  AgentAccountUsageAdoptionProof,
+  AgentAccountUsageAdoptProvisionalRecordInput,
+  AgentAccountUsageAdoptProvisionalRecordResult,
+  AgentAccountUsageRecordSnapshotInput,
+  AgentAccountUsageRecordSnapshotResult,
   AgentAccountUsageService,
+  AgentAccountUsageSourceContext,
+  AgentAccountUsageSourceContextInput,
+  AgentFeatureDecisionService,
   AgentRuntimeContext,
   AgentRuntimeFactoryContext,
+  AgentSessionAuthRefreshClassification,
+  AgentSessionAuthRefreshError,
+  AgentSessionAuthRefreshPayload,
+  AgentSessionAuthRefreshRecovery,
   AgentSessionAuthRefreshRequest,
   AgentSessionAuthRefreshResult,
-  AgentSessionAuthService,
+  AgentSessionAuthRefreshSelection,
   AgentSessionHookForwarderAssets,
   AgentSessionHookPluginFile,
   AgentSessionHookServerHandle,
   AgentSessionHookServerStartRequest,
   AgentSessionHooksService,
   AgentSessionHostServices,
+  AgentTerminalHostCreateOrAttachRequest,
+  AgentTerminalHostDisposeIntent,
+  AgentTerminalHostLaunchInput,
+  AgentTerminalHostResolutionReason,
+  AgentTerminalHostResolveRequest,
+  AgentTerminalHostResolveResult,
+  AgentTerminalHostService,
   AgentSessionMcpServer,
   AgentSessionMcpService,
   AgentSessionMcpTransport,
   AgentSessionRuntimeContext,
+  AgentToolExecutionBeforeRequest,
+  AgentToolExecutionBeforeResult,
+  AgentToolExecutionService,
   AgentTranscriptFileFollowHandle,
   AgentTranscriptFileFollowInput,
   AgentTranscriptFileFollowService,
+  AgentTranscriptSessionEventPublicationResult,
+  AgentTranscriptSessionEventPublisher,
+  TerminalControlPort,
+  TerminalHostHandle,
+  TerminalHostKind,
+  TerminalHostLiveness,
+  TerminalHostPreference,
+  TerminalInputInjectionResult,
+  TerminalInputState,
+  TerminalPromptInput,
 } from './context.js';
 export type {
   AgentRuntimeFactory,
@@ -72,7 +115,7 @@ export type {
   AgentExecutionRunSendResult,
   AgentExecutionRunStopResult,
 } from './executionRun.js';
-export type { AgentRuntime, AgentRuntimeBase } from './runtime.js';
+export type { AgentRuntime, AgentRuntimeBase, AgentToolExecutionLifecycle } from './runtime.js';
 export type {
   AgentProviderBindingAdapter,
   AgentProviderBindingCredential,
@@ -82,8 +125,11 @@ export type {
   AgentProviderBindingPrepared,
   AgentProviderBindingResolvedFacts,
   AgentProviderCredentialTransport,
-  AgentRuntimeRegistrationOptions,
 } from './providerBinding.js';
+export type {
+  AgentRuntimeRegistrationOptions,
+  AgentSessionRunnerFactoryLocatorV1,
+} from './registration.js';
 export type {
   AgentConfigurationScalar,
   AgentLaunchEnvironment,
@@ -100,16 +146,207 @@ export type {
   AgentSessionOpenRequest,
   AgentSessionProviderBinding,
   AgentSessionRuntime,
+  AgentSessionRuntimeAuthApplyRequest,
+  AgentSessionRuntimeAuthApplyResult,
+  AgentSessionRuntimeAuthControl,
+  AgentSessionRuntimeAuthIdentityRequest,
+  AgentSessionRuntimeAuthIdentityResult,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
   AgentSessionSendResult,
+  AgentSessionStartupInstructions,
   TimestampedAgentValue,
 } from './session.js';
 export type {
-  AgentRuntimeMessages,
   AgentRuntimeSurfaces,
   AgentTerminalControlPresentation,
+  AgentTerminalLaunchMetadata,
   AgentTerminalLaunchPlan,
   AgentTerminalLaunchRequest,
+  AgentTerminalSessionIdentityFieldId,
+  AgentTerminalSessionStateUpdate,
   AgentTerminalSurface,
+  AttachSurface,
+  CheckpointSurface,
 } from './surfaces.js';
+
+// Canonical package projections. These are direct exports so runtime values retain
+// object/function identity and author types retain their owning declarations.
+export {
+  ACP_AGENT_CLI_TRANSPORT_TIMEOUTS,
+  ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES,
+  ACP_WRITE_LIKE_PERMISSION_KINDS,
+  createAcpToolNameInferencePreset,
+  isRuntimeConfigUpdateOutcomeApplied,
+  normalizeAcpPermissionIntent,
+  parsePermissionIntentAlias,
+  resolveAcpToolPermissionPolicy,
+  resolveRecoverableTurnFailureRetryDecision,
+  resolveRecoverableTurnFailureSecondFailure,
+} from '@happier-dev/agents';
+export {
+  resolveTerminalPromptWriteTimeoutMs,
+} from '../runtime/promptWriteTimeout.js';
+export {
+  buildShellCommand,
+} from '@happier-dev/agents/process/shellCommand';
+export {
+  createAgentSessionPreAdmissionBuffer,
+} from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
+
+export {
+  AgentProviderBindingMaterializationV1Schema,
+  AgentRuntimeJsonValueSchema,
+  AgentSessionProviderBindingV1Schema,
+  AgentSessionRealtimeStartRequestV1Schema,
+  AgentSessionRealtimeStartResultV1Schema,
+  AgentSessionRuntimeEventSchema,
+  SessionContextUsageSnapshotV1Schema,
+  UsageObservationContextSchema,
+  UsageObservationCostSchema,
+  UsageObservationScopeSchema,
+  UsageObservationTokensSchema,
+} from '@happier-dev/protocol/runtime';
+
+export {
+  assertExperimentalAgentSessionRealtimeRuntime as assertAgentSessionRealtimeRuntime,
+} from '../experimental/agentRuntime/realtime.js';
+export { buildUsageObservationEffect } from '../usage.js';
+
+export type {
+  AgentAcpHistorySession,
+} from './acp.js';
+export type {
+  AgentAcpMcpInputPolicy,
+  AgentAcpStderrMatchRule,
+  AgentAcpStderrRules,
+  AgentAcpStderrStatusErrorRule,
+  AgentAcpTimeouts,
+  AgentAcpToolNameInference,
+  AgentAcpToolNamePattern,
+  AgentAcpToolNameResolver,
+} from './acpTypes.js';
+export type {
+  AgentProviderBindingEnvironmentEntry,
+  AgentProviderBindingModel,
+} from './providerBinding.js';
+export type { AgentSessionDisposeReason, AgentSessionProviderCheckpoint } from './session.js';
+export type {
+  AgentSessionActiveInputBinding,
+  AgentSessionActiveInputService,
+  AgentSessionActiveInputStatus,
+  AgentSessionHookPluginDirCreateRequest,
+  AgentSessionHookProviderPayload,
+  AgentSessionInFlightConfigurationOutcome,
+  AgentSessionModel,
+  AgentSessionModelOption,
+  AgentSessionModelOptionChoice,
+  AgentSessionModelsService,
+  AgentSessionModelsSnapshot,
+  AgentSessionModelsSource,
+  AgentSessionProviderTranscriptPublishRequest,
+  AgentSessionTerminalComposerClearOutcome,
+  AgentSessionWorkflowActivityService,
+  AgentTranscriptFileFollowLine,
+} from './context.js';
+export type {
+  ExperimentalAgentSessionRealtimeRuntime as AgentSessionRealtimeRuntime,
+  AgentSessionRealtimeAvailability,
+  AgentSessionRealtimeConversation,
+  AgentSessionRealtimeHandle,
+  AgentSessionRealtimeLifecycleEvent,
+  AgentSessionRealtimeStartInput,
+  AgentSessionRealtimeStartResult,
+  AgentSessionRealtimeStopResult,
+} from '../experimental/agentRuntime/realtime.js';
+export type {
+  UsageObservationEffectV1,
+} from '../usage.js';
+
+export type {
+  AgentSessionPreAdmissionBuffer,
+  AgentSessionPreAdmissionBufferResult,
+} from '@happier-dev/agents/runtime/session/preAdmissionBuffer';
+export type {
+  AcpSessionOperationsV1,
+  AgentAuthorRestoreCheckpointResult,
+  AttachAvailabilityRequest,
+  AttachFailureCode,
+  AttachRequest,
+  AttachSessionMetadata,
+  BackendSessionLaunchHintsV1,
+  BackendSurfaceOperationReceiptV1,
+  BackendSurfaceResultV1,
+  CheckpointAvailabilityOperationV1,
+  CheckpointAvailabilityRequestV1,
+  CheckpointDescriptorV1,
+  CheckpointProviderTargetRefV1,
+  CheckpointRestoreAnchorEvidenceV1,
+  CheckpointRestoreAnchorV1,
+  CheckpointRestoreScopeV1,
+  CheckpointTimingV1,
+  CreateCheckpointRequestV1,
+  ForkAvailabilityRequestV1,
+  ForkRequestV1,
+  ForkResultV1,
+  ForkSessionMetadata,
+  ForkSurfaceV1,
+  HandoffAvailabilityRequestV1,
+  HandoffExportRequestV1,
+  HandoffExportSessionMetadata,
+  HandoffImportResultV1,
+  HandoffSurfaceV1,
+  ListCheckpointsRequestV1,
+  ReplayForkChildLaunchRequestV1,
+  ResolveCheckpointRestoreTargetRequestV1,
+  RestoreCheckpointByAnchorRequestV1,
+  RestoreCheckpointByTargetRequestV1,
+  RestoreCheckpointFailureCodeV1,
+  RestoreCheckpointRequestV1,
+} from './projections.js';
+export type {
+  BackendSurfaceBaseFailureCodeV1,
+  BackendSurfaceDiagnosticV1,
+  ForkPointV1,
+  HandoffExportResultV1,
+  HandoffFailureCodeV1,
+  HandoffImportRequestV1,
+  RecoverableTurnFailureRetryDecision,
+  RuntimeConfigUpdateOutcomeV1,
+  RuntimeOutboundTranscriptToolNormalizationV1,
+  RuntimeOutboundTranscriptUsageObservationV1,
+  TerminalAttachmentId,
+  TerminalControlCapture,
+  TerminalControlCaptureResult,
+  TerminalControlSendFailureReason,
+  TerminalControlSendResult,
+  TerminalControlUnsupportedReason,
+  TerminalHostAttachMetadata,
+  TerminalInjectionDuplicateRisk,
+  TerminalInjectionFailurePhase,
+  TerminalInputReadinessStatusV1,
+  TerminalInputReadinessV1,
+  TerminalSpecialKey,
+} from '@happier-dev/agents';
+export type {
+  BackendSurfaceAvailabilityV1,
+  PluginAgentAcpTransport as AgentAcpTransport,
+  ProviderBoundModelRef,
+  ProviderTranscriptDispatchRequestV1,
+  RuntimeConfigOutcomeChangeKeyV1,
+  RuntimeConfigOutcomeStatusV1,
+  RuntimeConfigOutcomeTimingV1,
+  TranscriptRawAgentEventV1,
+} from '@happier-dev/protocol';
+export type {
+  AgentSessionRealtimeStartRequestV1,
+  SessionContextUsageSnapshotV1,
+  SkillCatalogItemV1,
+  SkillCatalogV1,
+  UsageObservationContext,
+  UsageObservationCost,
+  UsageObservationScope,
+  UsageObservationTokens,
+  VendorPluginCatalogItemV1,
+  VendorPluginCatalogV1,
+} from '@happier-dev/protocol/runtime';

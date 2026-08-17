@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "paths": {
+      "@happier-dev/plugin-sdk": ["../../src/index.ts"],
+      "@happier-dev/plugin-sdk/protocol": ["../../src/protocol/index.ts"],
+      "@happier-dev/plugin-sdk/contributions": ["../../src/contributions/index.ts"],
+      "@happier-dev/plugin-ui": ["../../../plugin-ui/src/index.ts"]
+    }
+  },
+  "include": ["targetedSurfaceReactAuthoring.tsx"]
+}

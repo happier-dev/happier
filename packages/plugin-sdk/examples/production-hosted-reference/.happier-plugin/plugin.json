@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.production-hosted-reference",
+  "version": "0.1.0",
+  "displayName": "Production Hosted Review Reference",
+  "description": "Production-shaped hosted-web reference with lifecycle, offline, and error handling.",
+  "engines": {
+    "happier": "0.2.10"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./dist/daemon.js"
+  },
+  "brand": {
+    "iconResourceId": "brand-icon"
+  },
+  "hostAccess": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "refresh-review",
+        "title": "Refresh review status",
+        "description": "Checks the current review status through the declared Action.",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli",
+          "ui"
+        ],
+        "placementBindings": [
+          "commandPalette"
+        ],
+        "dangerLevel": "safe",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "type": "object",
+          "properties": {
+            "ready": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "ready"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "resources": [
+      {
+        "id": "brand-icon",
+        "source": "packaged",
+        "kind": "asset",
+        "path": "assets/brand.png",
+        "contentType": "image/png"
+      },
+      {
+        "id": "review-guide",
+        "source": "packaged",
+        "kind": "template",
+        "path": "resources/review-guide.md",
+        "contentType": "text/markdown"
+      }
+    ],
+    "ui": {
+      "views": [
+        {
+          "id": "review-dashboard",
+          "container": "appPage",
+          "target": {
+            "kind": "app"
+          },
+          "renderer": "review-hosted",
+          "fallbackRenderers": [
+            "review-unavailable"
+          ],
+          "title": "Review dashboard"
+        }
+      ],
+      "renderers": [
+        {
+          "id": "review-hosted",
+          "kind": "hostedWeb",
+          "source": {
+            "kind": "artifact",
+            "artifact": "review-hosted"
+          },
+          "requiredHostMethods": [
+            "context",
+            "executeAction",
+            "readResource",
+            "openSurface"
+          ]
+        },
+        {
+          "id": "review-unavailable",
+          "kind": "declarative",
+          "root": {
+            "kind": "text",
+            "text": "The review dashboard is unavailable.",
+            "tone": "muted"
+          }
+        }
+      ],
+      "translations": []
+    }
+  }
+}

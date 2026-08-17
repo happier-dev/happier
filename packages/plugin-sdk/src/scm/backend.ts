@@ -1,9 +1,5 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
-
+/** @moduleRealm daemon */
 import type {
-    ScmBackendDescribeRequest,
-    ScmBackendDescribeResponse,
-    ScmBackendCapabilities,
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
     ScmBranchCreateRequest,
@@ -70,8 +66,6 @@ import type {
     ScmStashPopResponse,
     ScmStashShowRequest,
     ScmStashShowResponse,
-    ScmStatusSnapshotRequest,
-    ScmStatusSnapshotResponse,
     ScmWorktreeCreateRequest,
     ScmWorktreeCreateResponse,
     ScmWorktreesEnrichmentRequest,
@@ -80,11 +74,175 @@ import type {
     ScmWorktreePruneResponse,
     ScmWorktreeRemoveRequest,
     ScmWorktreeRemoveResponse,
-    WorkspaceCheckoutKind,
-    WorkspaceLocationScm,
-} from '@happier-dev/protocol';
+    ScmCapabilities,
+    ScmOperationErrorCode,
+    ScmRefreshPolicy,
+    ScmStatusSnapshotRequest,
+    ScmStatusSnapshotResponse,
+} from './projections.js';
+import type { PluginJsonValueV2 } from '../identity.js';
 
-export type ScmBackendRuntimeContext = Readonly<{
+export type ScmBackendId = string;
+
+export type ScmBackendDescribeRequest = {
+    cwd?: string;
+    backendPreference?: {
+        kind: 'prefer';
+        backendId: string;
+    };
+};
+
+export type ScmBackendDescribeResponse = {
+    success: boolean;
+    backendId?: ScmBackendId;
+    repoMode?: ScmRepoMode;
+    isRepo?: boolean;
+    capabilities?: ScmCapabilities;
+    error?: string;
+    errorCode?: ScmOperationErrorCode;
+};
+
+export type ScmBackendCapabilityUnavailableReason =
+    | 'not_implemented'
+    | 'tool_missing'
+    | 'repo_mode_unsupported'
+    | 'auth_missing'
+    | 'hosting_provider_missing'
+    | 'unsafe_worktree_state'
+    | 'unknown';
+
+export type ScmBackendCapabilityLeaf = {
+    support: 'supported' | 'unsupported' | 'experimental';
+    reason?: ScmBackendCapabilityUnavailableReason;
+    declaredSupport?: 'supported' | 'unsupported' | 'experimental';
+};
+
+export type ScmBackendCapabilities = {
+    detection: {
+        repository?: ScmBackendCapabilityLeaf;
+        repoIdentity?: ScmBackendCapabilityLeaf;
+        ignoredPath?: ScmBackendCapabilityLeaf;
+        repoMode?: ScmBackendCapabilityLeaf;
+        executable?: ScmBackendCapabilityLeaf;
+    };
+    read: {
+        status?: ScmBackendCapabilityLeaf;
+        diffFile?: ScmBackendCapabilityLeaf;
+        diffCommit?: ScmBackendCapabilityLeaf;
+        log?: ScmBackendCapabilityLeaf;
+        branches?: ScmBackendCapabilityLeaf;
+        stash?: ScmBackendCapabilityLeaf;
+        defaultBranch?: ScmBackendCapabilityLeaf;
+        hostingProvider?: ScmBackendCapabilityLeaf;
+        pullRequestStatus?: ScmBackendCapabilityLeaf;
+    };
+    changeSet: {
+        include?: ScmBackendCapabilityLeaf;
+        exclude?: ScmBackendCapabilityLeaf;
+        discard?: ScmBackendCapabilityLeaf;
+        model: 'index' | 'working-copy';
+        diffAreas: ('included' | 'pending' | 'both')[];
+    };
+    commit: {
+        create?: ScmBackendCapabilityLeaf;
+        pathSelection?: ScmBackendCapabilityLeaf;
+        lineSelection?: ScmBackendCapabilityLeaf;
+        backout?: ScmBackendCapabilityLeaf;
+    };
+    remote: {
+        read?: ScmBackendCapabilityLeaf;
+        add?: ScmBackendCapabilityLeaf;
+        setUrl?: ScmBackendCapabilityLeaf;
+        remove?: ScmBackendCapabilityLeaf;
+        fetch?: ScmBackendCapabilityLeaf;
+        pull?: ScmBackendCapabilityLeaf;
+        push?: ScmBackendCapabilityLeaf;
+        publish?: ScmBackendCapabilityLeaf;
+    };
+    branch: {
+        list?: ScmBackendCapabilityLeaf;
+        create?: ScmBackendCapabilityLeaf;
+        checkout?: ScmBackendCapabilityLeaf;
+        merge?: ScmBackendCapabilityLeaf;
+        rebase?: ScmBackendCapabilityLeaf;
+        operationControl?: ScmBackendCapabilityLeaf;
+    };
+    worktree: {
+        create?: ScmBackendCapabilityLeaf;
+        remove?: ScmBackendCapabilityLeaf;
+        prune?: ScmBackendCapabilityLeaf;
+        prepare?: ScmBackendCapabilityLeaf;
+    };
+    lifecycle: {
+        init?: ScmBackendCapabilityLeaf;
+        clone?: ScmBackendCapabilityLeaf;
+        publish?: ScmBackendCapabilityLeaf;
+        identityRediscovery?: ScmBackendCapabilityLeaf;
+        removeIndexLock?: ScmBackendCapabilityLeaf;
+    };
+    hosting: {
+        providerDetection?: ScmBackendCapabilityLeaf;
+        repositoryPublishTargets?: ScmBackendCapabilityLeaf;
+        repositoryPublish?: ScmBackendCapabilityLeaf;
+        pullRequestRead?: ScmBackendCapabilityLeaf;
+        pullRequestStatus?: ScmBackendCapabilityLeaf;
+        pullRequestCreate?: ScmBackendCapabilityLeaf;
+        pullRequestReuse?: ScmBackendCapabilityLeaf;
+        pullRequestCheckout?: ScmBackendCapabilityLeaf;
+        pullRequestPrepareWorktree?: ScmBackendCapabilityLeaf;
+        pullRequestRunStacked?: ScmBackendCapabilityLeaf;
+    };
+    checkpoints: {
+        capture?: ScmBackendCapabilityLeaf;
+        aliasFinalize?: ScmBackendCapabilityLeaf;
+        diff?: ScmBackendCapabilityLeaf;
+        cleanup?: ScmBackendCapabilityLeaf;
+        backup?: ScmBackendCapabilityLeaf;
+        rollbackApply?: ScmBackendCapabilityLeaf;
+    };
+    workspaceIntegration: {
+        inspectLocation?: ScmBackendCapabilityLeaf;
+        checkoutMaterialization?: ScmBackendCapabilityLeaf;
+        workspaceTransfer?: ScmBackendCapabilityLeaf;
+        exportPortability?: ScmBackendCapabilityLeaf;
+        portablePathClassification?: ScmBackendCapabilityLeaf;
+    };
+    tooling: {
+        systemCliResolution?: ScmBackendCapabilityLeaf;
+        managedCliResolution?: ScmBackendCapabilityLeaf;
+        binarySafe?: ScmBackendCapabilityLeaf;
+    };
+    freshness: {
+        observed?: ScmBackendCapabilityLeaf;
+        expiry?: ScmBackendCapabilityLeaf;
+        state?: {
+            source: 'live-local' | 'cached-local' | 'cached-remote' | 'explicit-remote';
+            observedAt: number;
+            expiresAt?: number;
+        };
+        refreshPolicy?: ScmRefreshPolicy;
+    };
+    operationLabels?: {
+        commit?: string;
+        include?: string;
+        exclude?: string;
+        backout?: string;
+        fetch?: string;
+        pull?: string;
+        push?: string;
+    };
+};
+
+export type ScmBackendContribution = {
+    id: string;
+    title: string | { key: string; fallback: string };
+    description?: string | { key: string; fallback: string };
+    kind: string;
+    capabilities: ('detect' | 'clone' | 'fetch' | 'status' | 'diff' | 'commit' | 'push' | 'pullRequest')[];
+    metadata?: Record<string, PluginJsonValueV2>;
+};
+
+export type BackendRuntimeContext = Readonly<{
     cwd: string;
     projectKey: string;
     detection: Readonly<{
@@ -94,259 +252,259 @@ export type ScmBackendRuntimeContext = Readonly<{
     }>;
 }>;
 
-export type ScmBackendRuntimeDetection = Readonly<{
+export type BackendRuntimeDetection = Readonly<{
     isRepo: boolean;
     rootPath: string | null;
     mode: ScmRepoMode | null;
 }>;
 
-export type ScmBackendRuntimeHandlerInput<TRequest> = Readonly<{
-    context: ScmBackendRuntimeContext;
+export type BackendRuntimeHandlerInput<TRequest> = Readonly<{
+    context: BackendRuntimeContext;
     request: TRequest;
     /** Operation-scoped cancellation; plugin code must forward it across external awaits. */
     signal: AbortSignal;
 }>;
 
-export type ScmWorkspaceIntegrationCheckoutMaterializationRequest = Readonly<{
+export type CheckoutMaterializationRequest = Readonly<{
     targetPath: string;
     sourcePath?: string;
     previousTargetPath?: string;
-    workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
+    workspaceIntegrationMetadata?: WorkspaceTransferMetadata;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutKind = 'git_worktree';
+export type CreatableWorkspaceCheckoutKind = 'git_worktree';
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest = Readonly<{
-    kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
+export type WorkspaceCheckoutCreationRequest = Readonly<{
+    kind: CreatableWorkspaceCheckoutKind;
     sourcePath: string;
     displayName: string;
     baseRef: string | null;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult = Readonly<{
-    kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
+export type WorkspaceCheckoutCreationResult = Readonly<{
+    kind: CreatableWorkspaceCheckoutKind;
     targetPath: string;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest = Readonly<{
-    kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
+export type WorkspaceCheckoutMaterializationRequest = Readonly<{
+    kind: CreatableWorkspaceCheckoutKind;
     sourcePath: string;
     targetPath: string;
     displayName: string;
     baseRef: string | null;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult = Readonly<{
+export type WorkspaceCheckoutMaterializationResult = Readonly<{
     targetPath: string;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest = Readonly<{
-    kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
+export type WorkspaceCheckoutRealizationRequest = Readonly<{
+    kind: CreatableWorkspaceCheckoutKind;
     sourcePath: string;
     displayName: string;
     baseRef: string | null;
     targetPath: string | null;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult = Readonly<{
-    kind: ScmWorkspaceIntegrationWorkspaceCheckoutKind;
+export type WorkspaceCheckoutRealizationResult = Readonly<{
+    kind: CreatableWorkspaceCheckoutKind;
     targetPath: string;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceTransferEntry = Readonly<{
+export type WorkspaceTransferEntry = Readonly<{
     relativePath: string;
     sourcePath: string;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceTransferMetadata = Readonly<Record<string, unknown>>;
+export type WorkspaceTransferMetadata = Readonly<Record<string, unknown>>;
 
-export type ScmWorkspaceIntegrationWorkspaceTransferRequest = Readonly<{
+export type WorkspaceTransferRequest = Readonly<{
     strategy: 'transfer_snapshot' | 'sync_changes';
     includeIgnoredMode: 'exclude' | 'include_selected';
     ignoredIncludeGlobs: readonly string[];
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceTransferResult = Readonly<{
-    entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
-    metadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
+export type WorkspaceTransferResult = Readonly<{
+    entries: readonly WorkspaceTransferEntry[];
+    metadata?: WorkspaceTransferMetadata | null;
 }>;
 
-export type ScmWorkspaceIntegrationPortableWorkspacePathClassification =
+export type PortableWorkspacePathClassification =
     | 'portable'
     | 'non_portable'
     | 'scm_administrative'
     | 'unknown';
 
-export type ScmWorkspaceIntegrationPortableWorkspacePathRequest = Readonly<{
+export type PortableWorkspacePathRequest = Readonly<{
     relativePath: string;
 }>;
 
-export type ScmWorkspaceIntegrationWorkspaceLocationInspection = Readonly<{
+export type WorkspaceLocationInspection = Readonly<{
     rootPath: string;
-    scmProvider?: WorkspaceLocationScm['provider'];
+    scmProvider?: 'git';
     checkoutDiscovery?: readonly Readonly<{
-        kind: Exclude<WorkspaceCheckoutKind, 'primary'>;
+        kind: CreatableWorkspaceCheckoutKind;
         path?: string;
     }>[];
-    checkoutProviderKinds?: readonly Exclude<WorkspaceCheckoutKind, 'primary'>[];
+    checkoutProviderKinds?: readonly CreatableWorkspaceCheckoutKind[];
 }>;
 
-export type ScmBackendRuntimeWorkspaceIntegrationHandlers = Readonly<{
+export type WorkspaceIntegrationHandlers = Readonly<{
     inspectWorkspaceLocation?: (
-        input: Readonly<{ context: ScmBackendRuntimeContext }>
-    ) => Promise<ScmWorkspaceIntegrationWorkspaceLocationInspection | null> | ScmWorkspaceIntegrationWorkspaceLocationInspection | null;
+        input: Readonly<{ context: BackendRuntimeContext }>
+    ) => Promise<WorkspaceLocationInspection | null> | WorkspaceLocationInspection | null;
     reconcilePostMaterialization?: (
         input: Readonly<{
-            context: ScmBackendRuntimeContext;
-            checkoutMaterialization: ScmWorkspaceIntegrationCheckoutMaterializationRequest;
+            context: BackendRuntimeContext;
+            checkoutMaterialization: CheckoutMaterializationRequest;
             sourcePath?: string;
             previousTargetPath?: string;
-            workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
+            workspaceIntegrationMetadata?: WorkspaceTransferMetadata;
         }>
     ) => Promise<void> | void;
     realizeWorkspaceCheckout?: (
         input: Readonly<{
-            context: ScmBackendRuntimeContext;
-            workspaceCheckoutRealization: ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest;
+            context: BackendRuntimeContext;
+            workspaceCheckoutRealization: WorkspaceCheckoutRealizationRequest;
         }>
-    ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult> | ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult;
+    ) => Promise<WorkspaceCheckoutRealizationResult> | WorkspaceCheckoutRealizationResult;
     createWorkspaceCheckout?: (
         input: Readonly<{
-            context: ScmBackendRuntimeContext;
-            workspaceCheckoutCreation: ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest;
+            context: BackendRuntimeContext;
+            workspaceCheckoutCreation: WorkspaceCheckoutCreationRequest;
         }>
-    ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult> | ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult;
+    ) => Promise<WorkspaceCheckoutCreationResult> | WorkspaceCheckoutCreationResult;
     materializeWorkspaceCheckout?: (
         input: Readonly<{
-            context: ScmBackendRuntimeContext;
-            workspaceCheckoutMaterialization: ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest;
+            context: BackendRuntimeContext;
+            workspaceCheckoutMaterialization: WorkspaceCheckoutMaterializationRequest;
         }>
-    ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult | void> | ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult | void;
+    ) => Promise<WorkspaceCheckoutMaterializationResult | void> | WorkspaceCheckoutMaterializationResult | void;
     resolveWorkspaceTransferEntries?: (
         input: Readonly<{
-            context: ScmBackendRuntimeContext;
-            workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequest;
+            context: BackendRuntimeContext;
+            workspaceTransfer: WorkspaceTransferRequest;
         }>
-    ) => Promise<readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[] | null> | readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[] | null;
+    ) => Promise<readonly WorkspaceTransferEntry[] | null> | readonly WorkspaceTransferEntry[] | null;
     resolveWorkspaceTransferMetadata?: (
         input: Readonly<{
-            context: ScmBackendRuntimeContext;
-            workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequest;
+            context: BackendRuntimeContext;
+            workspaceTransfer: WorkspaceTransferRequest;
         }>
-    ) => Promise<ScmWorkspaceIntegrationWorkspaceTransferMetadata | null> | ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
+    ) => Promise<WorkspaceTransferMetadata | null> | WorkspaceTransferMetadata | null;
     assertPortableWorkspaceEntries?: (
         input: Readonly<{ entries: readonly Readonly<{ relativePath: string }>[] }>
     ) => Promise<void> | void;
     classifyPortableWorkspaceTransferEntry?: (
-        input: ScmWorkspaceIntegrationWorkspaceTransferEntry
-    ) => ScmWorkspaceIntegrationPortableWorkspacePathClassification;
+        input: WorkspaceTransferEntry
+    ) => PortableWorkspacePathClassification;
     isAdministrativeWorkspacePath?: (
         input: Readonly<{ relativePath: string }>
     ) => boolean;
     classifyPortableWorkspacePath?: (
-        input: ScmWorkspaceIntegrationPortableWorkspacePathRequest
-    ) => ScmWorkspaceIntegrationPortableWorkspacePathClassification;
+        input: PortableWorkspacePathRequest
+    ) => PortableWorkspacePathClassification;
 }>;
 
-export type ScmBackendRuntimeHandlers = Readonly<{
+export type BackendRuntimeHandlers = Readonly<{
     detection?: Readonly<{
-        detectRepo?: (input: Readonly<{ cwd: string }>) => Promise<ScmBackendRuntimeDetection> | ScmBackendRuntimeDetection;
+        detectRepo?: (input: Readonly<{ cwd: string }>) => Promise<BackendRuntimeDetection> | BackendRuntimeDetection;
         describeBackend?: (
-            input: ScmBackendRuntimeHandlerInput<ScmBackendDescribeRequest>
+            input: BackendRuntimeHandlerInput<ScmBackendDescribeRequest>
         ) => Promise<ScmBackendDescribeResponse> | ScmBackendDescribeResponse;
     }>;
     read?: Readonly<{
         statusSnapshot?: (
-            input: ScmBackendRuntimeHandlerInput<ScmStatusSnapshotRequest>
+            input: BackendRuntimeHandlerInput<ScmStatusSnapshotRequest>
         ) => Promise<ScmStatusSnapshotResponse> | ScmStatusSnapshotResponse;
         worktreesEnrichment?: (
-            input: ScmBackendRuntimeHandlerInput<ScmWorktreesEnrichmentRequest>
+            input: BackendRuntimeHandlerInput<ScmWorktreesEnrichmentRequest>
         ) => Promise<ScmWorktreesEnrichmentResponse> | ScmWorktreesEnrichmentResponse;
         diffFile?: (
-            input: ScmBackendRuntimeHandlerInput<ScmDiffFileRequest>
+            input: BackendRuntimeHandlerInput<ScmDiffFileRequest>
         ) => Promise<ScmDiffFileResponse> | ScmDiffFileResponse;
         diffCommit?: (
-            input: ScmBackendRuntimeHandlerInput<ScmDiffCommitRequest>
+            input: BackendRuntimeHandlerInput<ScmDiffCommitRequest>
         ) => Promise<ScmDiffCommitResponse> | ScmDiffCommitResponse;
         logList?: (
-            input: ScmBackendRuntimeHandlerInput<ScmLogListRequest>
+            input: BackendRuntimeHandlerInput<ScmLogListRequest>
         ) => Promise<ScmLogListResponse> | ScmLogListResponse;
         stashList?: (
-            input: ScmBackendRuntimeHandlerInput<ScmStashListRequest>
+            input: BackendRuntimeHandlerInput<ScmStashListRequest>
         ) => Promise<ScmStashListResponse> | ScmStashListResponse;
     }>;
     changeSet?: Readonly<{
-        include?: (input: ScmBackendRuntimeHandlerInput<ScmChangeApplyRequest>) => Promise<ScmChangeApplyResponse> | ScmChangeApplyResponse;
-        exclude?: (input: ScmBackendRuntimeHandlerInput<ScmChangeApplyRequest>) => Promise<ScmChangeApplyResponse> | ScmChangeApplyResponse;
-        discard?: (input: ScmBackendRuntimeHandlerInput<ScmChangeDiscardRequest>) => Promise<ScmChangeDiscardResponse> | ScmChangeDiscardResponse;
+        include?: (input: BackendRuntimeHandlerInput<ScmChangeApplyRequest>) => Promise<ScmChangeApplyResponse> | ScmChangeApplyResponse;
+        exclude?: (input: BackendRuntimeHandlerInput<ScmChangeApplyRequest>) => Promise<ScmChangeApplyResponse> | ScmChangeApplyResponse;
+        discard?: (input: BackendRuntimeHandlerInput<ScmChangeDiscardRequest>) => Promise<ScmChangeDiscardResponse> | ScmChangeDiscardResponse;
     }>;
     commit?: Readonly<{
-        create?: (input: ScmBackendRuntimeHandlerInput<ScmCommitCreateRequest>) => Promise<ScmCommitCreateResponse> | ScmCommitCreateResponse;
-        backout?: (input: ScmBackendRuntimeHandlerInput<ScmCommitBackoutRequest>) => Promise<ScmCommitBackoutResponse> | ScmCommitBackoutResponse;
+        create?: (input: BackendRuntimeHandlerInput<ScmCommitCreateRequest>) => Promise<ScmCommitCreateResponse> | ScmCommitCreateResponse;
+        backout?: (input: BackendRuntimeHandlerInput<ScmCommitBackoutRequest>) => Promise<ScmCommitBackoutResponse> | ScmCommitBackoutResponse;
     }>;
     remote?: Readonly<{
-        add?: (input: ScmBackendRuntimeHandlerInput<ScmRemoteAddRequest>) => Promise<ScmRemoteManagementResponse> | ScmRemoteManagementResponse;
-        setUrl?: (input: ScmBackendRuntimeHandlerInput<ScmRemoteSetUrlRequest>) => Promise<ScmRemoteManagementResponse> | ScmRemoteManagementResponse;
-        remove?: (input: ScmBackendRuntimeHandlerInput<ScmRemoteRemoveRequest>) => Promise<ScmRemoteManagementResponse> | ScmRemoteManagementResponse;
-        fetch?: (input: ScmBackendRuntimeHandlerInput<ScmRemoteRequest>) => Promise<ScmRemoteResponse> | ScmRemoteResponse;
-        pull?: (input: ScmBackendRuntimeHandlerInput<ScmRemoteRequest>) => Promise<ScmRemoteResponse> | ScmRemoteResponse;
-        push?: (input: ScmBackendRuntimeHandlerInput<ScmRemoteRequest>) => Promise<ScmRemoteResponse> | ScmRemoteResponse;
-        publish?: (input: ScmBackendRuntimeHandlerInput<ScmRemotePublishRequest>) => Promise<ScmRemotePublishResponse> | ScmRemotePublishResponse;
+        add?: (input: BackendRuntimeHandlerInput<ScmRemoteAddRequest>) => Promise<ScmRemoteManagementResponse> | ScmRemoteManagementResponse;
+        setUrl?: (input: BackendRuntimeHandlerInput<ScmRemoteSetUrlRequest>) => Promise<ScmRemoteManagementResponse> | ScmRemoteManagementResponse;
+        remove?: (input: BackendRuntimeHandlerInput<ScmRemoteRemoveRequest>) => Promise<ScmRemoteManagementResponse> | ScmRemoteManagementResponse;
+        fetch?: (input: BackendRuntimeHandlerInput<ScmRemoteRequest>) => Promise<ScmRemoteResponse> | ScmRemoteResponse;
+        pull?: (input: BackendRuntimeHandlerInput<ScmRemoteRequest>) => Promise<ScmRemoteResponse> | ScmRemoteResponse;
+        push?: (input: BackendRuntimeHandlerInput<ScmRemoteRequest>) => Promise<ScmRemoteResponse> | ScmRemoteResponse;
+        publish?: (input: BackendRuntimeHandlerInput<ScmRemotePublishRequest>) => Promise<ScmRemotePublishResponse> | ScmRemotePublishResponse;
     }>;
     branch?: Readonly<{
-        list?: (input: ScmBackendRuntimeHandlerInput<ScmBranchListRequest>) => Promise<ScmBranchListResponse> | ScmBranchListResponse;
-        create?: (input: ScmBackendRuntimeHandlerInput<ScmBranchCreateRequest>) => Promise<ScmBranchCreateResponse> | ScmBranchCreateResponse;
-        checkout?: (input: ScmBackendRuntimeHandlerInput<ScmBranchCheckoutRequest>) => Promise<ScmBranchCheckoutResponse> | ScmBranchCheckoutResponse;
-        merge?: (input: ScmBackendRuntimeHandlerInput<ScmBranchIntegrationRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
-        rebase?: (input: ScmBackendRuntimeHandlerInput<ScmBranchIntegrationRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
-        operationContinue?: (input: ScmBackendRuntimeHandlerInput<ScmBranchOperationControlRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
-        operationAbort?: (input: ScmBackendRuntimeHandlerInput<ScmBranchOperationControlRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
+        list?: (input: BackendRuntimeHandlerInput<ScmBranchListRequest>) => Promise<ScmBranchListResponse> | ScmBranchListResponse;
+        create?: (input: BackendRuntimeHandlerInput<ScmBranchCreateRequest>) => Promise<ScmBranchCreateResponse> | ScmBranchCreateResponse;
+        checkout?: (input: BackendRuntimeHandlerInput<ScmBranchCheckoutRequest>) => Promise<ScmBranchCheckoutResponse> | ScmBranchCheckoutResponse;
+        merge?: (input: BackendRuntimeHandlerInput<ScmBranchIntegrationRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
+        rebase?: (input: BackendRuntimeHandlerInput<ScmBranchIntegrationRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
+        operationContinue?: (input: BackendRuntimeHandlerInput<ScmBranchOperationControlRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
+        operationAbort?: (input: BackendRuntimeHandlerInput<ScmBranchOperationControlRequest>) => Promise<ScmBranchIntegrationResponse> | ScmBranchIntegrationResponse;
     }>;
     worktree?: Readonly<{
-        create?: (input: ScmBackendRuntimeHandlerInput<ScmWorktreeCreateRequest>) => Promise<ScmWorktreeCreateResponse> | ScmWorktreeCreateResponse;
-        remove?: (input: ScmBackendRuntimeHandlerInput<ScmWorktreeRemoveRequest>) => Promise<ScmWorktreeRemoveResponse> | ScmWorktreeRemoveResponse;
-        prune?: (input: ScmBackendRuntimeHandlerInput<ScmWorktreePruneRequest>) => Promise<ScmWorktreePruneResponse> | ScmWorktreePruneResponse;
+        create?: (input: BackendRuntimeHandlerInput<ScmWorktreeCreateRequest>) => Promise<ScmWorktreeCreateResponse> | ScmWorktreeCreateResponse;
+        remove?: (input: BackendRuntimeHandlerInput<ScmWorktreeRemoveRequest>) => Promise<ScmWorktreeRemoveResponse> | ScmWorktreeRemoveResponse;
+        prune?: (input: BackendRuntimeHandlerInput<ScmWorktreePruneRequest>) => Promise<ScmWorktreePruneResponse> | ScmWorktreePruneResponse;
     }>;
     lifecycle?: Readonly<{
-        init?: (input: ScmBackendRuntimeHandlerInput<ScmRepositoryInitRequest>) => Promise<ScmRepositoryInitResponse> | ScmRepositoryInitResponse;
-        clone?: (input: ScmBackendRuntimeHandlerInput<ScmRepositoryCloneInput>) => Promise<ScmRepositoryCloneOutput> | ScmRepositoryCloneOutput;
-        removeIndexLock?: (input: ScmBackendRuntimeHandlerInput<ScmRepositoryRemoveIndexLockRequest>) => Promise<ScmRepositoryRemoveIndexLockResponse> | ScmRepositoryRemoveIndexLockResponse;
+        init?: (input: BackendRuntimeHandlerInput<ScmRepositoryInitRequest>) => Promise<ScmRepositoryInitResponse> | ScmRepositoryInitResponse;
+        clone?: (input: BackendRuntimeHandlerInput<ScmRepositoryCloneInput>) => Promise<ScmRepositoryCloneOutput> | ScmRepositoryCloneOutput;
+        removeIndexLock?: (input: BackendRuntimeHandlerInput<ScmRepositoryRemoveIndexLockRequest>) => Promise<ScmRepositoryRemoveIndexLockResponse> | ScmRepositoryRemoveIndexLockResponse;
     }>;
     hosting?: Readonly<{
         repositoryDescribePublishTargets?: (
-            input: ScmBackendRuntimeHandlerInput<ScmHostingRepositoryDescribePublishTargetsRequest>
+            input: BackendRuntimeHandlerInput<ScmHostingRepositoryDescribePublishTargetsRequest>
         ) => Promise<ScmHostingRepositoryDescribePublishTargetsResponse> | ScmHostingRepositoryDescribePublishTargetsResponse;
         repositoryPublish?: (
-            input: ScmBackendRuntimeHandlerInput<ScmHostingRepositoryPublishRequest>
+            input: BackendRuntimeHandlerInput<ScmHostingRepositoryPublishRequest>
         ) => Promise<ScmHostingRepositoryPublishResponse> | ScmHostingRepositoryPublishResponse;
-        pullRequestList?: (input: ScmBackendRuntimeHandlerInput<ScmPullRequestListRequest>) => Promise<ScmPullRequestListResponse> | ScmPullRequestListResponse;
-        pullRequestGet?: (input: ScmBackendRuntimeHandlerInput<ScmPullRequestGetRequest>) => Promise<ScmPullRequestGetResponse> | ScmPullRequestGetResponse;
+        pullRequestList?: (input: BackendRuntimeHandlerInput<ScmPullRequestListRequest>) => Promise<ScmPullRequestListResponse> | ScmPullRequestListResponse;
+        pullRequestGet?: (input: BackendRuntimeHandlerInput<ScmPullRequestGetRequest>) => Promise<ScmPullRequestGetResponse> | ScmPullRequestGetResponse;
         pullRequestOpenCompose?: (
-            input: ScmBackendRuntimeHandlerInput<ScmPullRequestOpenComposeRequest>
+            input: BackendRuntimeHandlerInput<ScmPullRequestOpenComposeRequest>
         ) => Promise<ScmPullRequestOpenComposeResponse> | ScmPullRequestOpenComposeResponse;
         pullRequestOpenOrReuse?: (
-            input: ScmBackendRuntimeHandlerInput<ScmPullRequestOpenOrReuseRequest>
+            input: BackendRuntimeHandlerInput<ScmPullRequestOpenOrReuseRequest>
         ) => Promise<ScmPullRequestOpenOrReuseResponse> | ScmPullRequestOpenOrReuseResponse;
         pullRequestCheckout?: (
-            input: ScmBackendRuntimeHandlerInput<ScmPullRequestCheckoutRequest>
+            input: BackendRuntimeHandlerInput<ScmPullRequestCheckoutRequest>
         ) => Promise<ScmPullRequestCheckoutResponse> | ScmPullRequestCheckoutResponse;
         pullRequestPrepareWorktree?: (
-            input: ScmBackendRuntimeHandlerInput<ScmPullRequestPrepareWorktreeRequest>
+            input: BackendRuntimeHandlerInput<ScmPullRequestPrepareWorktreeRequest>
         ) => Promise<ScmPullRequestPrepareWorktreeResponse> | ScmPullRequestPrepareWorktreeResponse;
         pullRequestRunStacked?: (
-            input: ScmBackendRuntimeHandlerInput<ScmPullRequestRunStackedRequest>
+            input: BackendRuntimeHandlerInput<ScmPullRequestRunStackedRequest>
         ) => Promise<ScmPullRequestRunStackedResponse> | ScmPullRequestRunStackedResponse;
     }>;
     stash?: Readonly<{
-        drop?: (input: ScmBackendRuntimeHandlerInput<ScmStashDropRequest>) => Promise<ScmStashDropResponse> | ScmStashDropResponse;
-        pop?: (input: ScmBackendRuntimeHandlerInput<ScmStashPopRequest>) => Promise<ScmStashPopResponse> | ScmStashPopResponse;
-        apply?: (input: ScmBackendRuntimeHandlerInput<ScmStashApplyRequest>) => Promise<ScmStashApplyResponse> | ScmStashApplyResponse;
-        show?: (input: ScmBackendRuntimeHandlerInput<ScmStashShowRequest>) => Promise<ScmStashShowResponse> | ScmStashShowResponse;
+        drop?: (input: BackendRuntimeHandlerInput<ScmStashDropRequest>) => Promise<ScmStashDropResponse> | ScmStashDropResponse;
+        pop?: (input: BackendRuntimeHandlerInput<ScmStashPopRequest>) => Promise<ScmStashPopResponse> | ScmStashPopResponse;
+        apply?: (input: BackendRuntimeHandlerInput<ScmStashApplyRequest>) => Promise<ScmStashApplyResponse> | ScmStashApplyResponse;
+        show?: (input: BackendRuntimeHandlerInput<ScmStashShowRequest>) => Promise<ScmStashShowResponse> | ScmStashShowResponse;
     }>;
-    workspaceIntegration?: ScmBackendRuntimeWorkspaceIntegrationHandlers;
+    workspaceIntegration?: WorkspaceIntegrationHandlers;
 }>;
 
-export type ScmBackendRuntimeRegistration = Readonly<{
+export type BackendRuntimeRegistration = Readonly<{
     id: string;
     runtime?: Readonly<{
         repoModes: readonly ScmRepoMode[];
@@ -356,10 +514,10 @@ export type ScmBackendRuntimeRegistration = Readonly<{
             command: string;
         }>[];
     }>;
-    handlers: ScmBackendRuntimeHandlers;
+    handlers: BackendRuntimeHandlers;
 }>;
 
-export type ScmBackendCommandRunInput = Readonly<{
+export type BackendCommandRunInput = Readonly<{
     installableKey: string;
     command: string;
     cwd: string;
@@ -370,7 +528,7 @@ export type ScmBackendCommandRunInput = Readonly<{
     env?: Readonly<Record<string, string | undefined>>;
 }>;
 
-export type ScmBackendCommandRunResult = Readonly<{
+export type BackendCommandRunResult = Readonly<{
     success: boolean;
     stdout: string;
     stderr: string;
@@ -379,35 +537,67 @@ export type ScmBackendCommandRunResult = Readonly<{
     outputLimitExceeded?: boolean;
 }>;
 
-export type ScmBackendRuntimeServices = Readonly<{
-    runCommand(input: ScmBackendCommandRunInput): Promise<ScmBackendCommandRunResult>;
+export type BackendRuntimeServices = Readonly<{
+    runCommand(input: BackendCommandRunInput): Promise<BackendCommandRunResult>;
 }>;
 
-const SCM_BACKEND_RUNTIME_SERVICES_STORAGE_KEY = Symbol.for(
-    'happier.pluginSdk.scm.backendRuntimeServicesStorage',
-);
+export {
+    readCurrentBackendRuntimeServices,
+    runWithBackendRuntimeServices,
+} from './backendRuntimeServices.js';
 
-function resolveScmBackendRuntimeServicesStorage(): AsyncLocalStorage<ScmBackendRuntimeServices> {
-    const globalScope = globalThis as typeof globalThis & Record<symbol, unknown>;
-    const existing = globalScope[SCM_BACKEND_RUNTIME_SERVICES_STORAGE_KEY];
-    if (existing instanceof AsyncLocalStorage) {
-        return existing as AsyncLocalStorage<ScmBackendRuntimeServices>;
-    }
+/** @realm any */
+export {
+    ScmBackendCapabilitiesSchema,
+    ScmBackendContributionSchema,
+    createScmCapabilitiesFromBackendCapabilities,
+    mapGitScmErrorCode,
+    mapSaplingScmErrorCode,
+    supportedCapability,
+    unsupportedCapability,
+} from './backendProjections.js';
 
-    const storage = new AsyncLocalStorage<ScmBackendRuntimeServices>();
-    globalScope[SCM_BACKEND_RUNTIME_SERVICES_STORAGE_KEY] = storage;
-    return storage;
-}
+export {
+    resolveScmBackendCommandMaxOutputBytes as resolveBackendCommandMaxOutputBytes,
+    runScmBackendCommand as runBackendCommand,
+} from './command.js';
 
-const scmBackendRuntimeServicesStorage = resolveScmBackendRuntimeServicesStorage();
+export type {
+    ScmBackendCommandInput as BackendCommandInput,
+    ScmBackendCommandSpec as BackendCommandSpec,
+} from './command.js';
 
-export function runWithScmBackendRuntimeServices<T>(
-    services: ScmBackendRuntimeServices,
-    callback: () => T,
-): T {
-    return scmBackendRuntimeServicesStorage.run(services, callback);
-}
+export type { BackendRuntime } from '../activation.js';
 
-export function readCurrentScmBackendRuntimeServices(): ScmBackendRuntimeServices | null {
-    return scmBackendRuntimeServicesStorage.getStore() ?? null;
-}
+// Pre-EU-4 source bridge for the still-live experimental SCM consumers. The
+// final /scm/backend inventory excludes these predecessor identities, and no
+// final declaration above depends on them.
+export type ScmBackendCommandRunInput = BackendCommandRunInput;
+export type ScmBackendCommandRunResult = BackendCommandRunResult;
+export type ScmBackendRuntimeContext = BackendRuntimeContext;
+export type ScmBackendRuntimeDetection = BackendRuntimeDetection;
+export type ScmBackendRuntimeHandlerInput<TRequest> = BackendRuntimeHandlerInput<TRequest>;
+export type ScmBackendRuntimeHandlers = BackendRuntimeHandlers;
+export type ScmBackendRuntimeRegistration = BackendRuntimeRegistration;
+export type ScmBackendRuntimeServices = BackendRuntimeServices;
+export type ScmBackendRuntimeWorkspaceIntegrationHandlers = WorkspaceIntegrationHandlers;
+export type ScmWorkspaceIntegrationCheckoutMaterializationRequest = CheckoutMaterializationRequest;
+export type ScmWorkspaceIntegrationPortableWorkspacePathClassification = PortableWorkspacePathClassification;
+export type ScmWorkspaceIntegrationPortableWorkspacePathRequest = PortableWorkspacePathRequest;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest = WorkspaceCheckoutCreationRequest;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult = WorkspaceCheckoutCreationResult;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutKind = CreatableWorkspaceCheckoutKind;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest = WorkspaceCheckoutMaterializationRequest;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult = WorkspaceCheckoutMaterializationResult;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest = WorkspaceCheckoutRealizationRequest;
+export type ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult = WorkspaceCheckoutRealizationResult;
+export type ScmWorkspaceIntegrationWorkspaceLocationInspection = WorkspaceLocationInspection;
+export type ScmWorkspaceIntegrationWorkspaceTransferEntry = WorkspaceTransferEntry;
+export type ScmWorkspaceIntegrationWorkspaceTransferMetadata = WorkspaceTransferMetadata;
+export type ScmWorkspaceIntegrationWorkspaceTransferRequest = WorkspaceTransferRequest;
+export type ScmWorkspaceIntegrationWorkspaceTransferResult = WorkspaceTransferResult;
+
+export {
+    readCurrentBackendRuntimeServices as readCurrentScmBackendRuntimeServices,
+    runWithBackendRuntimeServices as runWithScmBackendRuntimeServices,
+} from './backendRuntimeServices.js';

@@ -1,50 +1,53 @@
-import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { findRepoRoot } from './vendoredWorkspaceDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault } from '../../../apps/stack/scripts/utils/proc/pm.mjs';
 import { ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
-import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import {
+  createWorkspaceChildBuildEnv,
+  WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR,
+} from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
 import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
 } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-function findRepoRoot(startDir) {
-  let dir = startDir;
-  for (let i = 0; i < 10; i += 1) {
-    if (existsSync(resolve(dir, 'package.json')) && existsSync(resolve(dir, 'yarn.lock'))) {
-      return dir;
-    }
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return resolve(startDir, '..', '..', '..');
-}
-
 export function resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath = '' }) {
   const explicitLockPath = String(lockPath ?? '').trim();
   return explicitLockPath || resolveWorkspaceBundleLockPath(repoRoot);
 }
 
+function pluginSdkRepoRoot() {
+  return findRepoRoot(__dirname) ?? resolve(__dirname, '..', '..', '..');
+}
+
 export async function preparePluginSdkWorkspacePrerequisites(opts = {}) {
-  const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
+  const repoRoot = opts.repoRoot ?? pluginSdkRepoRoot();
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
+  const env = opts.env ?? process.env;
+  if (env?.[WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR] === '1') {
+    return {
+      ok: true,
+      built: [],
+      skipped: ['canonical-package-build'],
+    };
+  }
   const ensureWorkspacePackagesBuiltForComponent = opts.ensureWorkspacePackagesBuiltForComponent
     ?? ensureWorkspacePackagesBuiltForComponentDefault;
   return await ensureWorkspacePackagesBuiltForComponent(pluginSdkDir, {
-    env: opts.env ?? process.env,
+    env,
     quiet: opts.quiet ?? true,
   });
 }
 
 export async function bundleWorkspaceDeps(opts = {}) {
-  const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
+  const repoRoot = opts.repoRoot ?? pluginSdkRepoRoot();
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
   const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath: opts.lockPath });
   const baseEnv = opts.env ?? process.env;
@@ -70,6 +73,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
       {
         force: forceArtifactWorkspaceBuilds,
         includeDevDependencies: false,
+        publicationMode,
         quiet: true,
       },
     );
@@ -85,6 +89,7 @@ export async function bundleWorkspaceDeps(opts = {}) {
         quiet: true,
         env: childBuildEnv,
         includeDevDependencies: false,
+        publicationMode,
         ...(forceArtifactWorkspaceBuilds
           ? { force: true }
           : {}),
@@ -102,9 +107,9 @@ export async function bundleWorkspaceDeps(opts = {}) {
         ?? baseEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD
         ?? '',
     ).trim(),
-    timeoutMs: 240_000,
+    timeoutMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
     pollIntervalMs: 250,
-    staleAfterMs: 240_000,
+    staleAfterMs: DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   });
 }
 

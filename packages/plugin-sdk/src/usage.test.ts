@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import {
+  SessionContextUsageSnapshotV1Schema,
+  UsageObservationContextSchema,
+  UsageObservationCostSchema,
+  UsageObservationScopeSchema,
+  UsageObservationTokensSchema,
+} from '@happier-dev/protocol/runtime';
 
 import * as usage from './usage.js';
 
 describe('stable usage surface', () => {
+  it('preserves the canonical portable Protocol schema identities', () => {
+    expect(usage.SessionContextUsageSnapshotV1Schema)
+      .toBe(SessionContextUsageSnapshotV1Schema);
+    expect(usage.UsageObservationContextSchema).toBe(UsageObservationContextSchema);
+    expect(usage.UsageObservationCostSchema).toBe(UsageObservationCostSchema);
+    expect(usage.UsageObservationScopeSchema).toBe(UsageObservationScopeSchema);
+    expect(usage.UsageObservationTokensSchema).toBe(UsageObservationTokensSchema);
+  });
+
   it('exports the complete protocol-owned observation vocabulary', () => {
     expect(usage.UsageObservationScopeSchema.parse('session_final')).toBe('session_final');
     expect(usage.UsageObservationTokensSchema.parse({

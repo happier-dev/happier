@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "rootDir": "../..",
+    "paths": {
+      "@happier-dev/plugin-sdk": ["../../src/index.ts"],
+      "@happier-dev/plugin-sdk/actions": ["../../src/actions/index.ts"],
+      "@happier-dev/plugin-sdk/protocol": ["../../src/protocol/index.ts"],
+      "@happier-dev/plugin-sdk/contributions": ["../../src/contributions/index.ts"]
+    }
+  },
+  "include": [
+    "targetedContributionDeclarations.ts",
+    "targetedSurfaceAuthoring.ts",
+    "../../src/actions/index.ts"
+  ]
+}

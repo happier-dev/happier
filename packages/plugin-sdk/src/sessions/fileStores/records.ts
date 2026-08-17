@@ -35,6 +35,7 @@ export function parseJsonLine(line: string): unknown | null {
   }
 }
 
+/** @realm daemon */
 export function parseDefaultSessionHeader(record: unknown): SessionFileStoreHeaderDescriptorV1 | null {
   if (!isRecord(record) || record.type !== 'session') return null;
   const sessionId = readString(record.id);
@@ -47,6 +48,7 @@ export function parseDefaultSessionHeader(record: unknown): SessionFileStoreHead
   };
 }
 
+/** @realm daemon */
 export function extractUserMessageText(record: unknown): string | null {
   if (!isRecord(record)) return null;
   const message = isRecord(record.message) ? record.message : null;

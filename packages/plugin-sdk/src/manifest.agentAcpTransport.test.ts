@@ -2,10 +2,10 @@ import { describe, expectTypeOf, it } from 'vitest';
 
 import type { AgentAcpRuntimeOptions } from './agent-runtime.js';
 import type { ManagedExecutableRef } from './runtime/index.js';
-// @ts-expect-error -- ACP transport is consumed through AgentAcpRuntimeOptions, not duplicated on /manifest.
-import type { PluginAgentAcpTransport } from './manifest.js';
-// @ts-expect-error -- executable launch references are owned by `/runtime`, not `/manifest`.
-import type { ManagedExecutableRef as ManifestManagedExecutableRef } from './manifest.js';
+/* @sdk-negative-type-case:src-manifest-agentAcpTransport-test-ts-207:LS0gQUNQIHRyYW5zcG9ydCBpcyBjb25zdW1lZCB0aHJvdWdoIEFnZW50QWNwUnVudGltZU9wdGlvbnMsIG5vdCBkdXBsaWNhdGVkIG9uIC9tYW5pZmVzdC4:aW1wb3J0IHR5cGUgeyBQbHVnaW5BZ2VudEFjcFRyYW5zcG9ydCB9IGZyb20gJy4vbWFuaWZlc3QuanMnOw */
+type PluginAgentAcpTransport = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-manifest-agentAcpTransport-test-ts-208:LS0gZXhlY3V0YWJsZSBsYXVuY2ggcmVmZXJlbmNlcyBhcmUgb3duZWQgYnkgYC9ydW50aW1lYCwgbm90IGAvbWFuaWZlc3RgLg:aW1wb3J0IHR5cGUgeyBNYW5hZ2VkRXhlY3V0YWJsZVJlZiBhcyBNYW5pZmVzdE1hbmFnZWRFeGVjdXRhYmxlUmVmIH0gZnJvbSAnLi9tYW5pZmVzdC5qcyc7 */
+type ManifestManagedExecutableRef = never; /* @sdk-negative-type-case-end */
 
 void (undefined as unknown as PluginAgentAcpTransport);
 void (undefined as unknown as ManifestManagedExecutableRef);

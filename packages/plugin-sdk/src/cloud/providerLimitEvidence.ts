@@ -1,12 +1,14 @@
 import type {
   ConnectedServiceLimitCategoryV1,
+} from '@happier-dev/protocol/connect/connected-service-limit-category';
+import type {
   ProviderAccountUsageQuotaScopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/account-usage-primitives';
 import {
   PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1,
   PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1,
   PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 export type ProviderLimitCategory = ConnectedServiceLimitCategoryV1;
 export type ProviderLimitEvidenceConfidence = 'high' | 'diagnostic' | 'none';

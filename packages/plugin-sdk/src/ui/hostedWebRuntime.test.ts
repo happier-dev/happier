@@ -1,27 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
+import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
+
 import {
     defineHostedWebRuntimeMode,
     defineUiArtifactsManifest,
 } from './hostedWebRuntime';
 
 describe('hosted web UI runtime SDK helpers', () => {
+    const digest = (character: string) => PluginUiArtifactDigestV1Schema.parse(
+        `sha256:${character.repeat(64)}`,
+    );
     const file = (relativePath: string) => ({
         relativePath,
-        digest: `sha256:${'a'.repeat(64)}`,
+        digest: digest('a'),
         byteSize: 1,
     });
-    it('validates static, managed-service, and session-endpoint runtime modes', () => {
+    it('validates static and session-endpoint runtime modes', () => {
         expect(defineHostedWebRuntimeMode({
             kind: 'installedStaticAssets',
             artifactId: 'artifact-1',
             assetRootId: 'assets-1',
         })).toMatchObject({ kind: 'installedStaticAssets' });
-
-        expect(defineHostedWebRuntimeMode({
-            kind: 'managedLocalService',
-            localServiceId: 'service-1',
-        })).toMatchObject({ kind: 'managedLocalService' });
 
         expect(defineHostedWebRuntimeMode({
             kind: 'registeredSessionEndpoint',
@@ -38,10 +38,10 @@ describe('hosted web UI runtime SDK helpers', () => {
                     tier: 'hostedWeb',
                     entry: 'dist/index.html',
                     files: [file('dist/index.html'), file('dist/assets/index.js')],
-                    digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                    digest: digest('f'),
                     builtWith: { bundler: 'vite', version: '6.0.0' },
                     hostUiApiVersion: '1.0.0',
-                    compat: { react: '19.0.0' },
+                    compat: {},
                 },
                 {
                     contributionId: 'native-preview',
@@ -49,7 +49,7 @@ describe('hosted web UI runtime SDK helpers', () => {
                     platform: 'ios',
                     entry: 'dist/ios.bundle',
                     files: [file('dist/ios.bundle')],
-                    digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                    digest: digest('d'),
                     builtWith: { bundler: 'repack', version: '5.0.0' },
                     repack: {
                         containerName: 'native_preview',
@@ -74,7 +74,7 @@ describe('hosted web UI runtime SDK helpers', () => {
                     tier: 'reactNative',
                     entry: 'dist/native.bundle',
                     files: [file('dist/native.bundle')],
-                    digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                    digest: digest('d'),
                     builtWith: { bundler: 'vite', version: '6.0.0' },
                     hostUiApiVersion: '1.0.0',
                     compat: { react: '19.0.0' },

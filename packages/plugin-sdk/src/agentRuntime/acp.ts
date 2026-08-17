@@ -11,6 +11,7 @@ import type {
 import type {
   AgentConfigurationScalar,
   AgentSessionOpenRequest,
+  AgentSessionProviderCheckpoint,
   AgentSessionRuntime,
 } from './session.js';
 import type { AgentSessionConversationRollbackControl } from './controls.js';
@@ -85,6 +86,15 @@ export type AgentAcpAuthenticationDefinition =
 
 export type AgentAcpToolUpdateContentSanitizer = <T extends { content?: unknown }>(update: T) => T;
 
+/**
+ * Deliberately has no `overridesWhenOn`, unlike the runtime mirror `AgentSessionModelOption` in
+ * `./context.ts`. The asymmetry is honest, not an oversight: nothing in the ACP corridor beneath
+ * this type models the rule — the host's own `SessionConfigOption`
+ * (`apps/cli/src/agent/acp/sessionSettings/sessionSettingsState.ts`) hand-enumerates its fields and
+ * does not carry it — so declaring it here would advertise an SDK field that is dropped before
+ * publication. No ACP producer emits the rule today; align the two only alongside the corridor that
+ * would actually carry it.
+ */
 export type AgentAcpModelOption = Readonly<{
   id: string;
   name: string;
@@ -141,14 +151,14 @@ export type AgentAcpRuntimeDefinition = Readonly<{
     }>): readonly Readonly<{ rootPath: string; path: string }>[] | null;
   }>;
   history?: Readonly<{
-    projectUserMessageProviderCheckpoint(input: JsonValue): JsonValue | null;
+    projectUserMessageProviderCheckpoint(input: JsonValue): AgentSessionProviderCheckpoint | null;
     fork?: Readonly<{
       methods: readonly [string, ...string[]];
       buildParams(input: Readonly<{
         sourceProviderSessionId: string;
         sourceCwd: string;
         newCwd: string;
-        providerCheckpoint?: JsonValue;
+        providerCheckpoint?: AgentSessionProviderCheckpoint;
       }>): JsonValue;
       readProviderSessionId(response: JsonValue): string | null;
     }>;

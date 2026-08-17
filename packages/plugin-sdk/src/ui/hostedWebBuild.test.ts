@@ -53,7 +53,6 @@ describe('hosted web build helpers', () => {
                 sourceEntry: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
-                reactVersion: string;
             },
         ) => {
             tier: string;
@@ -62,7 +61,6 @@ describe('hosted web build helpers', () => {
             vite: {
                 mode: string;
                 base: string;
-                bundledDependencies: readonly string[];
                 external: readonly string[];
             };
             security: {
@@ -84,7 +82,6 @@ describe('hosted web build helpers', () => {
             sourceEntry: 'ui/surface.tsx',
             viteVersion: '7.0.0',
             hostUiApiVersion: '1.0.0',
-            reactVersion: '19.2.0',
         });
 
         expect(preset).toMatchObject({
@@ -97,7 +94,6 @@ describe('hosted web build helpers', () => {
             vite: {
                 mode: 'app',
                 base: './',
-                bundledDependencies: ['react-native-web'],
                 external: [],
             },
             security: {
@@ -124,7 +120,6 @@ describe('hosted web build helpers', () => {
                 digest: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
-                reactVersion: string;
             },
         ) => unknown>('defineHostedWebViteBuildArtifact');
 
@@ -138,7 +133,6 @@ describe('hosted web build helpers', () => {
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
             viteVersion: '7.0.0',
             hostUiApiVersion: '1.0.0',
-            reactVersion: '19.2.0',
         })).toEqual({
             contributionId: 'preview-web',
             tier: 'hostedWeb',
@@ -151,7 +145,7 @@ describe('hosted web build helpers', () => {
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
             builtWith: { bundler: 'vite', version: '7.0.0' },
             hostUiApiVersion: '1.0.0',
-            compat: { react: '19.2.0' },
+            compat: {},
         });
     });
 
@@ -164,7 +158,6 @@ describe('hosted web build helpers', () => {
                 digest: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
-                reactVersion: string;
             },
         ) => unknown>('defineHostedWebViteBuildArtifact');
 
@@ -175,7 +168,6 @@ describe('hosted web build helpers', () => {
             digest: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
             viteVersion: '7.0.0',
             hostUiApiVersion: '1.0.0',
-            reactVersion: '19.2.0',
         };
 
         expect(() => defineHostedWebViteBuildArtifact({
@@ -217,7 +209,6 @@ describe('hosted web build helpers', () => {
                 sourceEntry: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
-                reactVersion: string;
             },
         ) => unknown>('defineHostedWebViteBuildPreset');
 
@@ -227,7 +218,6 @@ describe('hosted web build helpers', () => {
                 sourceEntry: 'ui/surface.tsx',
                 viteVersion: '7.0.0',
                 hostUiApiVersion: '1.0.0',
-                reactVersion: '19.2.0',
             })).toThrow(/path segment/u);
         }
     });
@@ -239,7 +229,6 @@ describe('hosted web build helpers', () => {
                 sourceEntry: string;
                 viteVersion: string;
                 hostUiApiVersion: string;
-                reactVersion: string;
             },
         ) => { sourceEntry: string }>('defineHostedWebViteBuildPreset');
 
@@ -248,7 +237,6 @@ describe('hosted web build helpers', () => {
             sourceEntry: './ui/surface.tsx',
             viteVersion: '7.0.0',
             hostUiApiVersion: '1.0.0',
-            reactVersion: '19.2.0',
         }).sourceEntry).toBe('ui/surface.tsx');
     });
 });

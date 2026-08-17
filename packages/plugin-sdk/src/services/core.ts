@@ -1,8 +1,9 @@
+/** @moduleRealm daemon */
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { JsonValue, PluginContributionRef, PluginJsonSchema } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 
-export interface PluginLoggerService {
+export interface LoggerService {
     debug(message: string, fields?: Readonly<Record<string, JsonValue>>): void;
     info(message: string, fields?: Readonly<Record<string, JsonValue>>): void;
     warn(message: string, fields?: Readonly<Record<string, JsonValue>>): void;
@@ -10,81 +11,64 @@ export interface PluginLoggerService {
     diagnostic(data: PluginDiagnosticData): void;
 }
 
-export type PluginStorageConsistency =
-    | Readonly<{ kind: 'authoritativeSerializable' }>
-    | Readonly<{ kind: 'localReplicaSerializable'; remoteConflicts: 'hostMergeAfterCommit' }>;
+export type PluginLoggerService = LoggerService;
 
-export interface PluginStorageTransaction {
-    get<T extends JsonValue = JsonValue>(key: string, options?: { signal?: AbortSignal }): Promise<T | null>;
-    set(key: string, value: JsonValue, options?: { signal?: AbortSignal }): Promise<void>;
-    delete(key: string, options?: { signal?: AbortSignal }): Promise<void>;
-}
-
-export interface PluginStorageScopeService extends PluginStorageTransaction {
-    consistency(): PluginStorageConsistency;
-    list(options?: { cursor?: string; limit?: number; prefix?: string; signal?: AbortSignal }): Promise<{
-        items: readonly Readonly<{ key: string }>[];
-        nextCursor?: string;
-    }>;
-    transaction<T>(operation: (transaction: PluginStorageTransaction) => Promise<T>, options?: { signal?: AbortSignal }): Promise<T>;
-}
-
-export interface PluginStorageService {
-    readonly ephemeral: PluginStorageScopeService;
-    readonly session: PluginStorageScopeService;
-    readonly local: PluginStorageScopeService;
-    readonly synced: PluginStorageScopeService;
-}
-
-export type PluginSettingDescriptorBase = Readonly<{
+export type PluginSettingDescriptor = Readonly<{
     id: string;
     title: string;
     description?: string;
     target: Readonly<{ kind: 'plugin' }> | Readonly<{ kind: 'agent'; agent: PluginContributionRef }>;
-    scope: 'local' | 'synced' | 'project' | 'session';
+    scope: 'account' | 'daemon';
     schema: PluginJsonSchema;
     readOnly?: boolean;
-}>;
-export type PluginSettingDescriptor = PluginSettingDescriptorBase & (
+}> & (
     | Readonly<{ secret?: false; default?: JsonValue }>
     | Readonly<{ secret: true; default?: never }>
 );
+export type PluginSettingDescriptorBase = Omit<
+    PluginSettingDescriptor,
+    'secret' | 'default'
+>;
 
 export type PluginSettingsChange = Readonly<{
+    /** Identifies the one natural record that produced this change. */
+    scope: SettingsScopeRef;
     revision: string;
     changedIds: readonly string[];
     values: Readonly<Record<string, JsonValue>>;
 }>;
 
-export interface PluginSettingsService {
-    snapshot(options?: { signal?: AbortSignal }): Promise<{ revision: string; values: Readonly<Record<string, JsonValue>> }>;
+export type PluginSettingsSnapshot = Readonly<{
+    /** Identifies the one natural record represented by this snapshot. */
+    scope: SettingsScopeRef;
+    revision: string;
+    values: Readonly<Record<string, JsonValue>>;
+}>;
+
+export type PluginSettingsMutationResult = Readonly<{
+    /** Identifies the one natural record that accepted this mutation. */
+    scope: SettingsScopeRef;
+    revision: string;
+}>;
+
+/** A Settings operation is always bound to exactly one declaration scope. */
+export type SettingsScopeRef =
+    | Readonly<{ kind: 'account' }>
+    | Readonly<{ kind: 'daemon' }>;
+
+export interface ScopedSettingsService {
+    snapshot(options?: { signal?: AbortSignal }): Promise<PluginSettingsSnapshot>;
     get<T extends JsonValue = JsonValue>(id: string, options?: { signal?: AbortSignal }): Promise<T | null>;
-    set(id: string, value: JsonValue, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<{ revision: string }>;
-    reset(id: string, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<{ revision: string }>;
+    set(id: string, value: JsonValue, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<PluginSettingsMutationResult>;
+    reset(id: string, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<PluginSettingsMutationResult>;
     describe(): readonly PluginSettingDescriptor[];
     watch(listener: (change: PluginSettingsChange) => void): Disposable;
 }
 
-export type PluginSecretStatus = Readonly<{
-    state: 'configured' | 'missing' | 'denied' | 'unavailable';
-    revision: string;
-}>;
-export type PluginSecretMutationResult = Readonly<{ revision: string }>;
-
-export interface PluginSecretsService {
-    status(id: string): Promise<PluginSecretStatus>;
-    get(id: string, options?: { reason?: string; signal?: AbortSignal }): Promise<string>;
-    set(id: string, value: string, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<PluginSecretMutationResult>;
-    delete(id: string, options?: { expectedRevision?: string; signal?: AbortSignal }): Promise<PluginSecretMutationResult>;
-}
-
-export type PluginEventRef = PluginContributionRef;
-export type PluginEventEmitResult = Readonly<{ status: 'admitted'; sequence: number; subscriberCount: number }>;
-
-export interface PluginEventsService {
-    emit<T extends JsonValue>(eventId: string, payload: T, options?: { signal?: AbortSignal }): Promise<PluginEventEmitResult>;
-    subscribe<T extends JsonValue>(
-        event: PluginEventRef,
-        listener: (event: Readonly<{ ref: PluginEventRef; payload: T; sequence: number }>) => void | Promise<void>,
-    ): Disposable;
+/**
+ * Selects the only Settings scope that a call may read or mutate. There is no
+ * unscoped operation and no account/daemon fallback or merged revision view.
+ */
+export interface SettingsService {
+    forScope(scope: SettingsScopeRef): ScopedSettingsService;
 }

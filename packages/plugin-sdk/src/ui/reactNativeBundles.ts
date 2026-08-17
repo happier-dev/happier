@@ -1,7 +1,3 @@
-import {
-    type PluginReactNativeBundleContributionV1,
-} from '@happier-dev/protocol';
-
 export type PluginReactNativeBundleCacheIdentityV1 = Readonly<{
     pluginId: string;
     contributionId: string;
@@ -35,7 +31,3 @@ export function deriveReactNativeBundleCacheIdentityKey(
         identity.nativeCapabilitiesDigest,
     ].join(':');
 }
-
-export type {
-    PluginReactNativeBundleContributionV1,
-} from '@happier-dev/protocol';

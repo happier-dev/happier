@@ -3,24 +3,83 @@
   "id": "examples.descriptor-only",
   "version": "0.1.0",
   "displayName": "Descriptor-Only Example",
-  "description": "A host-rendered settings view with no executable UI artifact.",
-  "engines": { "happier": "^0.2.0" },
+  "description": "Host-rendered declarative settings and list surfaces with no executable UI artifact.",
+  "engines": { "happier": "0.2.10" },
   "runtime": { "apiVersion": 1 },
   "hostAccess": {
     "required": [{ "id": "project-metadata", "capability": "filesystem", "reason": "Read project metadata for the descriptor preview.", "scope": { "locations": [{ "root": "workspace" }], "access": ["read"] } }],
     "optional": []
   },
   "contributes": {
-    "settings": [{ "id": "preferences", "title": "Descriptor preferences", "target": { "kind": "plugin" }, "scope": "local", "fields": [
+    "actions": [
+      {
+        "id": "open-preview",
+        "title": "Open preview",
+        "description": "Open the selected descriptor preview.",
+        "scopes": ["session"],
+        "surfaces": ["ui"],
+        "placementBindings": ["rowAction"],
+        "dangerLevel": "safe",
+        "inputSchema": { "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"], "additionalProperties": false },
+        "resultSchema": { "type": "object", "properties": { "opened": { "type": "boolean" } }, "required": ["opened"], "additionalProperties": false }
+      },
+      {
+        "id": "discard-previews",
+        "title": "Discard all previews",
+        "description": "Permanently discard every generated descriptor preview.",
+        "scopes": ["session"],
+        "surfaces": ["ui"],
+        "placementBindings": ["secondary"],
+        "dangerLevel": "destructive",
+        "confirmation": { "title": "Discard all previews?", "body": "Every generated descriptor preview is removed. This cannot be undone.", "confirmLabel": "Discard" },
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+        "resultSchema": { "type": "object", "properties": { "discarded": { "type": "integer" } }, "required": ["discarded"], "additionalProperties": false }
+      }
+    ],
+    "settings": [{ "id": "preferences", "title": "Descriptor preferences", "target": { "kind": "plugin" }, "scope": "account", "fields": [
       { "id": "enabled", "title": "Enabled", "schema": { "type": "boolean" }, "default": true },
       { "id": "mode", "title": "Mode", "schema": { "type": "string", "enum": ["quiet", "verbose"] }, "default": "quiet" }
     ] }],
     "ui": {
-      "views": [{ "id": "settings", "placement": "app.settingsPage", "renderer": "settings-form", "title": "Descriptor-only settings" }],
-      "renderers": [{ "id": "settings-form", "kind": "declarative", "root": { "kind": "stack", "children": [
-        { "kind": "field", "label": "Enabled", "control": { "kind": "toggle", "settingId": "enabled" } },
-        { "kind": "field", "label": "Mode", "control": { "kind": "select", "settingId": "mode", "options": [{ "value": "quiet", "label": "Quiet" }, { "value": "verbose", "label": "Verbose" }] } }
-      ] } }],
+      "views": [
+        { "id": "previews", "container": "appPage", "target": { "kind": "app" }, "renderer": "preview-list", "title": "Descriptor previews" }
+      ],
+      "renderers": [
+        { "id": "settings-form", "kind": "declarative", "root": { "kind": "group", "title": "Descriptor preferences", "children": [
+          { "kind": "markdown", "text": "Settings are **host-rendered**: no executable UI artifact is built or loaded." },
+          { "kind": "field", "label": "Enabled", "control": { "kind": "toggle", "settingId": "enabled" } },
+          { "kind": "field", "label": "Mode", "control": { "kind": "select", "settingId": "mode", "options": [{ "value": "quiet", "label": "Quiet" }, { "value": "verbose", "label": "Verbose" }] } },
+          { "kind": "status", "label": "Preview cache", "value": "Healthy", "tone": "success" }
+        ] } },
+        { "id": "preview-list", "kind": "declarative", "root": { "kind": "stack", "children": [
+          { "kind": "markdown", "text": "Descriptor previews are generated from `.happier-plugin/plugin.json` only." },
+          { "kind": "list", "label": "Descriptor previews", "children": [
+            { "kind": "section", "title": "Generated", "footer": "Regenerated whenever the manifest changes.", "children": [
+              { "kind": "item", "title": "plugin.json", "subtitle": "Manifest preview", "detail": "2 KB", "icon": "file", "action": "open-preview", "input": { "id": "manifest" } },
+              { "kind": "item", "title": "settings", "subtitle": "Declarative settings form", "icon": "settings", "action": "open-preview", "input": { "id": "settings" } },
+              { "kind": "item", "title": "stale preview", "subtitle": "Regenerate to refresh", "tone": "warning" }
+            ] },
+            { "kind": "state", "state": "empty", "title": "No archived previews", "description": "Archived previews appear here once you discard a generated one.", "icon": "info" }
+          ] },
+          { "kind": "metadata", "title": "Preview details", "entries": [
+            { "label": "Source", "value": "plugin.json" },
+            { "label": "Renderer", "value": "declarative" },
+            { "label": "Freshness", "value": "Stale", "tone": "warning" }
+          ] },
+          { "kind": "state", "state": "loading", "title": "Refreshing previews" },
+          { "kind": "state", "state": "error", "title": "Preview generation failed", "description": "Reload the plugin to try again." },
+          { "kind": "actionPanel", "title": "Preview actions", "children": [
+            { "kind": "action", "action": "open-preview", "label": "Open manifest preview", "variant": "primary", "input": { "id": "manifest" } },
+            { "kind": "action", "action": "discard-previews", "label": "Discard all previews", "variant": "destructive" }
+          ] }
+        ] } }
+      ],
+      "settingsGroups": [
+        { "id": "descriptor-preferences", "title": "Descriptor preferences" }
+      ],
+      "settingsPages": [
+        { "id": "settings", "group": { "kind": "plugin", "localId": "descriptor-preferences" }, "title": "Descriptor-only settings", "renderer": "settings-form" }
+      ],
       "translations": []
     }
   }

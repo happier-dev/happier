@@ -1,3 +1,7 @@
+import { redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText } from '@happier-dev/protocol';
+
+const redactBugReportSensitiveText: (input: string) => string = canonicalRedactBugReportSensitiveText;
+
 export type ScmForgeHttpResponse = Readonly<{
     ok: boolean;
     status: number;
@@ -29,13 +33,14 @@ export type ScmForgeHttpJsonRequest = Readonly<{
 }>;
 
 const REDACTED_HEADER_VALUE = '[redacted]';
-const SENSITIVE_HEADER_NAMES = new Set([
-    'authorization',
-    'cookie',
-    'proxy-authorization',
-    'set-cookie',
-    'x-api-key',
-    'x-auth-token',
+const SCM_ERROR_CONTEXT_SAFE_HEADER_NAMES = new Set([
+    'accept',
+    'content-type',
+    'if-match',
+    'if-modified-since',
+    'if-none-match',
+    'user-agent',
+    'x-github-api-version',
 ]);
 
 function defaultForgeHttpFetcher(url: string, init?: RequestInit): Promise<ScmForgeHttpResponse> {
@@ -66,7 +71,10 @@ function redactHeaders(headers: HeadersInit | undefined): Record<string, string>
     return Object.fromEntries(
         Object.entries(normalized).map(([key, value]) => [
             key,
-            SENSITIVE_HEADER_NAMES.has(key.toLowerCase()) ? REDACTED_HEADER_VALUE : value,
+            // Error mappers may persist or log this context. SCM request headers
+            // have no stable public-value contract, so retain only the small
+            // diagnostics allowlist and redact every other header by default.
+            SCM_ERROR_CONTEXT_SAFE_HEADER_NAMES.has(key.toLowerCase()) ? value : REDACTED_HEADER_VALUE,
         ]),
     );
 }
@@ -97,7 +105,7 @@ export async function requestScmForgeJson(input: ScmForgeHttpJsonRequest): Promi
     }
 
     const context: ScmForgeHttpErrorContext = {
-        url: input.url,
+        url: redactBugReportSensitiveText(input.url),
         method: input.init?.method?.toUpperCase() ?? 'GET',
         status: response.status,
         statusText: response.statusText,

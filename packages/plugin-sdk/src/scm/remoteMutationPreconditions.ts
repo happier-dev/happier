@@ -1,11 +1,23 @@
 import {
-    evaluateScmRemoteMutationPolicy,
-    type ScmOperationErrorCode,
-    type ScmRemoteMutationKind,
-    type ScmRemoteMutationPolicy,
-    type ScmRemoteMutationReason,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+    evaluateScmRemoteMutationPolicy as canonicalEvaluateScmRemoteMutationPolicy,
+} from '@happier-dev/protocol/scm';
+
+import type {
+    ScmOperationErrorCode,
+    ScmRemoteMutationKind,
+    ScmRemoteMutationPolicy,
+    ScmRemoteMutationReason,
+    ScmRemoteMutationResult,
+    ScmRemoteMutationSnapshot,
+    ScmWorkingSnapshot,
+} from './projections.js';
+
+const evaluateScmRemoteMutationPolicy: (input: {
+    kind: ScmRemoteMutationKind;
+    snapshot: ScmRemoteMutationSnapshot;
+    hasExplicitTarget: boolean;
+    policy: ScmRemoteMutationPolicy;
+}) => ScmRemoteMutationResult = canonicalEvaluateScmRemoteMutationPolicy;
 
 export type ScmRemoteMutationGuardResult =
     | { ok: true }

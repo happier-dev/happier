@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { runWithScmBackendRuntimeServices } from './backend.js';
+import { runWithBackendRuntimeServices } from './backend.js';
 import {
     resolveScmBackendCommandMaxOutputBytes,
     runScmBackendCommand,
@@ -10,7 +10,7 @@ describe('SCM backend command helpers', () => {
     it('delegates command execution to the host SCM backend runtime service', async () => {
         const calls: unknown[] = [];
 
-        const result = await runWithScmBackendRuntimeServices({
+        const result = await runWithBackendRuntimeServices({
             async runCommand(input) {
                 calls.push(input);
                 return {

@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 import type { SessionFileStoreProductDescriptorV1 } from './productDescriptor.js';
 import { canonicalizePath, resolveConfiguredPath } from './paths.js';
 

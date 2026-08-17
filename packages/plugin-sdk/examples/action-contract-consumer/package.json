@@ -1,0 +1,39 @@
+{
+  "name": "@example/happier-action-contract-consumer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "keywords": [
+    "happier-plugin"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "description": "Copyable contributor plugin binding a feature-owned triage-sources role to its own Action.",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "happier plugins author build .",
+    "typecheck": "happier plugins author typecheck .",
+    "test": "happier plugins test .",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/triage-sources-protocol": "0.1.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "@typescript/native": "npm:typescript@7.0.2"
+  }
+}

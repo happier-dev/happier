@@ -1,17 +1,20 @@
+/** @moduleRealm daemon */
 import {
     ExternalSessionsSourceSchema,
     PluginAgentExternalSessionLinkDataSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/agents';
 
 import type {
     AgentExternalSessionLinkData,
     AgentExternalSessionSource,
     AgentExternalSessionsFailureCode,
-    AgentExternalSessionsInvocation,
+    AgentExternalSessionsInvocationBounds,
     AgentExternalSessionsResult,
 } from '../externalSessions.js';
-
-type MaybePromise<T> = T | Promise<T>;
+import {
+    captureStaticRegistrationMethod,
+    requireStaticRegistrationObject,
+} from '../registration/staticCapture.js';
 
 export const AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS = Object.freeze({
     maxLinkedSessionIdCodeUnits: 2_000,
@@ -32,17 +35,23 @@ export const AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS = Object.freeze({
 } as const);
 
 export type AgentExternalSessionTakeoverLaunchPlan = Readonly<{
+    /**
+     * Provider-native launch context retained for public plugin parity. The
+     * host enforces the request targetDirectory as the spawned process cwd.
+     */
     directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
 }>;
 
 export type AgentExternalSessionTakeoverResolveLaunchRequest =
-    AgentExternalSessionsInvocation & Readonly<{
+    AgentExternalSessionsInvocationBounds & Readonly<{
         linkedSessionId: string;
         source: AgentExternalSessionSource;
         remoteSessionId: string;
         linkData: AgentExternalSessionLinkData;
+        /** Host-selected local cwd on the linked owner machine. */
+        targetDirectory: string;
         linkedDirectory?: string;
     }>;
 
@@ -51,7 +60,8 @@ export type AgentExternalSessionTakeoverResolveLaunchResult =
 
 export type AgentExternalSessionTakeoverResolveLaunchCallback = (
     request: AgentExternalSessionTakeoverResolveLaunchRequest,
-) => MaybePromise<AgentExternalSessionTakeoverResolveLaunchResult>;
+) => AgentExternalSessionTakeoverResolveLaunchResult
+    | Promise<AgentExternalSessionTakeoverResolveLaunchResult>;
 
 export type AgentExternalSessionTakeoverContribution = Readonly<{
     resolveLaunch: AgentExternalSessionTakeoverResolveLaunchCallback;
@@ -134,7 +144,7 @@ function safeInteger(value: unknown, minimum: number, label: string): number {
 
 function snapshotInvocation(
     record: Readonly<Record<string, unknown>>,
-): AgentExternalSessionsInvocation {
+): AgentExternalSessionsInvocationBounds {
     if (!(record.signal instanceof AbortSignal)) {
         return invalid('resolveLaunch request signal', 'must be an AbortSignal');
     }
@@ -217,18 +227,17 @@ function snapshotEnvironmentVariables(
 export function validateAgentExternalSessionTakeoverContribution(
     value: unknown,
 ): AgentExternalSessionTakeoverContribution {
-    const record = readRecord(
+    const receiver = requireStaticRegistrationObject(
         value,
-        ['resolveLaunch'],
-        ['resolveLaunch'],
-        'contribution',
+        'External Session takeover contribution',
     );
-    if (typeof record.resolveLaunch !== 'function') {
-        return invalid('contribution', 'resolveLaunch must be a function');
-    }
     return Object.freeze({
-        resolveLaunch:
-            record.resolveLaunch as AgentExternalSessionTakeoverResolveLaunchCallback,
+        resolveLaunch: captureStaticRegistrationMethod<AgentExternalSessionTakeoverResolveLaunchCallback>(
+            receiver,
+            'resolveLaunch',
+            'External Session takeover contribution.resolveLaunch',
+            true,
+        )!,
     });
 }
 
@@ -245,6 +254,7 @@ export function validateAgentExternalSessionTakeoverResolveLaunchRequest(
             'source',
             'remoteSessionId',
             'linkData',
+            'targetDirectory',
             'linkedDirectory',
         ],
         [
@@ -255,6 +265,7 @@ export function validateAgentExternalSessionTakeoverResolveLaunchRequest(
             'source',
             'remoteSessionId',
             'linkData',
+            'targetDirectory',
         ],
         'resolveLaunch request',
     );
@@ -292,6 +303,12 @@ export function validateAgentExternalSessionTakeoverResolveLaunchRequest(
             'resolveLaunch request remoteSessionId',
         ),
         linkData: linkData.data,
+        targetDirectory: boundedString(
+            record.targetDirectory,
+            1,
+            AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits,
+            'resolveLaunch request targetDirectory',
+        ),
         ...(linkedDirectory === undefined ? {} : { linkedDirectory }),
     });
 }

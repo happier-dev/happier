@@ -1,11 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { writeSecureTempTextFileSync } from './tempTextFile.js';
+import {
+  writeSecureTempTextFileSync,
+  writeSecureTempTextFileSyncWithDeps,
+} from './tempTextFile.js';
+import type { WindowsProtectedAclBoundarySync } from '@happier-dev/cli-common/fs/windowsProtectedAcl';
 
 function mode(path: string): number {
   return statSync(path).mode & 0o777;
@@ -72,5 +76,51 @@ describe('writeSecureTempTextFileSync', () => {
       suffix: '/escape',
       contents: 'nope',
     })).toThrow(/suffix/);
+  });
+
+  it('fails closed unless Windows directory and file ACLs are applied before writing', () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-plugin-sdk-temp-text-windows-'));
+    let protectedFileWasEmpty = false;
+    const windowsAclBoundary: WindowsProtectedAclBoundarySync = {
+      applyAndVerify: vi.fn(({ path, kind }) => {
+        if (kind === 'file') protectedFileWasEmpty = readFileSync(path, 'utf8') === '';
+      }),
+      verify: vi.fn(),
+    };
+
+    try {
+      const path = writeSecureTempTextFileSyncWithDeps({
+        tmpDir: root,
+        prefix: 'happier-claude-mcp-config',
+        suffix: '.json',
+        contents: '{"token":"synthetic-windows-acl-marker"}',
+      }, { platform: 'win32', windowsAclBoundary });
+
+      expect(protectedFileWasEmpty).toBe(true);
+      expect(windowsAclBoundary.applyAndVerify).toHaveBeenCalledWith({ path: dirname(path), kind: 'directory' });
+      expect(windowsAclBoundary.applyAndVerify).toHaveBeenCalledWith({ path, kind: 'file' });
+      expect(windowsAclBoundary.verify).toHaveBeenCalledWith({ path, kind: 'file' });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+
+    const rejectingRoot = mkdtempSync(join(tmpdir(), 'happier-plugin-sdk-temp-text-reject-'));
+    try {
+      expect(() => writeSecureTempTextFileSyncWithDeps({
+        tmpDir: rejectingRoot,
+        prefix: 'happier-claude-mcp-config',
+        suffix: '.json',
+        contents: '{"token":"synthetic-rejected-acl-marker"}',
+      }, {
+        platform: 'win32',
+        windowsAclBoundary: {
+          applyAndVerify() { throw new Error('synthetic ACL rejection'); },
+          verify() {},
+        },
+      })).toThrow('synthetic ACL rejection');
+      expect(readdirSync(rejectingRoot)).toEqual([]);
+    } finally {
+      rmSync(rejectingRoot, { recursive: true, force: true });
+    }
   });
 });

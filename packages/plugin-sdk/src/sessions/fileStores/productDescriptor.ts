@@ -9,6 +9,8 @@ export type SessionFileStoreProductDescriptorV1 = Readonly<{
   productId: string;
   defaultAgentDirSegments: readonly string[];
   agentDirEnvVar: string;
+  /** Account Settings field whose non-empty value owns this Agent's root. */
+  agentDirSettingId?: string;
   legacySessionDirEnvVars: readonly string[];
   readsSettingsSessionDir: boolean;
   configDirName: string;

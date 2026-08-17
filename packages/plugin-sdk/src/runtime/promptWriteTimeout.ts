@@ -1,10 +1,11 @@
+/** @moduleRealm daemon */
 import { Buffer } from 'node:buffer';
 
 export {
   resolveTerminalPromptWriteBudget,
   resolveTerminalPromptWriteTimeoutMs,
   type TerminalPromptWriteBudget,
-} from '@happier-dev/agents';
+} from '@happier-dev/agents/runtime/terminal/promptWriteTimeout';
 
 const TERMINAL_PROMPT_BASE_PROVIDER_ACCEPTANCE_TIMEOUT_MS = 5_000;
 const TERMINAL_PROMPT_MAX_PROVIDER_ACCEPTANCE_TIMEOUT_MS = 180_000;

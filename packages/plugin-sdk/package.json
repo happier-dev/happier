@@ -18,182 +18,330 @@
       "browser": "./dist/index.browser.js",
       "default": "./dist/index.js"
     },
-    "./runtime": {
-      "types": "./dist/runtime/index.d.ts",
-      "default": "./dist/runtime/index.js"
+    "./actions": {
+      "types": "./dist/actions/index.d.ts",
+      "default": "./dist/actions/index.js"
     },
-    "./agent-runtime": {
-      "types": "./dist/agent-runtime.d.ts",
-      "default": "./dist/agent-runtime.js"
+    "./agents": {
+      "types": "./dist/agents/index.d.ts",
+      "default": "./dist/agents/index.js"
+    },
+    "./agents/runtime": {
+      "types": "./dist/agents/runtime/index.d.ts",
+      "default": "./dist/agents/runtime/index.js"
+    },
+    "./async": {
+      "types": "./dist/async/index.d.ts",
+      "default": "./dist/async/index.js"
+    },
+    "./automations": {
+      "types": "./dist/automations/index.d.ts",
+      "default": "./dist/automations/index.js"
+    },
+    "./background-services": {
+      "types": "./dist/background-services/index.d.ts",
+      "default": "./dist/background-services/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "default": "./dist/browser/index.js"
+    },
+    "./collections": {
+      "types": "./dist/collections/index.d.ts",
+      "default": "./dist/collections/index.js"
+    },
+    "./connected-accounts": {
+      "types": "./dist/connected-accounts/index.d.ts",
+      "default": "./dist/connected-accounts/index.js"
+    },
+    "./contributions": {
+      "types": "./dist/contributions/index.d.ts",
+      "browser": "./dist/contributions/index.browser.js",
+      "default": "./dist/contributions/index.js"
+    },
+    "./events": {
+      "types": "./dist/events/index.d.ts",
+      "default": "./dist/events/index.js"
+    },
+    "./exec": {
+      "types": "./dist/exec/index.d.ts",
+      "default": "./dist/exec/index.js"
+    },
+    "./exec/protocol-clients": {
+      "types": "./dist/exec/protocol-clients/index.d.ts",
+      "default": "./dist/exec/protocol-clients/index.js"
+    },
+    "./fs": {
+      "types": "./dist/fs/index.d.ts",
+      "default": "./dist/fs/index.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks/index.d.ts",
+      "default": "./dist/hooks/index.js"
+    },
+    "./host/fs/json-owner-file-lock": {
+      "types": "./dist/host/fs/json-owner-file-lock/index.d.ts",
+      "default": "./dist/host/fs/json-owner-file-lock/index.js"
+    },
+    "./host/registration": {
+      "types": "./dist/host/registration/index.d.ts",
+      "browser": "./dist/host/registration/index.js",
+      "react-native": "./dist/host/registration/index.js",
+      "default": "./dist/host/registration/index.js"
+    },
+    "./host/targeted-contributions": {
+      "types": "./dist/host/targeted-contributions/index.d.ts",
+      "default": "./dist/host/targeted-contributions/index.js"
+    },
+    "./http": {
+      "types": "./dist/http/index.d.ts",
+      "default": "./dist/http/index.js"
+    },
+    "./interactions": {
+      "types": "./dist/interactions/index.d.ts",
+      "default": "./dist/interactions/index.js"
+    },
+    "./managed-services": {
+      "types": "./dist/managed-services/index.d.ts",
+      "default": "./dist/managed-services/index.js"
     },
     "./manifest": {
-      "types": "./dist/manifest.d.ts",
-      "browser": "./dist/manifest.browser.js",
-      "default": "./dist/manifest.js"
+      "types": "./dist/manifest/index.d.ts",
+      "default": "./dist/manifest/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "default": "./dist/mcp/index.js"
+    },
+    "./notifications": {
+      "types": "./dist/notifications/index.d.ts",
+      "default": "./dist/notifications/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "browser": "./dist/protocol/index.browser.js",
+      "default": "./dist/protocol/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "default": "./dist/providers/index.js"
+    },
+    "./resources": {
+      "types": "./dist/resources/index.d.ts",
+      "default": "./dist/resources/index.js"
+    },
+    "./reviews": {
+      "types": "./dist/reviews/index.d.ts",
+      "default": "./dist/reviews/index.js"
+    },
+    "./scm": {
+      "types": "./dist/scm/index.d.ts",
+      "default": "./dist/scm/index.js"
+    },
+    "./scm/backend": {
+      "types": "./dist/scm/backend/index.d.ts",
+      "default": "./dist/scm/backend/index.js"
+    },
+    "./scm/hosting": {
+      "types": "./dist/scm/hosting/index.d.ts",
+      "default": "./dist/scm/hosting/index.js"
+    },
+    "./secrets": {
+      "types": "./dist/secrets/index.d.ts",
+      "default": "./dist/secrets/index.js"
+    },
+    "./sessions": {
+      "types": "./dist/sessions/index.d.ts",
+      "default": "./dist/sessions/index.js"
+    },
+    "./sessions/external": {
+      "types": "./dist/sessions/external/index.d.ts",
+      "default": "./dist/sessions/external/index.js"
+    },
+    "./sessions/file-stores": {
+      "types": "./dist/sessions/file-stores/index.d.ts",
+      "default": "./dist/sessions/file-stores/index.js"
+    },
+    "./sessions/subagents": {
+      "types": "./dist/sessions/subagents/index.d.ts",
+      "default": "./dist/sessions/subagents/index.js"
+    },
+    "./sessions/work-state": {
+      "types": "./dist/sessions/work-state/index.d.ts",
+      "default": "./dist/sessions/work-state/index.js"
+    },
+    "./settings": {
+      "types": "./dist/settings/index.d.ts",
+      "default": "./dist/settings/index.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/index.d.ts",
+      "default": "./dist/storage/index.js"
     },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
     },
-    "./experimental/scm": {
-      "types": "./dist/scm/index.d.ts",
-      "default": "./dist/scm/index.js"
-    },
-    "./experimental/agents": {
-      "types": "./dist/agents.d.ts",
-      "default": "./dist/agents.js"
-    },
-    "./experimental/agent-runtime/realtime": {
-      "types": "./dist/experimental/agentRuntime/realtime.d.ts",
-      "default": "./dist/experimental/agentRuntime/realtime.js"
-    },
-    "./experimental/account-usage": {
-      "types": "./dist/accountUsage.d.ts",
-      "default": "./dist/accountUsage.js"
-    },
-    "./experimental/cloud/auth": {
-      "types": "./dist/cloud/auth.d.ts",
-      "default": "./dist/cloud/auth.js"
-    },
-    "./experimental/cloud/request-auth": {
-      "types": "./dist/cloud/requestAuth/index.d.ts",
-      "default": "./dist/cloud/requestAuth/index.js"
-    },
-    "./experimental/cloud/usage": {
-      "types": "./dist/cloud/usage.d.ts",
-      "default": "./dist/cloud/usage.js"
-    },
-    "./experimental/diagnostics": {
-      "types": "./dist/experimental/diagnostics.d.ts",
-      "default": "./dist/experimental/diagnostics.js"
-    },
-    "./experimental/hooks": {
-      "types": "./dist/hooks.d.ts",
-      "default": "./dist/hooks.js"
-    },
-    "./experimental/mcp": {
-      "types": "./dist/mcp.d.ts",
-      "default": "./dist/mcp.js"
-    },
-    "./experimental/providers": {
-      "types": "./dist/providers.d.ts",
-      "default": "./dist/providers.js"
-    },
-    "./experimental/reviews": {
-      "types": "./dist/reviews/index.d.ts",
-      "default": "./dist/reviews/index.js"
-    },
-    "./experimental/sessions": {
-      "types": "./dist/sessions/index.d.ts",
-      "default": "./dist/sessions/index.js"
-    },
-    "./experimental/manifest/connectedAccountDescriptors": {
-      "types": "./dist/manifest/connectedAccountDescriptors.d.ts",
-      "default": "./dist/manifest/connectedAccountDescriptors.js"
-    },
-    "./experimental/manifest/agents": {
-      "types": "./dist/manifest/agents.d.ts",
-      "default": "./dist/manifest/agents.js"
-    },
-    "./experimental/manifest/voiceModelPacks": {
-      "types": "./dist/manifest/voiceModelPacks.d.ts",
-      "default": "./dist/manifest/voiceModelPacks.js"
-    },
-    "./experimental/manifest/scmBackends": {
-      "types": "./dist/manifest/scmBackends.d.ts",
-      "default": "./dist/manifest/scmBackends.js"
-    },
-    "./experimental/envConstants": {
-      "types": "./dist/envConstants.d.ts",
-      "default": "./dist/envConstants.js"
-    },
-    "./experimental/fs": {
-      "types": "./dist/fs.d.ts",
-      "default": "./dist/fs.js"
-    },
-    "./internal/fs/json-owner-file-lock": {
-      "types": "./dist/internal/fs/jsonOwnerFileLock.d.ts",
-      "default": "./dist/internal/fs/jsonOwnerFileLock.js"
-    },
-    "./experimental/timeout": {
-      "types": "./dist/timeout.d.ts",
-      "default": "./dist/timeout.js"
-    },
-    "./experimental/runtime/coalescedScheduler": {
-      "types": "./dist/runtime/coalescedScheduler.d.ts",
-      "default": "./dist/runtime/coalescedScheduler.js"
-    },
-    "./experimental/runtime/catalog": {
-      "types": "./dist/runtime/catalog.d.ts",
-      "default": "./dist/runtime/catalog.js"
-    },
-    "./experimental/ui/hosted-web-bridge-v1": {
-      "types": "./dist/experimental/uiHostedWebBridgeV1.d.ts",
-      "default": "./dist/experimental/uiHostedWebBridgeV1.js"
-    },
-    "./experimental/testing/registration-scope": {
-      "types": "./dist/experimental/testingRegistrationScope.d.ts",
-      "default": "./dist/experimental/testingRegistrationScope.js"
-    },
-    "./experimental/sessions/subagents": {
-      "types": "./dist/sessions/subagents.d.ts",
-      "default": "./dist/sessions/subagents.js"
-    },
-    "./experimental/sessions/workState": {
-      "types": "./dist/sessions/workState.d.ts",
-      "default": "./dist/sessions/workState.js"
-    },
-    "./experimental/sessions/fileStores": {
-      "types": "./dist/sessions/fileStores/index.d.ts",
-      "default": "./dist/sessions/fileStores/index.js"
-    },
-    "./experimental/testing/adapterHarness": {
-      "types": "./dist/testing/adapterHarness.d.ts",
-      "default": "./dist/testing/adapterHarness.js"
-    },
-    "./experimental/usage": {
-      "types": "./dist/experimental/usage.d.ts",
-      "default": "./dist/experimental/usage.js"
-    },
     "./ui": {
-      "types": "./dist/ui.d.ts",
-      "default": "./dist/ui.js"
+      "types": "./dist/ui/index.d.ts",
+      "default": "./dist/ui/index.js"
     },
     "./ui/build": {
       "types": "./dist/ui/build/index.d.ts",
       "default": "./dist/ui/build/index.js"
     },
     "./ui/client": {
-      "types": "./dist/ui/client.d.ts",
-      "default": "./dist/ui/client.js"
+      "types": "./dist/ui/client/index.d.ts",
+      "browser": "./dist/ui/client/index.js",
+      "default": "./dist/ui/client/index.js"
     },
-    "./experimental/runtime/tempTextFile": {
-      "types": "./dist/runtime/tempTextFile.d.ts",
-      "default": "./dist/runtime/tempTextFile.js"
+    "./voice": {
+      "types": "./dist/voice/index.d.ts",
+      "default": "./dist/voice/index.js"
     },
-    "./experimental/managedDependencies": {
-      "types": "./dist/managedDependencies.d.ts",
-      "default": "./dist/managedDependencies.js"
+    "./voice/client": {
+      "types": "./dist/voice/client/index.d.ts",
+      "browser": "./dist/voice/client/index.js",
+      "react-native": "./dist/voice/client/index.js",
+      "default": "./dist/voice/client/index.js"
     },
-    "./experimental/scm/backend": {
-      "types": "./dist/scm/backend.d.ts",
-      "default": "./dist/scm/backend.js"
+    "./voice/speech": {
+      "types": "./dist/voice/speech/index.d.ts",
+      "default": "./dist/voice/speech/index.js"
     },
-    "./experimental/scm/hostingProvider": {
-      "types": "./dist/scm/hostingProvider.d.ts",
-      "default": "./dist/scm/hostingProvider.js"
-    },
-    "./experimental/scm/remoteUrl": {
-      "types": "./dist/scm/remoteUrl.d.ts",
-      "default": "./dist/scm/remoteUrl.js"
+    "./webhooks": {
+      "types": "./dist/webhooks/index.d.ts",
+      "default": "./dist/webhooks/index.js"
     }
   },
   "files": [
     "dist",
-    "examples",
+    "examples/action-contract-consumer/package.json",
+    "examples/action-contract-consumer/README.md",
+    "examples/action-contract-consumer/src/index.ts",
+    "examples/action-contract-consumer/tsconfig.json",
+    "examples/action-contract-producer/package.json",
+    "examples/action-contract-producer/README.md",
+    "examples/action-contract-producer/src/index.ts",
+    "examples/action-contract-producer/tsconfig.json",
+    "examples/advanced-package-root/agent/reviewAgent.ts",
+    "examples/advanced-package-root/background/refreshCatalog.ts",
+    "examples/advanced-package-root/index.ts",
+    "examples/advanced-package-root/package.json",
+    "examples/advanced-package-root/provider/managedGateway.ts",
+    "examples/advanced-package-root/README.md",
+    "examples/advanced-package-root/resources/review-guide.md",
+    "examples/advanced-package-root/test/index.test.mjs",
+    "examples/advanced-package-root/tsconfig.json",
+    "examples/authoring-support.json",
+    "examples/background-indexer/.happier-plugin/plugin.json",
+    "examples/background-indexer/package.json",
+    "examples/background-indexer/README.md",
+    "examples/background-indexer/src/index.ts",
+    "examples/background-indexer/test/index.test.mjs",
+    "examples/background-indexer/tsconfig.json",
+    "examples/code-defined/index.ts",
+    "examples/code-defined/package.json",
+    "examples/code-defined/README.md",
+    "examples/code-defined/test/index.test.mjs",
+    "examples/code-defined/tsconfig.json",
+    "examples/descriptor-only/.happier-plugin/plugin.json",
+    "examples/descriptor-only/package.json",
+    "examples/descriptor-only/README.md",
+    "examples/descriptor-only/src/index.ts",
+    "examples/descriptor-only/test/index.test.mjs",
+    "examples/descriptor-only/tsconfig.json",
+    "examples/hosted-web/.happier-plugin/plugin.json",
+    "examples/hosted-web/index.html",
+    "examples/hosted-web/package.json",
+    "examples/hosted-web/pluginUiBuild.ts",
+    "examples/hosted-web/README.md",
+    "examples/hosted-web/src/index.ts",
+    "examples/hosted-web/test/index.test.mjs",
+    "examples/hosted-web/tsconfig.json",
+    "examples/hosted-web/ui/panel.css",
+    "examples/hosted-web/ui/panel.web.tsx",
+    "examples/multi-mode-fallback/.happier-plugin/plugin.json",
+    "examples/multi-mode-fallback/index.html",
+    "examples/multi-mode-fallback/package.json",
+    "examples/multi-mode-fallback/pluginUiBuild.ts",
+    "examples/multi-mode-fallback/README.md",
+    "examples/multi-mode-fallback/src/index.ts",
+    "examples/multi-mode-fallback/test/index.test.mjs",
+    "examples/multi-mode-fallback/tsconfig.json",
+    "examples/multi-mode-fallback/ui/panel.css",
+    "examples/multi-mode-fallback/ui/panel.tsx",
+    "examples/multi-mode-fallback/ui/panel.web.ts",
+    "examples/production-hosted-reference/.happier-plugin/plugin.json",
+    "examples/production-hosted-reference/assets/brand.png",
+    "examples/production-hosted-reference/daemon.ts",
+    "examples/production-hosted-reference/index.html",
+    "examples/production-hosted-reference/index.ts",
+    "examples/production-hosted-reference/package.json",
+    "examples/production-hosted-reference/pluginUiBuild.ts",
+    "examples/production-hosted-reference/README.md",
+    "examples/production-hosted-reference/resources/review-guide.md",
+    "examples/production-hosted-reference/test/index.test.mjs",
+    "examples/production-hosted-reference/tsconfig.json",
+    "examples/production-hosted-reference/ui/reviewPanel.css",
+    "examples/production-hosted-reference/ui/reviewPanel.web.ts",
+    "examples/projects-tasks/.happier-plugin/plugin.json",
+    "examples/projects-tasks/package.json",
+    "examples/projects-tasks/pluginUiBuild.ts",
+    "examples/projects-tasks/README.md",
+    "examples/projects-tasks/src/collections.ts",
+    "examples/projects-tasks/src/index.ts",
+    "examples/projects-tasks/test/index.test.mjs",
+    "examples/projects-tasks/tsconfig.json",
+    "examples/projects-tasks/ui/panel.native.tsx",
+    "examples/public-authoring/agent/runtime.ts",
+    "examples/public-authoring/daemon.ts",
+    "examples/public-authoring/definition.ts",
+    "examples/public-authoring/index.html",
+    "examples/public-authoring/index.ts",
+    "examples/public-authoring/package.json",
+    "examples/public-authoring/pluginUiBuild.ts",
+    "examples/public-authoring/README.md",
+    "examples/public-authoring/resources/agent-context-companion-guide.md",
+    "examples/public-authoring/resources/review-guide.md",
+    "examples/public-authoring/test/index.test.mjs",
+    "examples/public-authoring/tsconfig.json",
+    "examples/public-authoring/ui/reviewOpenableContent.ts",
+    "examples/public-authoring/ui/reviewPanel.css",
+    "examples/public-authoring/ui/reviewPanel.native.tsx",
+    "examples/public-authoring/ui/reviewPanel.web.tsx",
+    "examples/public-authoring/voiceProvider.ts",
+    "examples/public-authoring/voiceSpeechProvider.ts",
+    "examples/react-native-dev-hot-reload/.happier-plugin/plugin.json",
+    "examples/react-native-dev-hot-reload/package.json",
+    "examples/react-native-dev-hot-reload/pluginUiBuild.ts",
+    "examples/react-native-dev-hot-reload/README.md",
+    "examples/react-native-dev-hot-reload/src/index.ts",
+    "examples/react-native-dev-hot-reload/test/index.test.mjs",
+    "examples/react-native-dev-hot-reload/tsconfig.json",
+    "examples/react-native-dev-hot-reload/ui/panel.native.tsx",
+    "examples/react-native-installed/.happier-plugin/plugin.json",
+    "examples/react-native-installed/package.json",
+    "examples/react-native-installed/pluginUiBuild.ts",
+    "examples/react-native-installed/README.md",
+    "examples/react-native-installed/src/index.ts",
+    "examples/react-native-installed/test/index.test.mjs",
+    "examples/react-native-installed/tsconfig.json",
+    "examples/react-native-installed/ui/panel.native.tsx",
+    "examples/triage-source-contributor/package.json",
+    "examples/triage-source-contributor/README.md",
+    "examples/triage-source-contributor/src/index.ts",
+    "examples/triage-source-contributor/tsconfig.json",
+    "examples/triage-source-target/package.json",
+    "examples/triage-source-target/README.md",
+    "examples/triage-source-target/src/index.ts",
+    "examples/triage-source-target/tsconfig.json",
+    "examples/tsconfig.json",
     "scripts",
     "package.json",
-    "README.md"
+    "README.md",
+    "API.md",
+    "capability-matrix.json"
   ],
   "happier": {
     "publicSdkRelease": {
@@ -206,19 +354,28 @@
     }
   },
   "scripts": {
+    "api-surface": "node ./scripts/apiSurfaceCli.mjs",
+    "check:api-surface": "node ./scripts/apiSurfaceCli.mjs --check",
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
-    "prepare:declarations": "node ./scripts/bundleWorkspaceDeps.mjs --declarations",
-    "prebuild": "yarn -s prepare:declarations",
-    "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs --artifact",
-    "pretest": "yarn -s prepare:declarations",
-    "pretypecheck": "yarn -s prepare:declarations",
-    "pretypecheck:source": "yarn -s prepare:declarations",
-    "pretypecheck:tests": "yarn -s prepare:declarations",
-    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "generate:action-type-map": "node ./scripts/generateActionTypeMap.mjs --write",
+    "check:action-type-map": "node ./scripts/generateActionTypeMap.mjs --check",
+    "prepare:declarations": "yarn -s check:action-type-map && node ./scripts/bundleWorkspaceDeps.mjs --declarations",
+    "generate:public-toolchain": "node ./scripts/generatePublicToolchainCompatibility.mjs --write",
+    "check:public-toolchain": "node ./scripts/generatePublicToolchainCompatibility.mjs --check",
+    "check:public-toolchain:generated": "node ./scripts/generatePublicToolchainCompatibility.mjs --check-generated",
+    "prebuild": "yarn -s check:public-toolchain && yarn -s prepare:declarations",
+    "prepack": "yarn -s prepare:declarations && node ./scripts/bundleWorkspaceDeps.mjs --artifact && yarn -s check:api-surface && yarn -s check:public-toolchain:generated && yarn -s build:compiled",
+    "build:compiled": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "build": "yarn -s build:compiled",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\/])node_modules([\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'plugin-sdk',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
-    "test": "vitest run --exclude scripts/**/*.test.mjs && node --test scripts/bundleWorkspaceDeps.test.mjs",
-    "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s check:api-surface && vitest run --exclude \"scripts/*.test.mjs\" --exclude \"examples/**/test/*.test.mjs\" --exclude \"src/declarationClosureIdentity.test.ts\" && vitest run --config vitest.declaration-closure.config.ts && node --test scripts/*.test.mjs",
+    "vitest": "../../apps/stack/bin/hstack-exec --script=vitest:local",
+    "vitest:local": "vitest",
+    "test:source": "vitest run --config vitest.source.config.ts",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "yarn -s check:api-surface && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json",
     "typecheck:source": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "typecheck:tests": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
   },
@@ -229,9 +386,11 @@
     "@react-native-community/cli-platform-android": "20.1.2",
     "@react-native-community/cli-platform-ios": "20.1.2",
     "@rspack/core": "2.1.3",
+    "@swc/helpers": "0.5.23",
+    "@vitejs/plugin-react": "4.7.0",
     "@types/react": "19.2.0",
     "react": "19.2.0",
-    "react-native": "0.83.4",
+    "react-native": "0.83.5",
     "react-native-web": "0.21.2",
     "typescript": "^5.9.2",
     "vite": "7.3.1",
@@ -239,11 +398,16 @@
   },
   "bundledDependencies": [
     "@happier-dev/agents",
-    "@happier-dev/protocol"
+    "@happier-dev/cli-common",
+    "@happier-dev/protocol",
+    "@happier-dev/release-runtime"
   ],
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
+    "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
-    "@types/node": ">=20"
+    "@happier-dev/release-runtime": "0.0.0",
+    "@types/node": ">=20",
+    "zod": "4.3.6"
   }
 }

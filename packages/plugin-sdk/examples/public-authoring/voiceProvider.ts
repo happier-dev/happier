@@ -1,27 +1,18 @@
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-    PluginVoiceAccountOperationService,
-    PluginVoiceProviderRuntimeRegistration,
-    PluginVoiceProviderSettingsOperations,
-} from '@happier-dev/plugin-sdk/runtime';
+    VoiceAccountOperationService,
+    VoiceProviderRuntime,
+} from '@happier-dev/plugin-sdk/voice';
+import type {
+    RealtimeVoiceProviderRuntime,
+    VoiceClientAuthArtifact,
+} from '@happier-dev/plugin-sdk/voice/client';
+import type { VoiceProviderCatalogItem } from '@happier-dev/plugin-sdk/voice/speech';
 
 const VOICE_CLIENT_AUTH_URL = 'https://voice.example.test/v1/session';
 const VOICE_CATALOG_URL = 'https://voice.example.test/v1/catalog';
 const VOICE_CLIENT_AUTH_RESPONSE_MAX_BYTES = 32_768;
 const VOICE_CATALOG_RESPONSE_MAX_BYTES = 2_097_152;
-
-type VoiceClientAuthArtifact = Readonly<{
-    kind: 'bearer_token';
-    value: string;
-    expiresAtMs: number;
-    placement: 'authorization_header';
-}>;
-
-type VoiceCatalogItem = Readonly<{
-    id: string;
-    name: string;
-    metadata: Readonly<Record<string, string | number | boolean | null>>;
-}>;
 
 async function* emptyEvents<T>(): AsyncIterable<T> {
     return;
@@ -43,7 +34,7 @@ function readBoundedString(value: unknown, maxLength: number): string | null {
 }
 
 function decodeAccountOperationJson(input: Readonly<{
-    response: Awaited<ReturnType<PluginVoiceAccountOperationService['request']>>;
+    response: Awaited<ReturnType<VoiceAccountOperationService['request']>>;
     expectedFinalUrl: string;
     maxBytes: number;
 }>): Readonly<Record<string, unknown>> {
@@ -107,7 +98,7 @@ function normalizeSyntheticClientAuth(upstream: Readonly<Record<string, unknown>
 }
 
 export async function requestMediatedClientAuth(
-    accountOperations: PluginVoiceAccountOperationService,
+    accountOperations: VoiceAccountOperationService,
     signal: AbortSignal,
 ): Promise<VoiceClientAuthArtifact> {
     const response = await accountOperations.request({
@@ -123,9 +114,9 @@ export async function requestMediatedClientAuth(
 }
 
 export async function requestMediatedVoiceCatalog(
-    accountOperations: PluginVoiceAccountOperationService,
+    accountOperations: VoiceAccountOperationService,
     signal: AbortSignal,
-): Promise<readonly VoiceCatalogItem[]> {
+): Promise<readonly VoiceProviderCatalogItem[]> {
     const response = await accountOperations.request({
         operationId: 'list-catalog',
         parameters: {},
@@ -147,7 +138,7 @@ export async function requestMediatedVoiceCatalog(
         if (!voice || !id || !name || (voice.locale !== undefined && !locale)) {
             throw new Error('voice_catalog_response_invalid');
         }
-        const metadata: VoiceCatalogItem['metadata'] = locale ? { locale } : {};
+        const metadata: VoiceProviderCatalogItem['metadata'] = locale ? { locale } : {};
         return {
             id,
             name,
@@ -156,19 +147,27 @@ export async function requestMediatedVoiceCatalog(
     });
 }
 
-const settingsOperations: PluginVoiceProviderSettingsOperations = {
-    async listCatalog({ catalog, accountOperations, signal }) {
+const settingsOperations: NonNullable<RealtimeVoiceProviderRuntime['settingsOperations']> = {
+    async listCatalog({ catalog, credentials, signal }) {
         if (catalog !== 'voices') {
             throw new Error('voice_catalog_unsupported');
         }
-        return requestMediatedVoiceCatalog(accountOperations, signal);
+        if (!credentials.mediated) {
+            throw new Error('voice_mediated_credentials_required');
+        }
+        return requestMediatedVoiceCatalog(credentials.mediated, signal);
     },
 };
 
 const accountMediatedBrowserRuntime = {
+    kind: 'conversation',
+    microphoneMode: 'provider_managed',
     protocol: {
-        async prepare({ accountOperations, signal }) {
-            const clientAuth = await requestMediatedClientAuth(accountOperations, signal);
+        async prepare({ credentials, signal }) {
+            if (!credentials.mediated) {
+                throw new Error('voice_mediated_credentials_required');
+            }
+            const clientAuth = await requestMediatedClientAuth(credentials.mediated, signal);
             return {
                 kind: 'prepared',
                 session: {
@@ -219,9 +218,65 @@ const accountMediatedBrowserRuntime = {
     encodeContextUpdate: () => [],
     encodeTextTurn: () => [],
     outputLevelMeter: 'unavailable',
-} satisfies PluginVoiceProviderRuntimeRegistration;
+} satisfies VoiceProviderRuntime;
+
+const rawBrowserRuntime = {
+    kind: 'conversation',
+    protocol: {
+        async prepare({ signal }) {
+            signal.throwIfAborted();
+            return {
+                kind: 'prepared',
+                session: { config: {}, safeMetadata: {} },
+            } as const;
+        },
+        decodeControl() {
+            return [];
+        },
+        encodeTurnControl() {
+            return null;
+        },
+    },
+    async createConnection({ credentials, signal }) {
+        if (!credentials.raw) {
+            throw new Error('voice_raw_credentials_required');
+        }
+        await credentials.raw.materialize({
+            kind: 'httpHeaders',
+            origin: 'https://voice.example.test',
+            headerNames: ['authorization'],
+        }, { signal });
+        signal.throwIfAborted();
+        let connectionState: 'idle' | 'open' | 'closed' = 'idle';
+        return {
+            kind: 'sdk_handle',
+            async connect(connectionSignal: AbortSignal) {
+                connectionSignal.throwIfAborted();
+                connectionState = 'open';
+            },
+            async sendControl() {},
+            controlEvents: emptyEvents,
+            transportEvents: emptyEvents,
+            async close() {
+                connectionState = 'closed';
+            },
+            state: () => connectionState,
+            currentProviderSessionId: () => null,
+            playbackCursorMs: () => null,
+            beginOutputInterruptionCandidate: () => 'unsupported' as const,
+            resolveOutputInterruptionCandidate() {},
+        } as const;
+    },
+    encodeToolResults: () => [],
+    encodeToolContinuation: () => ({}),
+    encodeContextUpdate: () => [],
+    encodeTextTurn: () => [],
+    outputLevelMeter: 'unavailable',
+    microphoneMode: 'provider_managed',
+} satisfies RealtimeVoiceProviderRuntime;
 
 /** Generated web client entry named by `contributes.voiceProviders[].client`. */
 export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
     api.voiceProviders.register('credentialed-browser', accountMediatedBrowserRuntime);
+    api.voiceProviders.register('raw-browser', rawBrowserRuntime);
 }

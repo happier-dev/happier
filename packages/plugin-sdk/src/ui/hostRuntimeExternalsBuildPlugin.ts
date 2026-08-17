@@ -46,20 +46,6 @@ export type PluginUiHostRuntimeExternalsRealModuleLoader = (
     specifier: PluginUiHostRuntimeExternalSpecifierV1,
 ) => Promise<Readonly<Record<string, unknown>>>;
 
-export type PluginUiHostRuntimeExternalsVitePlugin = Readonly<{
-    name: 'happier-plugin-ui-host-runtime-externals';
-    enforce: 'pre';
-    // FIX-RNWEB-SERVING: real Vite plugin hook, invoked once with the
-    // resolved build config (`config.root` is the consuming PLUGIN AUTHOR's
-    // project directory, e.g. `packages/plugins/<name>`) before any `load`
-    // call. Used to switch the default real-module resolution from
-    // plugin-sdk's own install location (wrong — see `defaultImportRealModule`
-    // doc comment) to the author project's, with zero required author config.
-    configResolved: (config: Readonly<{ root: string }>) => void;
-    resolveId: (source: string) => string | null;
-    load: (id: string) => Promise<string | null>;
-}>;
-
 /**
  * FIX-RNWEB-SERVING: a bare, un-rooted dynamic `import()` resolves relative
  * to the FILE issuing it — here, plugin-sdk's own compiled
@@ -135,7 +121,7 @@ export async function generatePluginUiHostRuntimeExternalModuleSource(
 export function createPluginUiHostRuntimeExternalsVitePlugin(options?: Readonly<{
     specifiers?: readonly PluginUiHostRuntimeExternalSpecifierV1[];
     importRealModule?: PluginUiHostRuntimeExternalsRealModuleLoader;
-}>): PluginUiHostRuntimeExternalsVitePlugin {
+}>) {
     const specifiers = new Set<string>(options?.specifiers ?? PLUGIN_UI_HOST_RUNTIME_EXTERNAL_SPECIFIERS);
     // FIX-RNWEB-SERVING: an explicitly injected loader (tests, or an author
     // opting out) always wins and is never replaced by `configResolved`.

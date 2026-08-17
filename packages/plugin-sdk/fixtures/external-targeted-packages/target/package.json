@@ -1,0 +1,27 @@
+{
+  "name": "@happier-fixture/physical-target",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./surface": {
+      "types": "./dist/surface.d.ts",
+      "default": "./dist/surface.js"
+    },
+    "./plugin-ui-build": {
+      "types": "./dist/pluginUiBuild.d.ts",
+      "default": "./dist/pluginUiBuild.js"
+    }
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0"
+  },
+  "peerDependencies": {
+    "react": "19.2.0",
+    "react-native": ">=0.79.0"
+  }
+}

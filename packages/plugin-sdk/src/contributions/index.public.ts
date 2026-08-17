@@ -1,0 +1,47 @@
+/**
+ * Browser-safe cross-plugin contribution authoring protocols, points, roles,
+ * bindings, surfaces, selections, and their public structural types.
+ * Validator-neutral schema algebra lives on the sibling `/protocol` entrypoint.
+ */
+export type {
+    ContributionActionDangerLevel,
+    ContributionActionSurface,
+    ContributionAuthorDefinition,
+    ContributionAuthorTargets,
+    ContributionContributeInput,
+    ContributionOperationBindings,
+    ContributionOperationDefinition,
+    ContributionOperationRole,
+    ContributionPointAuthorDefinition,
+    ContributionPointOptions,
+    ContributionProtocolForPoint,
+    ContributionProtocol,
+    ContributionProtocolDefinition,
+    ContributionProtocolManifest,
+    ContributionSurfaceBinding,
+    ContributionSurfaceBindings,
+    ContributionSurfaceDefinition,
+    ContributionSurfaceFallback,
+    ContributionSurfaceHandle,
+    ContributionSurfaceIcon,
+    ContributionSurfaceLocalizedString,
+    ContributionSurfaceNode,
+    ContributionSurfaceNodeInput,
+    ContributionSurfacePresentation,
+    ContributionSurfaceRole,
+    DefinedContributionPointProtocolMap,
+    DescriptorFields,
+    IsRequiredSurfaceDefinition,
+    PluginTargetedContributionSelectionV1,
+    PublicContributionProtocol,
+    PublicContributionProtocols,
+    RequiredSurfaceRoles,
+    SchemaInput,
+    SchemaOutput,
+    SurfaceFields,
+} from '../targetedContributionAuthoring.js';
+export {
+    defineContributionPoint,
+    defineContributionProtocol,
+    PluginTargetedContributionSelectionV1Schema,
+} from '../targetedContributionAuthoring.js';

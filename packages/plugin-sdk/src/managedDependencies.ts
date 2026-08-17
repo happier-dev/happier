@@ -7,3 +7,5 @@ export {
 export type {
     InstallableDependencyDescriptor as ManagedDependencyDescriptor,
 } from '@happier-dev/protocol/installables';
+
+export type { PluginManagedDependencyContributionV2 } from '@happier-dev/protocol';

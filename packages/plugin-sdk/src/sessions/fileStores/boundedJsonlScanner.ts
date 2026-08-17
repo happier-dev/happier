@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 import { open, stat as nodeStat } from 'node:fs/promises';
 
 import { parseDefaultSessionHeader } from './records.js';

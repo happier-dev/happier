@@ -1,4 +1,4 @@
-import { definePluginUiBuildConfig as defineConfig } from '@happier-dev/plugin-sdk/ui/build';
+import { defineBuildConfig as defineConfig } from '@happier-dev/plugin-sdk/ui/build';
 
 /**
  * Stable UI build configuration. `outDir` is only the managed bundler's work
@@ -20,7 +20,11 @@ export const pluginUiBuildConfig = defineConfig({
             rendererId: 'review-web',
             entry: 'ui/reviewPanel.web.tsx',
             kind: 'hostedWeb',
-            platforms: ['web', 'ios', 'android', 'desktop'],
+        },
+        {
+            rendererId: 'review-openable-web',
+            entry: 'ui/reviewPanel.web.tsx',
+            kind: 'hostedWeb',
         },
         {
             rendererId: 'review-native',
@@ -29,6 +33,17 @@ export const pluginUiBuildConfig = defineConfig({
             platforms: ['web', 'ios', 'android', 'desktop'],
             module: {
                 containerName: 'examples_public_authoring_review_native',
+                modulePath: './renderSurface',
+                exportName: 'renderSurface',
+            },
+        },
+        {
+            rendererId: 'review-openable-native',
+            entry: 'ui/reviewPanel.native.tsx',
+            kind: 'reactNative',
+            platforms: ['web', 'ios', 'android', 'desktop'],
+            module: {
+                containerName: 'examples_public_authoring_review_openable_native',
                 modulePath: './renderSurface',
                 exportName: 'renderSurface',
             },

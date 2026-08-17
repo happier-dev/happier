@@ -14,10 +14,4 @@ describe('Agent session runtime limits candidate owner', () => {
       preWatchReplayBufferMaxJsonBytes: 8 * 1024 * 1024,
     }));
   });
-
-  it('does not expose the unpublished stable constant from the public agent-runtime module', async () => {
-    const publicModule = await import('./index.js');
-    expect(Object.hasOwn(publicModule, 'AGENT_SESSION_RUNTIME_LIMITS_V1')).toBe(false);
-    expect(Object.hasOwn(publicModule, 'AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1')).toBe(false);
-  });
 });

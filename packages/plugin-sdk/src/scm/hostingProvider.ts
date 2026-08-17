@@ -1,26 +1,54 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
-
+/** @moduleRealm daemon */
 import type {
-    ScmHostingProviderContribution,
     ScmHostingRepositoryPublishTarget,
     ScmHostingRepositorySummary,
     ScmHostingRepositoryVisibility,
-    ScmHostingRepositoryOwnerKind,
-    ScmHostingProviderRef,
-    ScmRepositoryCloneRepositorySelector,
     ScmRepositoryCloneTargetDescription,
     ScmPullRequestReference,
     ScmPullRequestState,
     ScmPullRequestSummary,
-    ManagedExecutableRef,
-} from '@happier-dev/protocol';
+} from './projections.js';
+import type { PluginJsonValueV2 } from '../identity.js';
 
-export type ScmHostingProviderRemoteDetectionInput = Readonly<{
+export type ScmHostingProviderKind =
+    | 'github'
+    | 'gitlab'
+    | 'bitbucket'
+    | 'azure-devops'
+    | 'custom'
+    | 'unknown';
+
+export type ScmHostingProviderRef = {
+    [key: string]: unknown;
+    id: string;
+    kind: ScmHostingProviderKind;
+    displayName: string;
+    baseUrl: string;
+    nameWithOwner?: string;
+    repositoryWebUrl?: string;
+    remoteName?: string;
+    urlSafety: {
+        [key: string]: unknown;
+        allowedSchemes: string[];
+    };
+};
+
+export type HostingProviderContribution = {
+    id: string;
+    title: string | { key: string; fallback: string };
+    description?: string | { key: string; fallback: string };
+    kind: string;
+    capabilities: ('detect' | 'clone' | 'fetch' | 'status' | 'diff' | 'commit' | 'push' | 'pullRequest')[];
+    authService?: string | Readonly<{ pluginId: string; localId: string }>;
+    metadata?: Record<string, PluginJsonValueV2>;
+};
+
+export type HostingProviderRemoteDetectionInput = Readonly<{
     remoteName: string | null;
     remoteUrl: string;
 }>;
 
-export type ScmHostingProviderResolvedRemote = Readonly<{
+export type HostingProviderResolvedRemote = Readonly<{
     id: string;
     kind: string;
     displayName: string;
@@ -39,7 +67,7 @@ export type ScmHostingProviderResolvedRemote = Readonly<{
     }>;
 }>;
 
-export type ScmHostingProviderUnresolvedRemote = Readonly<{
+export type HostingProviderUnresolvedRemote = Readonly<{
     id: 'unknown';
     kind: 'unknown';
     displayName: string;
@@ -47,13 +75,13 @@ export type ScmHostingProviderUnresolvedRemote = Readonly<{
     unsupportedReason: string;
 }>;
 
-export type ScmHostingProviderCompareUrlInput = Readonly<{
+export type HostingProviderCompareUrlInput = Readonly<{
     provider: ScmHostingProviderRef;
     base: string;
     head: string;
 }>;
 
-export type ScmHostingProviderRuntimeTokenMaterializationResult =
+export type HostingProviderRuntimeTokenMaterializationResult =
     | Readonly<{
         kind: 'available';
         token: string;
@@ -64,7 +92,7 @@ export type ScmHostingProviderRuntimeTokenMaterializationResult =
         reason: string;
     }>;
 
-export type ScmHostingProviderRuntimeBasicAuthMaterializationResult =
+export type HostingProviderRuntimeBasicAuthMaterializationResult =
     | Readonly<{
         kind: 'available';
         username: string;
@@ -76,14 +104,14 @@ export type ScmHostingProviderRuntimeBasicAuthMaterializationResult =
         reason: string;
     }>;
 
-export type ScmHostingProviderRuntimeCommandResult = Readonly<{
+export type HostingProviderRuntimeCommandResult = Readonly<{
     ok: boolean;
     stdout: string;
     stderr: string;
     exitCode: number | null;
 }>;
 
-export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'title'> & {
+export type HostingProviderDescriptor = Readonly<Omit<HostingProviderContribution, 'title'> & {
     pluginId?: string;
     displayName: string;
     urlSafety?: Readonly<{
@@ -93,35 +121,27 @@ export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContr
     }>;
 }>;
 
-export type ScmHostingProviderRuntimeBinding = Readonly<{
-    pluginId: string;
-    generation: string;
-    registration: ScmHostingProviderRuntimeRegistration;
-}>;
-
-export type ScmHostingProviderRegistryDiagnostic = Readonly<{
+export type HostingProviderRegistryDiagnostic = Readonly<{
     code: string;
     message: string;
     pluginId?: string;
     providerId?: string;
 }>;
 
-export type ScmHostingProviderResolvedProvider = ScmHostingProviderDescriptor & Readonly<{
-    runtime?: ScmHostingProviderRuntimeBinding;
-}>;
+export type HostingProviderResolvedProvider = HostingProviderDescriptor;
 
-export type ScmHostingProviderRemoteDetectionResult =
+export type HostingProviderRemoteDetectionResult =
     | Readonly<{
         kind: 'resolved';
         providerId: string;
-        provider: ScmHostingProviderResolvedRemote;
+        provider: HostingProviderResolvedRemote;
     }>
     | Readonly<{
         kind: 'unknown';
-        provider: ScmHostingProviderUnresolvedRemote;
+        provider: HostingProviderUnresolvedRemote;
     }>;
 
-export type ScmHostingProviderCompareUrlResult =
+export type HostingProviderCompareUrlResult =
     | Readonly<{
         kind: 'resolved';
         url: string;
@@ -129,131 +149,86 @@ export type ScmHostingProviderCompareUrlResult =
     | Readonly<{
         kind: 'unsupported';
         reason: 'unknown_provider' | 'adapter_unavailable' | 'unsupported_by_provider' | string;
-        provider: ScmHostingProviderResolvedRemote | ScmHostingProviderUnresolvedRemote;
+        provider: HostingProviderResolvedRemote | HostingProviderUnresolvedRemote;
     }>;
 
-export type ScmHostingProviderResolvedRegistry = Readonly<{
-    providers: readonly ScmHostingProviderResolvedProvider[];
-    providersById: ReadonlyMap<string, ScmHostingProviderResolvedProvider>;
-    diagnostics: readonly ScmHostingProviderRegistryDiagnostic[];
-    getProvider: (id: string) => ScmHostingProviderResolvedProvider | undefined;
-    getAdapter: (id: string) => ScmHostingProviderRuntimeAdapter | undefined;
-    detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderRemoteDetectionResult;
+export type HostingProviderResolvedRegistry = Readonly<{
+    providers: readonly HostingProviderResolvedProvider[];
+    providersById: ReadonlyMap<string, HostingProviderResolvedProvider>;
+    diagnostics: readonly HostingProviderRegistryDiagnostic[];
+    getProvider: (id: string) => HostingProviderResolvedProvider | undefined;
+    getAdapter: (id: string) => HostingProviderRuntimeAdapter | undefined;
+    detectRemote: (input: HostingProviderRemoteDetectionInput) => HostingProviderRemoteDetectionResult;
     buildCompareUrl: (input: Readonly<{
-        provider: ScmHostingProviderResolvedRemote | ScmHostingProviderUnresolvedRemote;
+        provider: HostingProviderResolvedRemote | HostingProviderUnresolvedRemote;
         base: string;
         head: string;
-    }>) => ScmHostingProviderCompareUrlResult;
+    }>) => HostingProviderCompareUrlResult;
 }>;
 
-export type ScmHostingProviderRuntimeServices = Readonly<{
-    resolveScmHostingProviderRegistry?: () => Promise<ScmHostingProviderResolvedRegistry>;
+export type HostingProviderRuntimeServices = Readonly<{
+    resolveScmHostingProviderRegistry?: () => Promise<HostingProviderResolvedRegistry>;
     resolveScmHostingTokenMaterialization?: (input: Readonly<{
         kind: 'scm_hosting_token';
         providerId: string;
         host: string;
         provider: ScmHostingProviderRef;
         profileId?: string | null;
-    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ScmHostingProviderRuntimeTokenMaterializationResult>;
+    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<HostingProviderRuntimeTokenMaterializationResult>;
     resolveScmHostingBasicAuthMaterialization?: (input: Readonly<{
         kind: 'scm_hosting_basic_auth';
         providerId: string;
         host: string;
         provider: ScmHostingProviderRef;
         profileId?: string | null;
-    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ScmHostingProviderRuntimeBasicAuthMaterializationResult>;
+    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<HostingProviderRuntimeBasicAuthMaterializationResult>;
     executeCommand?: (input: Readonly<{
-        executable: ManagedExecutableRef;
+        executable:
+            | Readonly<{
+                kind: 'managedDependency';
+                id: string | Readonly<{ pluginId: string; localId: string }>;
+            }>
+            | Readonly<{
+                kind: 'systemTool';
+                id: string | Readonly<{ pluginId: string; localId: string }>;
+            }>
+            | Readonly<{
+                kind: 'packaged-runtime-binary';
+                directorySegments: readonly string[];
+                executableBaseName: string;
+            }>;
         args: readonly string[];
         timeoutMs: number;
         env?: Readonly<Record<string, string>>;
         maxStdoutBytes?: number;
         maxStderrBytes?: number;
-    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<ScmHostingProviderRuntimeCommandResult>;
+    }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<HostingProviderRuntimeCommandResult>;
 }>;
 
-const SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY = Symbol.for(
-    'happier.pluginSdk.scm.hostingProviderRuntimeServicesStorage',
-);
+export {
+    readCurrentHostingProviderRuntimeServices,
+    runWithHostingProviderRuntimeServices,
+} from './hostingProviderRuntimeServices.js';
 
-function resolveScmHostingProviderRuntimeServicesStorage(): AsyncLocalStorage<ScmHostingProviderRuntimeServices> {
-    const globalScope = globalThis as typeof globalThis & Record<symbol, unknown>;
-    const existing = globalScope[SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY];
-    if (existing instanceof AsyncLocalStorage) {
-        return existing as AsyncLocalStorage<ScmHostingProviderRuntimeServices>;
-    }
-
-    const storage = new AsyncLocalStorage<ScmHostingProviderRuntimeServices>();
-    globalScope[SCM_HOSTING_PROVIDER_RUNTIME_SERVICES_STORAGE_KEY] = storage;
-    return storage;
-}
-
-const scmHostingProviderRuntimeServicesStorage = resolveScmHostingProviderRuntimeServicesStorage();
-const scmHostingProviderOperationSignalStorage = new AsyncLocalStorage<AbortSignal>();
-
-export function runWithScmHostingProviderRuntimeServices<T>(
-    services: ScmHostingProviderRuntimeServices,
-    callback: () => T,
-    options?: Readonly<{ signal?: AbortSignal }>,
-): T {
-    return scmHostingProviderRuntimeServicesStorage.run(services, () => (
-        options?.signal
-            ? scmHostingProviderOperationSignalStorage.run(options.signal, callback)
-            : callback()
-    ));
-}
-
-export function readCurrentScmHostingProviderRuntimeServices(): ScmHostingProviderRuntimeServices | null {
-    const services = scmHostingProviderRuntimeServicesStorage.getStore() ?? null;
-    const signal = scmHostingProviderOperationSignalStorage.getStore();
-    if (!services || !signal) return services;
-    return Object.freeze({
-        ...services,
-        ...(services.resolveScmHostingTokenMaterialization ? {
-            resolveScmHostingTokenMaterialization: (
-                input: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingTokenMaterialization']>>[0],
-                options?: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingTokenMaterialization']>>[1],
-            ) => services.resolveScmHostingTokenMaterialization!(
-                input,
-                options ?? { signal },
-            ),
-        } : {}),
-        ...(services.resolveScmHostingBasicAuthMaterialization ? {
-            resolveScmHostingBasicAuthMaterialization: (
-                input: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>>[0],
-                options?: Parameters<NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>>[1],
-            ) => services.resolveScmHostingBasicAuthMaterialization!(
-                input,
-                options ?? { signal },
-            ),
-        } : {}),
-        ...(services.executeCommand ? {
-            executeCommand: (
-                input: Parameters<NonNullable<ScmHostingProviderRuntimeServices['executeCommand']>>[0],
-                options?: Parameters<NonNullable<ScmHostingProviderRuntimeServices['executeCommand']>>[1],
-            ) => services.executeCommand!(input, options ?? { signal }),
-        } : {}),
-    });
-}
-
-type ScmHostingProviderOperationRuntimeInput = Readonly<{
-    runtimeServices?: ScmHostingProviderRuntimeServices;
+export type HostingProviderPullRequestListInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
     signal?: AbortSignal;
-}>;
-
-export type ScmHostingProviderPullRequestListInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
     provider: ScmHostingProviderRef;
     base?: string;
     head: string;
     state?: ScmPullRequestState;
 }>;
 
-export type ScmHostingProviderPullRequestGetInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderPullRequestGetInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
     reference: ScmPullRequestReference;
 }>;
 
-export type ScmHostingProviderPullRequestCreateInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderPullRequestCreateInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
     base: string;
     head: string;
@@ -262,21 +237,25 @@ export type ScmHostingProviderPullRequestCreateInput = ScmHostingProviderOperati
     draft?: boolean;
 }>;
 
-export type ScmHostingProviderDefaultBranchInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderDefaultBranchInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
 }>;
 
-export type ScmHostingProviderDefaultBranchMetadata = Readonly<{
+export type HostingProviderDefaultBranchMetadata = Readonly<{
     name: string;
     sha?: string | null;
 }>;
 
-export type ScmHostingProviderPullRequestCheckoutReferenceInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderPullRequestCheckoutReferenceInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
     reference: ScmPullRequestReference;
 }>;
 
-export type ScmHostingProviderPullRequestCheckoutReferenceMetadata = Readonly<{
+export type HostingProviderPullRequestCheckoutReferenceMetadata = Readonly<{
     pullRequest: ScmPullRequestSummary | null;
     branch?: string;
     remoteRef?: string;
@@ -284,62 +263,134 @@ export type ScmHostingProviderPullRequestCheckoutReferenceMetadata = Readonly<{
     baseSha?: string | null;
 }>;
 
-export type ScmHostingProviderRepositoryDescribePublishTargetsInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderRepositoryDescribePublishTargetsInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
     defaultRepositoryName: string;
 }>;
 
-export type ScmHostingProviderRepositoryDescribePublishTargetsResult = Readonly<{
+export type HostingProviderRepositoryDescribePublishTargetsResult = Readonly<{
     auth: ScmHostingRepositoryPublishTarget['auth'];
     targets: readonly ScmHostingRepositoryPublishTarget[];
 }>;
 
-export type ScmHostingProviderRepositoryCreateInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderRepositoryCreateInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
     owner: string;
-    ownerKind?: ScmHostingRepositoryOwnerKind;
+    ownerKind?: 'user' | 'org';
     repositoryName: string;
     visibility: ScmHostingRepositoryVisibility;
     description?: string;
 }>;
 
-export type ScmHostingProviderRepositoryGetInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderRepositoryGetInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
     owner: string;
     repositoryName: string;
 }>;
 
-export type ScmHostingProviderRepositoryDescribeCloneTargetsInput = ScmHostingProviderOperationRuntimeInput & Readonly<{
+export type HostingProviderRepositoryDescribeCloneTargetsInput = Readonly<{
+    runtimeServices?: HostingProviderRuntimeServices;
+    signal?: AbortSignal;
     provider: ScmHostingProviderRef;
-    repository: ScmRepositoryCloneRepositorySelector;
+    repository: Readonly<{
+        nameWithOwner: string;
+        webUrl?: string;
+        cloneUrl?: string;
+        sshUrl?: string;
+        defaultBranch?: string | null;
+        visibility: ScmHostingRepositoryVisibility;
+    }>;
 }>;
 
-export type ScmHostingProviderRuntimeAdapter = Readonly<Record<string, unknown> & {
-    detectRemote?: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderResolvedRemote | null;
-    buildCompareUrl?: (input: ScmHostingProviderCompareUrlInput) => string | null;
+export type HostingProviderRuntimeAdapter = Readonly<Record<string, unknown> & {
+    detectRemote?: (input: HostingProviderRemoteDetectionInput) => HostingProviderResolvedRemote | null;
+    buildCompareUrl?: (input: HostingProviderCompareUrlInput) => string | null;
     getPullRequestAuthProfileKey?: (input: Readonly<{ provider: ScmHostingProviderRef }>) => string | null;
-    listPullRequests?: (input: ScmHostingProviderPullRequestListInput) => Promise<readonly ScmPullRequestSummary[]>;
-    getPullRequest?: (input: ScmHostingProviderPullRequestGetInput) => Promise<ScmPullRequestSummary | null>;
-    createPullRequest?: (input: ScmHostingProviderPullRequestCreateInput) => Promise<ScmPullRequestSummary>;
-    getDefaultBranch?: (input: ScmHostingProviderDefaultBranchInput) => Promise<ScmHostingProviderDefaultBranchMetadata>;
+    listPullRequests?: (input: HostingProviderPullRequestListInput) => Promise<readonly ScmPullRequestSummary[]>;
+    getPullRequest?: (input: HostingProviderPullRequestGetInput) => Promise<ScmPullRequestSummary | null>;
+    createPullRequest?: (input: HostingProviderPullRequestCreateInput) => Promise<ScmPullRequestSummary>;
+    getDefaultBranch?: (input: HostingProviderDefaultBranchInput) => Promise<HostingProviderDefaultBranchMetadata>;
     resolvePullRequestCheckoutReference?: (
-        input: ScmHostingProviderPullRequestCheckoutReferenceInput
-    ) => Promise<ScmHostingProviderPullRequestCheckoutReferenceMetadata>;
+        input: HostingProviderPullRequestCheckoutReferenceInput
+    ) => Promise<HostingProviderPullRequestCheckoutReferenceMetadata>;
     describePublishTargets?: (
-        input: ScmHostingProviderRepositoryDescribePublishTargetsInput
-    ) => Promise<ScmHostingProviderRepositoryDescribePublishTargetsResult>;
+        input: HostingProviderRepositoryDescribePublishTargetsInput
+    ) => Promise<HostingProviderRepositoryDescribePublishTargetsResult>;
     createRepository?: (
-        input: ScmHostingProviderRepositoryCreateInput
+        input: HostingProviderRepositoryCreateInput
     ) => Promise<ScmHostingRepositorySummary>;
     getRepository?: (
-        input: ScmHostingProviderRepositoryGetInput
+        input: HostingProviderRepositoryGetInput
     ) => Promise<ScmHostingRepositorySummary | null>;
     describeCloneTargets?: (
-        input: ScmHostingProviderRepositoryDescribeCloneTargetsInput
+        input: HostingProviderRepositoryDescribeCloneTargetsInput
     ) => Promise<ScmRepositoryCloneTargetDescription>;
 }>;
 
-export type ScmHostingProviderRuntimeRegistration = Readonly<{
+export type HostingProviderRuntimeRegistration = Readonly<{
     id: string;
-    adapter: ScmHostingProviderRuntimeAdapter;
+    adapter: HostingProviderRuntimeAdapter;
 }>;
+
+/** @realm any */
+export {
+    ScmHostingProviderKindSchema,
+    resolveScmHostingProviderFollowupAllowedBaseUrl,
+} from './hostingProviderProjections.js';
+
+export {
+    requestScmForgeJson as requestForgeJson,
+} from './forgeHttp.js';
+
+export type {
+    ScmForgeHttpErrorContext as ForgeHttpErrorContext,
+    ScmForgeHttpErrorMapper as ForgeHttpErrorMapper,
+    ScmForgeHttpFetcher as ForgeHttpFetcher,
+    ScmForgeHttpJsonRequest as ForgeHttpJsonRequest,
+    ScmForgeHttpResponse as ForgeHttpResponse,
+} from './forgeHttp.js';
+
+export type { HostingProviderRuntime } from '../activation.js';
+
+// Pre-EU-4 source bridge for the still-live experimental SCM consumers. The
+// final /scm/hosting inventory excludes these predecessor identities, and no
+// final declaration above depends on them.
+export type ScmHostingProviderCompareUrlInput = HostingProviderCompareUrlInput;
+export type ScmHostingProviderCompareUrlResult = HostingProviderCompareUrlResult;
+export type ScmHostingProviderDefaultBranchInput = HostingProviderDefaultBranchInput;
+export type ScmHostingProviderDefaultBranchMetadata = HostingProviderDefaultBranchMetadata;
+export type ScmHostingProviderDescriptor = HostingProviderDescriptor;
+export type ScmHostingProviderPullRequestCheckoutReferenceInput = HostingProviderPullRequestCheckoutReferenceInput;
+export type ScmHostingProviderPullRequestCheckoutReferenceMetadata = HostingProviderPullRequestCheckoutReferenceMetadata;
+export type ScmHostingProviderPullRequestCreateInput = HostingProviderPullRequestCreateInput;
+export type ScmHostingProviderPullRequestGetInput = HostingProviderPullRequestGetInput;
+export type ScmHostingProviderPullRequestListInput = HostingProviderPullRequestListInput;
+export type ScmHostingProviderRegistryDiagnostic = HostingProviderRegistryDiagnostic;
+export type ScmHostingProviderRemoteDetectionInput = HostingProviderRemoteDetectionInput;
+export type ScmHostingProviderRemoteDetectionResult = HostingProviderRemoteDetectionResult;
+export type ScmHostingProviderRepositoryCreateInput = HostingProviderRepositoryCreateInput;
+export type ScmHostingProviderRepositoryDescribeCloneTargetsInput = HostingProviderRepositoryDescribeCloneTargetsInput;
+export type ScmHostingProviderRepositoryDescribePublishTargetsInput = HostingProviderRepositoryDescribePublishTargetsInput;
+export type ScmHostingProviderRepositoryDescribePublishTargetsResult = HostingProviderRepositoryDescribePublishTargetsResult;
+export type ScmHostingProviderRepositoryGetInput = HostingProviderRepositoryGetInput;
+export type ScmHostingProviderResolvedProvider = HostingProviderResolvedProvider;
+export type ScmHostingProviderResolvedRegistry = HostingProviderResolvedRegistry;
+export type ScmHostingProviderResolvedRemote = HostingProviderResolvedRemote;
+export type ScmHostingProviderRuntimeAdapter = HostingProviderRuntimeAdapter;
+export type ScmHostingProviderRuntimeBasicAuthMaterializationResult = HostingProviderRuntimeBasicAuthMaterializationResult;
+export type ScmHostingProviderRuntimeCommandResult = HostingProviderRuntimeCommandResult;
+export type ScmHostingProviderRuntimeRegistration = HostingProviderRuntimeRegistration;
+export type ScmHostingProviderRuntimeServices = HostingProviderRuntimeServices;
+export type ScmHostingProviderRuntimeTokenMaterializationResult = HostingProviderRuntimeTokenMaterializationResult;
+export type ScmHostingProviderUnresolvedRemote = HostingProviderUnresolvedRemote;
+
+export {
+    readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
+    runWithHostingProviderRuntimeServices as runWithScmHostingProviderRuntimeServices,
+} from './hostingProviderRuntimeServices.js';

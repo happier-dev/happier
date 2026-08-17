@@ -1,5 +1,5 @@
-import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
-export const pluginUiBuildConfig = definePluginUiBuildConfig({ projectRoot: '.', outDir: 'dist/ui', targets: [
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+export const pluginUiBuildConfig = defineBuildConfig({ projectRoot: '.', outDir: 'dist/ui', targets: [
     {
         rendererId: 'panel-native',
         entry: 'ui/panel.tsx',
@@ -11,6 +11,10 @@ export const pluginUiBuildConfig = definePluginUiBuildConfig({ projectRoot: '.',
             exportName: 'renderSurface',
         },
     },
-    { rendererId: 'panel-web', entry: 'ui/panel.tsx', kind: 'hostedWeb', platforms: ['web', 'ios', 'android', 'desktop'] },
+    {
+        rendererId: 'panel-web',
+        entry: 'ui/panel.web.ts',
+        kind: 'hostedWeb',
+    },
 ] });
 export default pluginUiBuildConfig;

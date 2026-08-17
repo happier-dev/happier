@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
-import { resolveWorkspaceBundleLockPath } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+  resolveWorkspaceBundleLockPath,
+} from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 import {
   bundleWorkspaceDeps,
   preparePluginSdkWorkspacePrerequisites,
@@ -53,16 +56,54 @@ test('plugin-sdk declaration preparation delegates to the canonical stale-only w
   assert.deepEqual(result, { ok: true, built: [], skipped: [] });
 });
 
-test('plugin-sdk lifecycle separates declaration admission from runtime bundling', async () => {
+test('plugin-sdk declaration preparation reuses prerequisites admitted by the canonical package build', async () => {
+  const result = await preparePluginSdkWorkspacePrerequisites({
+    pluginSdkDir: '/repo/packages/plugin-sdk',
+    env: {
+      HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1',
+    },
+    ensureWorkspacePackagesBuiltForComponent: async () => {
+      throw new Error('canonical package builds must not re-enter prerequisite admission');
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    built: [],
+    skipped: ['canonical-package-build'],
+  });
+});
+
+test('plugin-sdk keeps nonwriter source checks separate from declaration preparation', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
-  assert.equal(packageJson.scripts['prepare:declarations'], 'node ./scripts/bundleWorkspaceDeps.mjs --declarations');
-  assert.equal(packageJson.scripts.prebuild, 'yarn -s prepare:declarations');
-  assert.equal(packageJson.scripts.pretest, 'yarn -s prepare:declarations');
-  assert.equal(packageJson.scripts.pretypecheck, 'yarn -s prepare:declarations');
-  assert.equal(packageJson.scripts['pretypecheck:source'], 'yarn -s prepare:declarations');
-  assert.equal(packageJson.scripts['pretypecheck:tests'], 'yarn -s prepare:declarations');
-  assert.match(packageJson.scripts.prepack, /bundleWorkspaceDeps\.mjs --artifact/);
+  assert.equal(packageJson.scripts['check:api-surface'], 'node ./scripts/apiSurfaceCli.mjs --check');
+  assert.equal(
+    packageJson.scripts['prepare:declarations'],
+    'yarn -s check:action-type-map && node ./scripts/bundleWorkspaceDeps.mjs --declarations',
+  );
+  assert.equal(
+    packageJson.scripts.prebuild,
+    'yarn -s check:public-toolchain && yarn -s prepare:declarations',
+  );
+  assert.doesNotMatch(packageJson.scripts['test:local'], /prepare:declarations/u);
+  assert.doesNotMatch(packageJson.scripts['typecheck:local'], /prepare:declarations/u);
+  assert.match(packageJson.scripts['typecheck:local'], /^yarn -s check:api-surface && /u);
+  assert.equal(packageJson.scripts['pretypecheck:source'], undefined);
+  assert.equal(packageJson.scripts['pretypecheck:tests'], undefined);
+  assert.equal(packageJson.scripts['test:source'], 'vitest run --config vitest.source.config.ts');
+  assert.equal(
+    packageJson.scripts['typecheck:source'],
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json',
+  );
+  assert.equal(
+    packageJson.scripts['typecheck:tests'],
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json',
+  );
+  assert.equal(
+    packageJson.scripts.prepack,
+    'yarn -s prepare:declarations && node ./scripts/bundleWorkspaceDeps.mjs --artifact && yarn -s check:api-surface && yarn -s check:public-toolchain:generated && yarn -s build:compiled',
+  );
 });
 
 test('plugin-sdk runtime bundling admits the resolved artifact closure and publishes it once', async () => {
@@ -84,7 +125,10 @@ test('plugin-sdk runtime bundling admits the resolved artifact closure and publi
       events.push('admit-bundles');
       return { ok: true, built: [], skipped: packageNames };
     },
-    withWorkspaceBundleLock: async (publish) => {
+    withWorkspaceBundleLock: async (publish, options) => {
+      assert.equal(options.lockPath, resolveWorkspaceBundleLockPath(repoRoot));
+      assert.equal(options.timeoutMs, DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS);
+      assert.equal(options.staleAfterMs, DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS);
       events.push('lock');
       return await publish({ heldLockValue: 'test-owner' });
     },

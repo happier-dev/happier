@@ -1,11 +1,18 @@
+/** @moduleRealm daemon */
 export type {
   JsonlByteCursorV1,
   JsonlForwardLineV1,
+  JsonlForwardLineV1 as JsonlForwardLine,
   JsonlParsedLineV1,
+  JsonlParsedLineV1 as JsonlParsedLine,
   JsonlScannerFileSystemV1,
+  JsonlScannerFileSystemV1 as JsonlScannerFileSystem,
   JsonlScanBoundsV1,
+  JsonlScanBoundsV1 as JsonlScanBounds,
   JsonlSessionFileDescriptorV1,
+  JsonlSessionFileDescriptorV1 as JsonlSessionFileDescriptor,
   JsonlSourceDiagnosticV1,
+  JsonlSourceDiagnosticV1 as JsonlSourceDiagnostic,
 } from './boundedJsonlScanner.js';
 export {
   decodeJsonlByteCursor,
@@ -22,11 +29,15 @@ export {
   canonicalizePath,
   canonicalizePathSync,
   expandHomePath,
+  resolveHomeDirFromEnvironment,
   resolveConfiguredPath,
 } from './paths.js';
+/** @realm any */
+export type { SessionFileStoreHeaderDescriptorV1 as SessionFileStoreHeaderDescriptor } from './productDescriptor.js';
 export type {
-  SessionFileStoreHeaderDescriptorV1,
-  SessionFileStoreProductDescriptorV1,
+    SessionFileStoreHeaderDescriptorV1,
+    SessionFileStoreProductDescriptorV1,
+    SessionFileStoreProductDescriptorV1 as SessionFileStoreProductDescriptor,
 } from './productDescriptor.js';
 export {
   decodeIndexCursor,
@@ -45,13 +56,16 @@ export {
 export type {
   SessionFileStoreDirSource,
   SessionFileStoreResolutionInputV1,
+  SessionFileStoreResolutionInputV1 as SessionFileStoreResolutionInput,
   SessionFileStoreResolutionV1,
+  SessionFileStoreResolutionV1 as SessionFileStoreResolution,
 } from './sessionDirResolver.js';
 export {
   listSessionFileStoreRoots,
   listSessionFileStoreRootsSync,
   resolveSessionFileStoreDirs,
   resolveSessionFileStoreDirsSync,
+  resolveSessionFileStoreLaunchEnvironment,
 } from './sessionDirResolver.js';
 export type { SessionFileStoreRootDescriptorV1 } from './sessionRootDescriptor.js';
 export { validateSessionFileStoreRootDescriptor } from './sessionRootDescriptor.js';

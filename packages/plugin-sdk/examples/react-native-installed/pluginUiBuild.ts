@@ -1,5 +1,5 @@
-import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
-export const pluginUiBuildConfig = definePluginUiBuildConfig({ projectRoot: '.', outDir: 'dist/ui', targets: [
+import { defineBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+export const pluginUiBuildConfig = defineBuildConfig({ projectRoot: '.', outDir: 'dist/ui', targets: [
     {
         rendererId: 'panel-native',
         entry: 'ui/panel.native.tsx',

@@ -1,21 +1,28 @@
+/** @moduleRealm daemon */
 import {
     ExternalAgentObservationLeafFactV1Schema,
     PluginAgentExternalSessionLinkDataSchema,
-    type ExternalAgentObservationLeafFactV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/agents';
 
 import type { PluginDiagnosticData } from './diagnostics.js';
 import type {
     AgentExternalSessionLinkData,
     AgentExternalSessionSource,
-    AgentExternalSessionsInvocation,
+    AgentExternalSessionsInvocationBounds,
     AgentExternalSessionsResult,
 } from './externalSessions.js';
 import type { JsonValue } from './identity.js';
 import type { PluginInvocationContext } from './invocation.js';
+import {
+    captureStaticRegistrationMethod,
+    requireStaticRegistrationObject,
+} from './registration/staticCapture.js';
+import type {
+    AgentExternalSessionObservationLinkEvidenceBatchV1,
+} from './externalSessionObservation.js';
 
-type MaybePromise<T> = T | Promise<T>;
-export type StrictJsonValue = JsonValue;
+type AgentExternalSessionHookObservationFact =
+    AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
 export const AGENT_EXTERNAL_SESSION_HOOK_LIMITS = Object.freeze({
     maxInstallationVariants: 8,
@@ -66,7 +73,7 @@ export type AgentExternalSessionHookInstallationVariant = Readonly<{
 }>;
 
 export type AgentExternalSessionHookResolveInstallationRequest =
-    AgentExternalSessionsInvocation & Readonly<{
+    AgentExternalSessionsInvocationBounds & Readonly<{
         installation: Readonly<{
             installationIdentity: string;
             executableIdentity: string;
@@ -122,12 +129,12 @@ export type AgentExternalSessionHookResolveInstallationResult =
     AgentExternalSessionsResult<AgentExternalSessionHookResolveInstallationValue>;
 
 export type AgentExternalSessionHookMapEventRequest =
-    AgentExternalSessionsInvocation & Readonly<{
+    AgentExternalSessionsInvocationBounds & Readonly<{
         installationIdentity: string;
         variantId: string;
         eventId: string;
         observedAtMs: number;
-        nativePayload: StrictJsonValue;
+        nativePayload: JsonValue;
     }>;
 
 export type AgentExternalSessionHookMapEventValue =
@@ -138,7 +145,7 @@ export type AgentExternalSessionHookMapEventValue =
         remoteSessionId: string;
         linkData?: AgentExternalSessionLinkData;
         createdAtMs?: number;
-        facts: readonly ExternalAgentObservationLeafFactV1[];
+        facts: Readonly<AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts']>;
     }>;
 
 export type AgentExternalSessionHookMapEventResult =
@@ -149,10 +156,12 @@ export type AgentExternalSessionHooksContribution = Readonly<{
     resolveInstallation(
         request: AgentExternalSessionHookResolveInstallationRequest,
         context: PluginInvocationContext,
-    ): MaybePromise<AgentExternalSessionHookResolveInstallationResult>;
+    ): AgentExternalSessionHookResolveInstallationResult
+        | Promise<AgentExternalSessionHookResolveInstallationResult>;
     mapHookEvent(
         request: AgentExternalSessionHookMapEventRequest,
-    ): MaybePromise<AgentExternalSessionHookMapEventResult>;
+    ): AgentExternalSessionHookMapEventResult
+        | Promise<AgentExternalSessionHookMapEventResult>;
 }>;
 
 const textEncoder = new TextEncoder();
@@ -293,10 +302,10 @@ function enforceEnvelope(value: unknown, maxBytes: number, label: string): void 
     }
 }
 
-function snapshotStrictJsonValue(value: unknown, label: string): StrictJsonValue {
+function snapshotStrictJsonValue(value: unknown, label: string): JsonValue {
     const limits = AGENT_EXTERNAL_SESSION_HOOK_LIMITS;
     const state = { nodes: 0 };
-    const visit = (input: unknown, depth: number): StrictJsonValue => {
+    const visit = (input: unknown, depth: number): JsonValue => {
         if (depth > limits.maxJsonDepth) return invalid(label, 'exceeds the JSON depth limit');
         if (input === null || typeof input === 'string' || typeof input === 'boolean') {
             return input;
@@ -343,7 +352,7 @@ function snapshotStrictJsonValue(value: unknown, label: string): StrictJsonValue
         if (state.nodes > limits.maxJsonNodes) {
             return invalid(label, 'exceeds the JSON node limit');
         }
-        const snapshot: Record<string, StrictJsonValue> = {};
+        const snapshot: Record<string, JsonValue> = {};
         for (const key of keys as string[]) {
             const descriptor = Object.getOwnPropertyDescriptor(input, key);
             if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
@@ -639,14 +648,28 @@ function snapshotVariant(value: unknown): AgentExternalSessionHookInstallationVa
 export function validateAgentExternalSessionHooksContribution(
     value: unknown,
 ): AgentExternalSessionHooksContribution {
-    const record = readRecord(
+    const receiver = requireStaticRegistrationObject(
         value,
-        ['installationVariants', 'resolveInstallation', 'mapHookEvent'],
-        ['installationVariants', 'resolveInstallation', 'mapHookEvent'],
-        'contribution',
+        'External Session hooks contribution',
     );
+    const resolveInstallation = captureStaticRegistrationMethod<
+        AgentExternalSessionHooksContribution['resolveInstallation']
+    >(
+        receiver,
+        'resolveInstallation',
+        'External Session hooks contribution.resolveInstallation',
+        true,
+    )!;
+    const mapHookEvent = captureStaticRegistrationMethod<
+        AgentExternalSessionHooksContribution['mapHookEvent']
+    >(
+        receiver,
+        'mapHookEvent',
+        'External Session hooks contribution.mapHookEvent',
+        true,
+    )!;
     const installationVariants = readArray(
-        record.installationVariants,
+        Reflect.get(receiver, 'installationVariants'),
         1,
         AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxInstallationVariants,
         'installationVariants',
@@ -655,15 +678,10 @@ export function validateAgentExternalSessionHooksContribution(
         installationVariants.map((variant) => variant.variantId),
         'installationVariants',
     );
-    if (typeof record.resolveInstallation !== 'function'
-        || typeof record.mapHookEvent !== 'function') {
-        return invalid('contribution', 'must define exactly the two callbacks');
-    }
     return Object.freeze({
         installationVariants: Object.freeze(installationVariants),
-        resolveInstallation:
-            record.resolveInstallation as AgentExternalSessionHooksContribution['resolveInstallation'],
-        mapHookEvent: record.mapHookEvent as AgentExternalSessionHooksContribution['mapHookEvent'],
+        resolveInstallation,
+        mapHookEvent,
     });
 }
 
@@ -672,7 +690,7 @@ type CallbackName = keyof typeof AGENT_EXTERNAL_SESSION_HOOK_LIMITS.callbacks;
 function snapshotInvocation(
     record: Readonly<Record<string, unknown>>,
     callbackName: CallbackName,
-): AgentExternalSessionsInvocation {
+): AgentExternalSessionsInvocationBounds {
     if (!(record.signal instanceof AbortSignal)) {
         return invalid(`${callbackName} request`, 'signal must be an AbortSignal');
     }
@@ -1158,7 +1176,7 @@ function snapshotLinkData(value: unknown): AgentExternalSessionLinkData {
     return linkData;
 }
 
-function snapshotFact(value: unknown): ExternalAgentObservationLeafFactV1 {
+function snapshotFact(value: unknown): AgentExternalSessionHookObservationFact {
     readRecord(
         value,
         [
@@ -1174,7 +1192,7 @@ function snapshotFact(value: unknown): ExternalAgentObservationLeafFactV1 {
         ['kind', 'evidenceClass', 'observedAtMs'],
         'mapHookEvent fact',
     );
-    let fact: ExternalAgentObservationLeafFactV1;
+    let fact: AgentExternalSessionHookObservationFact;
     try {
         fact = ExternalAgentObservationLeafFactV1Schema.parse(value);
     } catch {

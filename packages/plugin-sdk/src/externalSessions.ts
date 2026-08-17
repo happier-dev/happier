@@ -1,13 +1,65 @@
-import type {
-    PluginAgentExternalSessionLinkData,
-    PluginAgentExternalSessionLinkDataValue,
-    SessionMessageRole,
+/** @moduleRealm daemon */
+import {
+    AgentExternalSessionTranscriptRawRecordSchema as canonicalAgentExternalSessionTranscriptRawRecordSchema,
+    HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 as canonicalHappierBaseSystemPromptAttachmentsV1,
+    HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1 as canonicalHappierBaseSystemPromptLinkedWorkspaceFilesV1,
+    HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 as canonicalHappierBaseSystemPromptOptionsV1,
+    HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 as canonicalHappierBaseSystemPromptSessionTitleInitialV1,
 } from '@happier-dev/protocol';
 
-type MaybePromise<T> = T | Promise<T>;
+export const HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1: string =
+    canonicalHappierBaseSystemPromptAttachmentsV1;
+export const HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1: string =
+    canonicalHappierBaseSystemPromptLinkedWorkspaceFilesV1;
+export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1: string =
+    canonicalHappierBaseSystemPromptOptionsV1;
+export const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1: string =
+    canonicalHappierBaseSystemPromptSessionTitleInitialV1;
 
-export type AgentExternalSessionLinkDataValue = PluginAgentExternalSessionLinkDataValue;
-export type AgentExternalSessionLinkData = PluginAgentExternalSessionLinkData;
+import type { ManagedServiceSpec } from './managed-services/contract.js';
+import type { ExecService } from './exec.js';
+import type { JsonValue } from './identity.js';
+import type { SessionMessageRole, SessionSchema } from './services/sessions.js';
+
+/**
+ * Public author shape for one admitted External Session transcript record.
+ * Protocol remains the runtime validator; the SDK owns its structural author
+ * declaration so external plugins do not acquire a private Protocol type edge.
+ */
+export type AgentExternalSessionTranscriptRawRecord =
+    | Readonly<{
+        role: 'user';
+        content: Readonly<{ type: 'text'; text: string }>;
+    }>
+    | Readonly<{
+        role: 'agent';
+        content: JsonValue;
+    }>;
+
+/** Portable JSON fact retained by one External Session source link. */
+export type AgentExternalSessionLinkDataValue =
+    | null
+    | boolean
+    | number
+    | string
+    | readonly AgentExternalSessionLinkDataValue[]
+    | Readonly<{ readonly [key: string]: AgentExternalSessionLinkDataValue }>;
+
+/** Opaque source-link data accepted and normalized by the canonical Protocol parser. */
+export type AgentExternalSessionLinkData = Readonly<{
+    readonly [key: string]: AgentExternalSessionLinkDataValue;
+}>;
+
+/** Source provenance admitted only for eligible user transcript rows. */
+export type AgentExternalSessionUserProjection =
+    | 'source_fact'
+    | 'terminal_origin'
+    | 'host_prompt_echo';
+
+/** The Protocol parser remains the sole runtime admission owner. */
+export const AgentExternalSessionTranscriptRawRecordSchema: SessionSchema<
+    AgentExternalSessionTranscriptRawRecord
+> = canonicalAgentExternalSessionTranscriptRawRecordSchema;
 
 export type AgentExternalSessionsFailureCode =
     | 'source_invalid'
@@ -35,16 +87,48 @@ export type AgentExternalSessionSource = Readonly<{
     kind: string;
 } & Record<string, AgentExternalSessionLinkDataValue>>;
 
+export type AgentExternalSessionsManagedEndpointReadRequest = Readonly<{
+    pathAndQuery: string;
+    headers?: Readonly<Record<string, string>>;
+}>;
+
+export type AgentExternalSessionsManagedEndpointReadResponse = Readonly<{
+    ok: boolean;
+    status: number;
+    statusText: string;
+    headers: Readonly<Record<string, string>>;
+    body: ReadableStream<Uint8Array> | null;
+}>;
+
+export type AgentExternalSessionsManagedEndpointRead = (
+    request: AgentExternalSessionsManagedEndpointReadRequest,
+) => Promise<AgentExternalSessionsManagedEndpointReadResponse>;
+
 /**
  * Bounds supplied by the host for one contribution call. The contribution must
  * settle before the absolute deadline, observe the signal, and keep its complete
  * serialized result within `maxSerializedBytes`.
  */
-export type AgentExternalSessionsInvocation = Readonly<{
+export type AgentExternalSessionsInvocationBounds = Readonly<{
     signal: AbortSignal;
     deadlineAtMs: number;
     maxSerializedBytes: number;
 }>;
+
+export type AgentExternalSessionsInvocation =
+    AgentExternalSessionsInvocationBounds & Readonly<{
+        /**
+         * Host-stamped for every generation-bound auxiliary call. Isolated
+         * harnesses must supply a fail-closed callback when no endpoint exists.
+         */
+        managedEndpointRead: AgentExternalSessionsManagedEndpointRead;
+        /**
+         * Host-stamped execution authority for this generation-bound call.
+         * It uses the same manifest-declared process/tool grants and lifecycle
+         * fencing as every other Agent invocation.
+         */
+        exec: ExecService;
+    }>;
 
 export type AgentExternalSessionCandidate = Readonly<{
     remoteSessionId: string;
@@ -55,12 +139,30 @@ export type AgentExternalSessionCandidate = Readonly<{
     linkData?: AgentExternalSessionLinkData;
 }>;
 
+/**
+ * Host-derived origin classification for a user transcript row eligible for
+ * terminal follow. It is producer-to-host metadata, never an assertion from a
+ * recipient-facing transcript reader or a substitute for raw-envelope role.
+ */
+/**
+ * One transcript item produced by an Agent contribution. `raw` carries the
+ * canonical transcript record; source-derived role and identity metadata stay
+ * beside it rather than inside it, so `raw` never has to be loosened to carry
+ * routing facts.
+ *
+ * This is the Agent-direction producer facet. The consumer facet an ordinary
+ * plugin receives from `SessionsService.external.readTranscript` is
+ * `ExternalSessionTranscriptItem`, whose recipient-safe projection of this
+ * record is named `data`, not `raw`.
+ */
 export type AgentExternalSessionTranscriptItem = Readonly<{
     id: string;
     createdAtMs: number;
     localId?: string | null;
+    sidechainId?: string | null;
     messageRole?: SessionMessageRole | null;
-    raw: AgentExternalSessionLinkData;
+    userProjection?: AgentExternalSessionUserProjection;
+    raw: AgentExternalSessionTranscriptRawRecord;
 }>;
 
 export type AgentExternalSessionsResolveSourceRequest = AgentExternalSessionsInvocation & Readonly<{
@@ -68,6 +170,12 @@ export type AgentExternalSessionsResolveSourceRequest = AgentExternalSessionsInv
 }>;
 export type AgentExternalSessionsResolveSourceResult = Readonly<{
     source: AgentExternalSessionSource;
+    /**
+     * Transient, source-owned absolute directories for media paths emitted by
+     * this source. The host validates this evidence at admission and must not
+     * copy it into persisted link data or transcript records.
+     */
+    transcriptMediaReadRoots?: readonly string[];
 }>;
 
 export type AgentExternalSessionsListCandidatesRequest = AgentExternalSessionsInvocation & Readonly<{
@@ -109,6 +217,12 @@ export type AgentExternalSessionsResolvedIdentity = Readonly<{
     source: AgentExternalSessionSource;
     remoteSessionId: string;
     linkData: AgentExternalSessionLinkData;
+    /**
+     * Transient, source-owned absolute directories for media paths emitted by
+     * this resolved identity. The host validates this evidence at admission
+     * and must not copy it into persisted link data or transcript records.
+     */
+    transcriptMediaReadRoots?: readonly string[];
 }>;
 
 export type AgentExternalSessionsPageTranscriptRequest = AgentExternalSessionsInvocation & Readonly<{
@@ -163,20 +277,45 @@ export type AgentExternalSessionsTranscriptPage = Readonly<{
 export type AgentExternalSessionsContribution = Readonly<{
     resolveSource(
         request: AgentExternalSessionsResolveSourceRequest,
-    ): MaybePromise<AgentExternalSessionsResult<AgentExternalSessionsResolveSourceResult>>;
+    ): AgentExternalSessionsResult<AgentExternalSessionsResolveSourceResult>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsResolveSourceResult>>;
     listCandidates(
         request: AgentExternalSessionsListCandidatesRequest,
-    ): MaybePromise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>>;
+    ): AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>>;
     resolveLinkIdentity(
         request: AgentExternalSessionsResolveLinkIdentityRequest,
-    ): MaybePromise<AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>>;
+    ): AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>>;
     resolveLinkedIdentity(
         request: AgentExternalSessionsResolveLinkedIdentityRequest,
-    ): MaybePromise<AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>>;
+    ): AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsResolvedIdentity>>;
     pageTranscript(
         request: AgentExternalSessionsPageTranscriptRequest,
-    ): MaybePromise<AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage>>;
+    ): AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage>>;
     readAfterTranscript(
         request: AgentExternalSessionsReadAfterTranscriptRequest,
-    ): MaybePromise<AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult>>;
+    ): AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult>
+        | Promise<AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult>>;
+    /**
+     * Declares the managed service that serves this source's managed endpoint
+     * when the contribution owns one, so a read does not depend on a live
+     * Session runner happening to have started the same server.
+     *
+     * This is a declaration, not a capability: the contribution returns a
+     * specification and never receives `ManagedServices`, a handle, or a base
+     * URL. The host owns admission, credential minting, supervision, reuse and
+     * teardown, and refuses a spawn whose client access is not host-minted.
+     * Return `null` for a source the contribution reaches directly.
+     */
+    resolveManagedEndpointService?(
+        request: AgentExternalSessionsManagedEndpointServiceRequest,
+    ): Promise<ManagedServiceSpec | null> | ManagedServiceSpec | null;
+}>;
+
+export type AgentExternalSessionsManagedEndpointServiceRequest = Readonly<{
+    source: AgentExternalSessionSource;
+    signal: AbortSignal;
 }>;

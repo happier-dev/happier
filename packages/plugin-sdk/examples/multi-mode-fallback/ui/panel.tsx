@@ -1,15 +1,15 @@
-import type { PluginUiRenderSurface } from '@happier-dev/plugin-sdk/ui';
-import {
-    createPluginUiHostApiClient,
-} from '@happier-dev/plugin-sdk/ui/client';
-import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+import * as React from 'react';
 
-export const renderSurface: PluginUiRenderSurface = ({ surface }) => ({
-    type: 'Text',
-    props: { children: `Shared native renderer (${surface.platform})` },
-    key: null,
-});
+import { Action, Card, defineUiSurface, Text } from '@happier-dev/plugin-ui';
 
-export function connectHostedWebPanel(signal?: AbortSignal): Promise<PluginUiHostApi> {
-    return createPluginUiHostApiClient(signal === undefined ? undefined : { signal });
+function FallbackPanel() {
+    return (
+        <Card>
+            <Text value="Multi-mode fallback example" variant="title" />
+            <Text value="The host chooses this semantic React Native artifact before falling back." />
+            <Action.Copy value="reactNative" title="Copy selected renderer" />
+        </Card>
+    );
 }
+
+export const renderSurface = defineUiSurface(FallbackPanel);

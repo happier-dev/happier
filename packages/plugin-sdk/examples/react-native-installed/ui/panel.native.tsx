@@ -1,7 +1,15 @@
-import type { PluginUiRenderSurface } from '@happier-dev/plugin-sdk/ui';
+import * as React from 'react';
 
-export const renderSurface: PluginUiRenderSurface = ({ surface }) => ({
-    type: 'Text',
-    props: { children: `Installed React Native example (${surface.platform})` },
-    key: null,
-});
+import { Action, Card, defineUiSurface, Text } from '@happier-dev/plugin-ui';
+
+function InstalledPanel() {
+    return (
+        <Card>
+            <Text value="Installed React Native example" variant="title" />
+            <Text value="This artifact uses the host-provided semantic surface context." tone="secondary" />
+            <Action.Copy value="Installed React Native example" title="Copy example title" />
+        </Card>
+    );
+}
+
+export const renderSurface = defineUiSurface(InstalledPanel);

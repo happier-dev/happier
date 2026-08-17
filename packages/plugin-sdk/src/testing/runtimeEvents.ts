@@ -1,112 +1,187 @@
 import {
-    RuntimeEventV1Schema,
-    type RuntimeEventKindV1,
-    type RuntimeEventV1,
-} from '@happier-dev/protocol/runtime';
+    AgentSessionRuntimeEventSchema,
+    type AgentSessionRuntimeEvent,
+} from '../agentRuntime/projections.js';
 
-import { createSubscription, type TestSubscription } from './subscription.js';
+import type { Disposable } from '../lifecycle.js';
 
-type RuntimeEventSubscriberV1 = Readonly<{
-    subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
+export type AgentSessionRuntimeEventKind = AgentSessionRuntimeEvent['kind'];
+
+export type AgentSessionRuntimeEventSubscriber = Readonly<{
+    subscribeRuntimeEvents(
+        listener: (event: AgentSessionRuntimeEvent) => void,
+    ): Disposable;
 }>;
 
-export type RuntimeEventValidationFailureV1 = Readonly<{
+export type AgentSessionRuntimeEventValidationFailure = Readonly<{
     event: unknown;
     issues: readonly string[];
 }>;
 
-export interface AdapterHarnessV1 {
-    attachRuntime(runtime: RuntimeEventSubscriberV1): TestSubscription;
+export interface AgentSessionRuntimeHarness extends Disposable {
+    attachRuntime(runtime: AgentSessionRuntimeEventSubscriber): Disposable;
     recordRuntimeEvent(event: unknown): void;
     rawEvents(): readonly unknown[];
-    canonical(): readonly RuntimeEventV1[];
-    validationFailures(): readonly RuntimeEventValidationFailureV1[];
-    until(kind: RuntimeEventKindV1, options?: Readonly<{ timeoutMs?: number }>): Promise<RuntimeEventV1>;
+    canonicalEvents(): readonly AgentSessionRuntimeEvent[];
+    validationFailures(): readonly AgentSessionRuntimeEventValidationFailure[];
+    until(
+        kind: AgentSessionRuntimeEventKind,
+        options?: Readonly<{ timeoutMs?: number; signal?: AbortSignal }>,
+    ): Promise<AgentSessionRuntimeEvent>;
     expectAllEventsValidated(): void;
     expectExactlyOneTerminalEvent(options?: Readonly<{ turnId?: string | null }>): void;
     dispose(): void;
 }
 
+type EventWaiter = Readonly<{
+    resolve(event: AgentSessionRuntimeEvent): void;
+    reject(error: unknown): void;
+    cleanup(): void;
+}>;
+
 const DEFAULT_UNTIL_TIMEOUT_MS = 1000;
-const TERMINAL_EVENT_KINDS = new Set<RuntimeEventKindV1>([
+const TERMINAL_EVENT_KINDS = new Set<AgentSessionRuntimeEventKind>([
     'turn-complete',
     'turn-failed',
     'turn-cancelled',
 ]);
 
-function formatValidationIssues(event: unknown, issues: readonly string[]): string {
+function formatValidationIssues(
+    event: unknown,
+    issues: readonly string[],
+): string {
+    let eventDescription: string;
+    try {
+        eventDescription = JSON.stringify(event) ?? String(event);
+    } catch {
+        eventDescription = '[not JSON-serializable]';
+    }
     return [
-        'RuntimeEventV1Schema rejected emitted canonical event.',
-        `Event: ${JSON.stringify(event)}`,
+        'AgentSessionRuntimeEventSchema rejected emitted canonical event.',
+        `Event: ${eventDescription}`,
         `Issues: ${issues.join('; ')}`,
     ].join(' ');
 }
 
-export function createAdapterHarness(): AdapterHarnessV1 {
-    const rawEvents: unknown[] = [];
-    const canonicalEvents: RuntimeEventV1[] = [];
-    const validationFailures: RuntimeEventValidationFailureV1[] = [];
-    const waiters = new Map<RuntimeEventKindV1, Set<(event: RuntimeEventV1) => void>>();
-    const subscriptions = new Set<TestSubscription>();
+function abortReason(signal: AbortSignal): unknown {
+    return signal.reason ?? new Error('Agent Session runtime event wait was cancelled');
+}
 
-    const resolveWaiters = (event: RuntimeEventV1): void => {
+export function createAgentSessionRuntimeHarness(): AgentSessionRuntimeHarness {
+    const rawEvents: unknown[] = [];
+    const canonicalEvents: AgentSessionRuntimeEvent[] = [];
+    const validationFailures: AgentSessionRuntimeEventValidationFailure[] = [];
+    const waiters = new Map<AgentSessionRuntimeEventKind, Set<EventWaiter>>();
+    const subscriptions = new Set<Disposable>();
+    let disposed = false;
+
+    const removeWaiter = (
+        kind: AgentSessionRuntimeEventKind,
+        waiter: EventWaiter,
+    ): void => {
+        const kindWaiters = waiters.get(kind);
+        kindWaiters?.delete(waiter);
+        if (kindWaiters?.size === 0) waiters.delete(kind);
+    };
+
+    const resolveWaiters = (event: AgentSessionRuntimeEvent): void => {
         const kindWaiters = waiters.get(event.kind);
         if (!kindWaiters) return;
         waiters.delete(event.kind);
-        for (const resolveWaiter of kindWaiters) resolveWaiter(event);
+        for (const waiter of kindWaiters) {
+            waiter.cleanup();
+            waiter.resolve(event);
+        }
     };
 
-    return {
+    const harness: AgentSessionRuntimeHarness = {
         attachRuntime(runtime) {
-            const unsubscribe = runtime.subscribeRuntimeEvents((event) => {
-                this.recordRuntimeEvent(event);
+            if (disposed) throw new Error('Agent Session runtime harness is disposed');
+            const runtimeSubscription = runtime.subscribeRuntimeEvents((event) => {
+                harness.recordRuntimeEvent(event);
             });
-            const subscription = createSubscription(() => {
-                unsubscribe();
-                subscriptions.delete(subscription);
+            let subscriptionDisposed = false;
+            const subscription: Disposable = Object.freeze({
+                dispose() {
+                    if (subscriptionDisposed) return;
+                    subscriptionDisposed = true;
+                    subscriptions.delete(subscription);
+                    return runtimeSubscription.dispose();
+                },
             });
             subscriptions.add(subscription);
             return subscription;
         },
         recordRuntimeEvent(event) {
+            if (disposed) throw new Error('Agent Session runtime harness is disposed');
             rawEvents.push(event);
-            const parsed = RuntimeEventV1Schema.safeParse(event);
+            const parsed = AgentSessionRuntimeEventSchema.safeParse(event);
             if (!parsed.success) {
-                validationFailures.push({
+                validationFailures.push(Object.freeze({
                     event,
-                    issues: parsed.error.issues.map((issue) => issue.message),
-                });
+                    issues: Object.freeze(parsed.error.issues.map((issue) => issue.message)),
+                }));
                 return;
             }
             canonicalEvents.push(parsed.data);
             resolveWaiters(parsed.data);
         },
         rawEvents() {
-            return [...rawEvents];
+            return Object.freeze([...rawEvents]);
         },
-        canonical() {
-            return canonicalEvents;
+        canonicalEvents() {
+            return Object.freeze([...canonicalEvents]);
         },
         validationFailures() {
-            return [...validationFailures];
+            return Object.freeze([...validationFailures]);
         },
         until(kind, options = {}) {
+            if (disposed) {
+                return Promise.reject(new Error('Agent Session runtime harness is disposed'));
+            }
             const existing = canonicalEvents.find((event) => event.kind === kind);
             if (existing) return Promise.resolve(existing);
+            if (options.signal?.aborted) {
+                return Promise.reject(abortReason(options.signal));
+            }
+
             const timeoutMs = options.timeoutMs ?? DEFAULT_UNTIL_TIMEOUT_MS;
-            return new Promise<RuntimeEventV1>((resolvePromise, reject) => {
-                const timeout = setTimeout(() => {
-                    const kindWaiters = waiters.get(kind);
-                    kindWaiters?.delete(resolveWaiter);
-                    if (kindWaiters?.size === 0) waiters.delete(kind);
-                    reject(new Error(`Timed out waiting for runtime event kind "${kind}"`));
-                }, timeoutMs);
-                const resolveWaiter = (event: RuntimeEventV1): void => {
-                    clearTimeout(timeout);
-                    resolvePromise(event);
+            return new Promise<AgentSessionRuntimeEvent>((resolve, reject) => {
+                let timeout: ReturnType<typeof setTimeout> | undefined;
+                let settled = false;
+                const cleanup = (): void => {
+                    if (timeout !== undefined) clearTimeout(timeout);
+                    options.signal?.removeEventListener('abort', onAbort);
                 };
-                const kindWaiters = waiters.get(kind) ?? new Set<(event: RuntimeEventV1) => void>();
-                kindWaiters.add(resolveWaiter);
+                const waiter: EventWaiter = {
+                    resolve(event) {
+                        if (settled) return;
+                        settled = true;
+                        resolve(event);
+                    },
+                    reject(error) {
+                        if (settled) return;
+                        settled = true;
+                        reject(error);
+                    },
+                    cleanup,
+                };
+                const settleReject = (error: unknown): void => {
+                    if (settled) return;
+                    removeWaiter(kind, waiter);
+                    cleanup();
+                    waiter.reject(error);
+                };
+                const onAbort = (): void => {
+                    settleReject(abortReason(options.signal!));
+                };
+
+                timeout = setTimeout(() => {
+                    settleReject(new Error(`Timed out waiting for Agent Session runtime event kind "${kind}"`));
+                }, timeoutMs);
+                options.signal?.addEventListener('abort', onAbort, { once: true });
+                const kindWaiters = waiters.get(kind) ?? new Set<EventWaiter>();
+                kindWaiters.add(waiter);
                 waiters.set(kind, kindWaiters);
             });
         },
@@ -122,13 +197,25 @@ export function createAdapterHarness(): AdapterHarnessV1 {
                 return 'turnId' in event && event.turnId === options.turnId;
             });
             if (terminalEvents.length !== 1) {
-                throw new Error(`Expected exactly one terminal runtime event, received ${terminalEvents.length}`);
+                throw new Error(`Expected exactly one terminal Agent Session runtime event, received ${terminalEvents.length}`);
             }
         },
         dispose() {
-            for (const subscription of subscriptions) subscription.unsubscribe();
+            if (disposed) return;
+            disposed = true;
+            for (const subscription of [...subscriptions]) {
+                void subscription.dispose();
+            }
             subscriptions.clear();
+            for (const kindWaiters of waiters.values()) {
+                for (const waiter of kindWaiters) {
+                    waiter.cleanup();
+                    waiter.reject(new Error('Agent Session runtime harness was disposed'));
+                }
+            }
             waiters.clear();
         },
     };
+
+    return Object.freeze(harness);
 }

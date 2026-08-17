@@ -1,15 +1,29 @@
 import type {
+    ComposerReferenceRuntime,
     PluginApi,
 } from '@happier-dev/plugin-sdk';
+import {
+    defineProtocolObject,
+    defineProtocolString,
+} from '@happier-dev/plugin-sdk/protocol';
+import {
+    PluginAgentCompositionRequestSchema,
+    type PluginAgentCompositionRequest,
+    type PluginAgentCompositionResult,
+} from '@happier-dev/plugin-sdk/hooks';
 import type {
-    ActionHandler,
-    HookHandler,
-    PluginConnectedAccountAuthenticationModeRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+    AgentSessionRunnerFactoryLocatorV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import type {
-    AgentAcpRuntimeOptions,
-    AgentRuntimeFactory,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+    PluginDynamicResourceInvocationOptionsV1,
+    PluginDynamicResourceRuntime,
+} from '@happier-dev/plugin-sdk/resources';
+import type { SessionSystemRecordAddress } from '@happier-dev/plugin-sdk/sessions';
+import { definePluginDeclarativeDocumentV1 } from '@happier-dev/plugin-sdk/ui';
+
+type ActionRegistrationHandler = Parameters<PluginApi['actions']['register']>[1];
+type HookRegistrationHandler = Parameters<PluginApi['hooks']['register']>[1];
 
 type ReviewSummaryInput = Readonly<{
     transcript: string;
@@ -23,19 +37,142 @@ type ReviewSummaryData = Readonly<{
 
 const DEFAULT_MAX_BULLETS = 3;
 
-export const manualConnectedAccountAuthenticationMode = {
-    kind: 'manual',
-    async complete() {
+const REVIEW_REFERENCE_CANDIDATES = [
+    {
+        id: 'security-check',
+        label: 'Security review',
+        description: 'Focus on authorization, secrets, and trust boundaries.',
+    },
+] satisfies Awaited<ReturnType<ComposerReferenceRuntime['search']>>;
+
+export const reviewSessionStatusCollection = defineAccountCollection({
+    id: 'review-session-statuses',
+    schemaVersion: 1,
+    schema: defineProtocolObject({
+        id: defineProtocolString(),
+        summary: defineProtocolString({ maxLength: 2_048 }),
+    }, { policy: 'closed' }),
+    rowIdField: 'id',
+    identityFields: [],
+    serverReadable: ['summary'],
+    indexes: [],
+    uiQueries: [],
+    relations: [],
+});
+
+function abortReviewOperation(): never {
+    throw new DOMException('Review operation cancelled.', 'AbortError');
+}
+
+function requireActiveReviewOperation(signal: AbortSignal): void {
+    if (signal.aborted) abortReviewOperation();
+}
+
+function requireReviewSessionStatusScope(
+    options: PluginDynamicResourceInvocationOptionsV1,
+) {
+    if (options.context.kind !== 'session') {
+        throw new Error('review_session_status_requires_session_context');
+    }
+    if (!options.accountStorage) {
+        throw new Error('review_session_status_account_storage_unavailable');
+    }
+    return {
+        sessionId: options.context.sessionId,
+        collection: options.accountStorage.collection(reviewSessionStatusCollection),
+    };
+}
+
+export const reviewReferenceProvider = {
+    async search(query, signal) {
+        requireActiveReviewOperation(signal);
+        const normalized = query.trim().toLowerCase();
+        const candidates = normalized.length === 0
+            ? REVIEW_REFERENCE_CANDIDATES
+            : REVIEW_REFERENCE_CANDIDATES.filter((candidate) => (
+                [candidate.id, candidate.label, candidate.description]
+                    .some((value) => value.toLowerCase().includes(normalized))
+            ));
+        requireActiveReviewOperation(signal);
+        return candidates;
+    },
+    async resolve(candidateId, signal) {
+        requireActiveReviewOperation(signal);
+        const candidate = REVIEW_REFERENCE_CANDIDATES.find((entry) => entry.id === candidateId);
+        if (!candidate) {
+            throw new Error('review_reference_not_found');
+        }
+        requireActiveReviewOperation(signal);
         return {
-            status: 'unavailable',
-            diagnostic: {
-                code: 'public_authoring_manual_auth_unavailable',
-                severity: 'warning',
-                message: 'The public-authoring fixture does not connect a real account.',
-            },
+            ...candidate,
+            context: 'Review focus: authorization, secrets, and trust boundaries.',
         };
     },
-} satisfies PluginConnectedAccountAuthenticationModeRuntime;
+} satisfies ComposerReferenceRuntime;
+
+export const reviewSessionStatusResource: PluginDynamicResourceRuntime = {
+    async read(options) {
+        return readReviewSessionStatus(options);
+    },
+    observe(invalidate, options) {
+        return observeReviewSessionStatus(invalidate, options);
+    },
+};
+
+async function readReviewSessionStatus(options: PluginDynamicResourceInvocationOptionsV1): Promise<string> {
+    requireActiveReviewOperation(options.signal);
+    const { collection, sessionId } = requireReviewSessionStatusScope(options);
+    requireActiveReviewOperation(options.signal);
+    const row = await collection.get(sessionId, { signal: options.signal });
+    requireActiveReviewOperation(options.signal);
+    return typeof row?.value.summary === 'string' ? row.value.summary : '';
+}
+
+function observeReviewSessionStatus(
+    invalidate: () => void,
+    options: PluginDynamicResourceInvocationOptionsV1,
+) {
+    requireActiveReviewOperation(options.signal);
+    const { collection } = requireReviewSessionStatusScope(options);
+    requireActiveReviewOperation(options.signal);
+    let active = true;
+    const subscription = collection.watch({ kind: 'collection' }, () => {
+        if (active && !options.signal.aborted) invalidate();
+    });
+    const dispose = () => {
+        if (!active) return;
+        active = false;
+        options.signal.removeEventListener('abort', dispose);
+        subscription.dispose();
+    };
+    options.signal.addEventListener('abort', dispose, { once: true });
+    if (options.signal.aborted) dispose();
+    return { dispose };
+}
+
+export const projectCompanionDashboardResource: PluginDynamicResourceRuntime = {
+    async read(options) {
+        const summary = await readReviewSessionStatus(options);
+        return JSON.stringify(definePluginDeclarativeDocumentV1({
+            version: 1,
+            root: {
+                kind: 'group',
+                title: 'Project Companion',
+                description: 'Live review status for the current Session.',
+                children: [{
+                    kind: 'status',
+                    label: 'Review status',
+                    value: summary.length > 0
+                        ? summary
+                        : 'No review status has been declared for this Session.',
+                }],
+            },
+        }));
+    },
+    observe(invalidate, options) {
+        return observeReviewSessionStatus(invalidate, options);
+    },
+};
 
 function readReviewSummaryInput(input: unknown): ReviewSummaryInput {
     const record = typeof input === 'object' && input !== null
@@ -49,8 +186,8 @@ function readReviewSummaryInput(input: unknown): ReviewSummaryInput {
     return { transcript, maxBullets };
 }
 
-export const runReviewSummary: ActionHandler = async (value, context) => {
-    await context.ui.status.set('review-summary', 'Summarizing review…');
+export const runReviewSummary: ActionRegistrationHandler = async (value, context) => {
+    await context.ui?.status.set('review-summary', 'Summarizing review…');
     const input = readReviewSummaryInput(value);
     const source = input.transcript || 'No transcript was provided.';
     const firstSentence = source.split(/[.!?]\s/u)[0]?.trim() || source;
@@ -65,11 +202,11 @@ export const runReviewSummary: ActionHandler = async (value, context) => {
                 .slice(0, input.maxBullets),
         };
     } finally {
-        await context.ui.status.set('review-summary', null);
+        await context.ui?.status.set('review-summary', null);
     }
 };
 
-export const observeSessionSpawned: HookHandler = async (
+export const observeSessionSpawned: HookRegistrationHandler = async (
     payload,
     context,
 ) => {
@@ -78,28 +215,125 @@ export const observeSessionSpawned: HookHandler = async (
     void context.signal;
 };
 
-const reviewAcpTransport = {
-    kind: 'stdio',
-    executable: { kind: 'systemTool', id: 'acme-review-agent' },
-    args: ['acp'],
-    timeouts: {
-        initializeMs: 10_000,
-        idleMs: 120_000,
-    },
-} as const satisfies AgentAcpRuntimeOptions['transport'];
+const AGENT_CONTEXT_COMPANION_TOOL_ID = 'review-summary-tool';
+const AGENT_CONTEXT_COMPANION_PROMPT_ASSET_ID = 'agent-context-companion-prompt';
+const AGENT_CONTEXT_COMPANION_RECORD_ADDRESS = Object.freeze({
+    owner: 'plugin' as const,
+    namespace: 'agent-context-companion',
+    kind: 'review-cursor',
+    localId: 'current',
+}) satisfies SessionSystemRecordAddress;
 
-export const createReviewAgentRuntime: AgentRuntimeFactory = () => ({
-    sessions: {
-        open(request, context) {
-            return context.protocols.acp.open(request, {
-                transport: reviewAcpTransport,
-            });
+function readAgentCompositionRequest(event: unknown): PluginAgentCompositionRequest | null {
+    const envelope = event && typeof event === 'object' && !Array.isArray(event)
+        ? event as Readonly<Record<string, unknown>>
+        : null;
+    const candidate = envelope && Object.prototype.hasOwnProperty.call(envelope, 'payload')
+        ? envelope.payload
+        : event;
+    const parsed = PluginAgentCompositionRequestSchema.safeParse(candidate);
+    return parsed.success ? parsed.data : null;
+}
+
+function resolveAgentContextCompanionCompositionResult(
+    request: PluginAgentCompositionRequest,
+): PluginAgentCompositionResult {
+    const enabledToolIds = request.declaredToolIds.includes(
+        AGENT_CONTEXT_COMPANION_TOOL_ID,
+    )
+        ? [AGENT_CONTEXT_COMPANION_TOOL_ID]
+        : [];
+    const enabledPromptAssetIds = request.declaredPromptAssetIds.includes(
+        AGENT_CONTEXT_COMPANION_PROMPT_ASSET_ID,
+    )
+        ? [AGENT_CONTEXT_COMPANION_PROMPT_ASSET_ID]
+        : [];
+    return enabledToolIds.length > 0 || enabledPromptAssetIds.length > 0
+        ? {
+            enabledToolIds,
+            enabledPromptAssetIds,
+            additionalInstructions:
+                'Use the bounded review context for this turn and preserve the review cursor in your response when it matters.',
+        }
+        : {
+            enabledToolIds,
+            enabledPromptAssetIds,
+        };
+}
+
+/**
+ * The host-stamped Session handle is the only persistence path for the
+ * Companion cursor. While this hook is active, omission of both applicable
+ * declarations clears its bounded record rather than retaining stale context.
+ * Disable/uninstall stops hook invocation at the host lifecycle owner; this
+ * plugin has no cleanup callback, local store, or fallback path.
+ */
+async function synchronizeAgentContextCompanionRecord(
+    request: PluginAgentCompositionRequest,
+    result: PluginAgentCompositionResult,
+    context: Parameters<HookRegistrationHandler>[1],
+): Promise<void> {
+    context.signal.throwIfAborted();
+    const session = await context.services.sessions.get(request.sessionId, {
+        signal: context.signal,
+    });
+    context.signal.throwIfAborted();
+    if (!session) return;
+
+    const existing = await session.readSystemRecord({
+        address: AGENT_CONTEXT_COMPANION_RECORD_ADDRESS,
+    }, { signal: context.signal });
+    context.signal.throwIfAborted();
+    const hasSelectedContribution = (result.enabledToolIds?.length ?? 0) > 0
+        || (result.enabledPromptAssetIds?.length ?? 0) > 0;
+    if (!hasSelectedContribution) {
+        if (existing) {
+            await session.deleteSystemRecord({
+                address: AGENT_CONTEXT_COMPANION_RECORD_ADDRESS,
+                expectedRevision: existing.revision,
+            }, { signal: context.signal });
+            context.signal.throwIfAborted();
+        }
+        return;
+    }
+
+    await session.upsertSystemRecord({
+        address: AGENT_CONTEXT_COMPANION_RECORD_ADDRESS,
+        content: {
+            version: 1,
+            cursor: request.agentId,
+            annotation: 'Bounded review cursor for the next Agent composition turn.',
         },
-    },
-});
+        expectedRevision: existing?.revision ?? null,
+    }, { signal: context.signal });
+    context.signal.throwIfAborted();
+}
 
-export function activate(api: PluginApi): void {
-    api.actions.register('review-summary', runReviewSummary);
-    api.hooks.register('session-spawned', observeSessionSpawned);
-    api.agents.register('review-agent', createReviewAgentRuntime);
+/**
+ * Public-only next-turn composition. It receives no Session/runtime handle;
+ * the host validates these local ids against this plugin's current manifest.
+ */
+export const resolveAgentContextCompanionComposition: HookRegistrationHandler = async (
+    event,
+    context,
+) => {
+    const request = readAgentCompositionRequest(event);
+    if (!request) return undefined;
+    context.signal.throwIfAborted();
+    const result = resolveAgentContextCompanionCompositionResult(request);
+    try {
+        await synchronizeAgentContextCompanionRecord(request, result, context);
+    } catch (error) {
+        // A stale/failed persistence attempt is local to this plugin's
+        // annotation. The host still composes the independently valid turn.
+        if (context.signal.aborted) throw error;
+    }
+    context.signal.throwIfAborted();
+    return result;
 };
+
+export const reviewAgentRunnerFactory = Object.freeze({
+    module: './agent/runtime.js',
+    export: 'createReviewAgentRuntime',
+    runtimeApiVersion: 1,
+}) satisfies AgentSessionRunnerFactoryLocatorV1;

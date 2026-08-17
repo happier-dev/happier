@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 import { isRecord } from './records.js';
 
 export type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;

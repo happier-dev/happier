@@ -11,5 +11,3 @@ export type PluginOperationAvailability =
     | Readonly<{ status: 'available' }>
     | Readonly<{ status: 'unavailable'; code: string; remediation?: PluginRemediationData }>
     | Readonly<{ status: 'denied'; code: string; remediation?: PluginRemediationData }>;
-
-export type PluginServiceAvailability = PluginOperationAvailability;

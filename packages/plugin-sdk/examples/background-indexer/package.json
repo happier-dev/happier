@@ -1,0 +1,30 @@
+{
+  "name": "@example/happier-background-indexer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Public-only daemon database and background-service plugin example.",
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
+  "keywords": [
+    "happier-plugin"
+  ],
+  "files": [
+    "dist",
+    ".happier-plugin"
+  ],
+  "scripts": {
+    "build": "happier plugins author build .",
+    "typecheck": "happier plugins author typecheck .",
+    "test": "happier plugins test .",
+    "pack:plugin": "happier plugins pack ."
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.0.10",
+    "@typescript/native": "npm:typescript@7.0.2"
+  }
+}

@@ -14,32 +14,90 @@ The approved first public version is `0.1.0`. Every public path is
 - preview status does not waive correctness, installability, lifecycle cleanup,
   security disclosure, examples, or documentation.
 
+The generated API inventory uses `preview` for author-visible symbols (apart
+from structured `deprecated` rows); it is release posture, not a per-symbol
+maturity claim. For each public family's availability and maintained proving
+consumer or explicit deferred disposition, use the generated
+`capability-matrix.json`.
+
 The workspace package remains `private: true` and version `0.0.0` while the
 publication gates are open. Do not present a workspace build as a published SDK.
 
-## Candidate public paths
+## Cross-plugin protocol authoring
 
-The current G5 candidate has eight normal public paths:
+Use the [SDK protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution)
+whenever an SDK author surface, Host Event, or cross-plugin business protocol
+changes. A wire epoch is semantic and independent from an npm package version;
+an optional input is safe only if an older implementation can ignore it without
+claiming false success. New union members are safe only for explicitly skippable
+bounded presentation lists—not identity, authority, presence, permission,
+pagination, retry, or mutation-outcome unions.
 
-```text
-@happier-dev/plugin-sdk
-@happier-dev/plugin-sdk/manifest
-@happier-dev/plugin-sdk/runtime
-@happier-dev/plugin-sdk/agent-runtime
-@happier-dev/plugin-sdk/ui
-@happier-dev/plugin-sdk/ui/client
-@happier-dev/plugin-sdk/ui/build
-@happier-dev/plugin-sdk/testing
-```
+Independently published business protocols use
+`@happier-dev/<feature>-protocol` with explicit `/v1` and `/testing/v1` exports.
+They contain schemas, types, helpers, and conformance fixtures, but no host
+runtime, persistence, provider implementation, credential materialization,
+polling, private `@happier-dev/protocol` dependency, or floating
+`latest`/`current`/`default` alias. Compatible copies use serialized protocol
+identity/version and runtime validation, not JavaScript object identity. Each
+feature-protocol package keeps a short README and nearest `AGENTS.md` that name
+its domain owner and link to the doctrine rather than reproducing it.
 
-Other author-facing exported paths are explicitly under `experimental/*` and
-are not normal authoring promises. This surface remains on prepublication hold until the
-consolidated API receives explicit approval. The candidate root convenience
-surface is limited to
-`JsonValue`, `Disposable`, `PluginApi`, `PluginInvocationContext`,
-`PluginDiagnosticData`, `PluginErrorData`, and `PluginError`.
+## Cross-plugin contribution authoring
 
-## Create a plugin
+Use a **cross-plugin contribution protocol** when a target plugin admits
+specific existing Actions from another plugin through named operation roles. The
+host owns admission, currentness, observation, and execution; a contributor
+neither self-registers nor gives the target a callback, Action scan, or second
+dispatcher.
+
+Ordinary target and contributor packages import the feature-owned protocol
+value. For example, a Channels target calls
+`ConversationProvidersContributionProtocolV1.point()`, while a provider calls
+`.contribute()` and binds its arbitrary local Action ids through
+`protocol.operations.<role>.bind(localId)`. The operation's immutable
+`.declaration` supplies the role's input mode, result schema, Action surfaces,
+and danger level; do not copy them into a second map or read them back from a
+raw manifest. A contributor-defined input remains the contributor's own Action
+schema.
+
+Descriptor, operation, and embedded-surface roles are public authoring contracts.
+The target reads its own admitted snapshot with
+`context.services.targetedContributions.observeForSelf(...)`, then renders a
+returned surface through React `TargetedSurface` or the protocol role's
+declarative `.node(...)` helper. Those are two authoring forms over the same
+host surface owner, not separate renderer or currentness paths. The
+[cross-plugin contribution guide](../../apps/docs/content/docs/plugins/guides/cross-plugin-contributions.mdx)
+shows both forms.
+
+Only a reusable feature-protocol package imports the cross-plugin constructors
+`defineContributionProtocol` and `defineContributionPoint` from
+`@happier-dev/plugin-sdk/contributions`, plus validator-neutral schema
+constructors from `@happier-dev/plugin-sdk/protocol`. It needs an explicit
+versioned feature contract and maintained target/contributor proof; ordinary
+authors consume that feature-owned value rather than creating a parallel
+protocol.
+
+The two browser-safe authoring entrypoints keep their owners explicit. The
+public-but-not-feature-protocol classifications are:
+
+- `pluginJsonValuesEqual`: `feature-or-host-implementation`; it is the
+  canonical structural JSON comparison primitive for implementation code, not
+  an ordinary feature-protocol declaration dependency. A public
+  `@happier-dev/<feature>-protocol/testing/v1` conformance fixture may use it
+  only to compare an emitted declaration with its canonical schema; root and
+  `/v1` production sources remain denied.
+- `ContributionSurfaceNodeInput`: `target-authoring`; it types a target's
+  `.node(...)` helper rather than the feature-owned protocol that declares a
+  surface role.
+
+Plugin code remains trusted package code under the one whole-package **Install
+& Trust** decision. Protocol schemas and role bounds provide deterministic
+interoperability and currentness; they are not a sandbox. Read the full
+[cross-plugin contribution guide](../../apps/docs/content/docs/plugins/guides/cross-plugin-contributions.mdx)
+before defining a feature protocol or binding a contributor.
+
+## 1. Create and develop a plugin
 
 Use the CLI scaffold rather than copying repository fixtures:
 
@@ -49,7 +107,27 @@ cd my-plugin
 happier plugins dev
 ```
 
+`plugins dev` prepares declared dependencies automatically. Do not run
+`happier plugins author install .` before this normal create-to-dev loop;
+`author install` is reserved for an external-author fixture. When the SDK must
+resolve through an approved registry origin, use
+`happier plugins dev --sdk-registry <origin>`.
+
 Use `--id com.example.my-plugin` when you need a publisher-owned identifier.
+The same beginner command creates an executable UI package when the product
+needs one:
+
+```bash
+happier plugins create my-native-plugin --ui reactNative
+happier plugins create my-hosted-plugin --ui hostedWeb
+```
+
+The React Native selection creates one public `@happier-dev/plugin-ui` surface
+and its declared web, iOS, and Android artifacts. The hosted selection creates
+an isolated Vite artifact and the canonical guest bootstrap client. The
+selection itself does not advertise a packaged runtime platform; the host may
+load that artifact only after its platform-specific frame adapter is present
+and verified.
 The generated package scripts use the managed lower-level author checks. After
 developing, build, test, and pack the same project:
 
@@ -61,6 +139,14 @@ happier plugins pack .
 
 Focused typecheck diagnostics remain available through
 `happier plugins author typecheck .`.
+`happier plugins doctor .` resolves the exact author entry, evaluates it once,
+and reports import failures or observable evaluation slowness. Doctor output is
+diagnostic; it does not claim that repeated evaluation proves purity or a
+reproducible build.
+
+Installed SDK packages include maintained public patterns under
+`node_modules/@happier-dev/plugin-sdk/examples/`. Start from the smallest
+matching example and use the generated `API.md` as the import authority.
 
 Install the emitted npm-compatible tarball with:
 
@@ -72,61 +158,125 @@ Use the archive path emitted by `pack`; its exact filename can vary with package
 metadata and `--out`. In an interactive terminal the daemon presents the exact
 package facts before the single **Install and trust** decision.
 
+`plugins dev` is the normal automatic watch-and-replace loop. For a deliberate
+watcher-free update, use the same development-source path and reload from the
+plugin root:
+
+```bash
+happier plugins install . --dev
+happier plugins reload
+```
+
+When the current directory is ambiguous or you run the command elsewhere, name
+the intended development plugin explicitly: `happier plugins reload
+com.example.my-plugin`. Both paths use daemon-owned trust, validation,
+generation replacement, and cleanup; a rejected change keeps the last accepted
+generation serving.
+
 `happier plugins test .` runs the scaffold's focused
 `test/index.test.mjs` suite through Happier's managed JavaScript runtime. The
-generated test activates `dist/index.js` with the public testkit and invokes
-the declared `save-note` action without starting a daemon or mutating installed
-plugin state.
+generated test loads `dist/index.js`, passes its exported `manifest` and
+`activate` through the public testkit, and invokes the declared `save-note`
+action without starting a daemon or mutating installed plugin state.
 `happier plugins test . --packed` packs the project, installs and trusts it in
 an isolated disposable daemon home, activates it, invokes a safe empty-input
 CLI action when available, restarts the daemon, and invokes it again. It never
 uses or mutates the user's installed plugin state.
 
-## Cold manifest
+## 2. Author a code-defined plugin
 
-The external source of truth is `.happier-plugin/plugin.json`. It is JSON, is
-validated before executable code loads, and declares identity, entrypoints,
-host access, and contributions. Do not import plugin code to construct it.
+> Source-stage note: the authoring helper, public workspace exports, exact entry
+> resolver, evaluator, doctor, static pack paths, and `dev` install-admission
+> integration are implemented in the current tree. The package is still private
+> and unpublished, so this documents the current source contract rather than an
+> approved public release.
 
-```json
-{
-  "schemaVersion": 2,
-  "id": "com.example.echo",
-  "version": "0.1.0",
-  "displayName": "Echo",
-  "engines": { "happier": "^0.2.0" },
-  "runtime": { "apiVersion": 1 },
-  "entrypoints": {
-    "daemon": "./dist/index.js",
-    "development": "./src/index.ts"
+A simple development plugin is one `.ts` or `.mts` file. A directory plugin
+uses exactly `src/index.ts` or `index.ts`; having both is an error. Daemon entry
+modules do not use `.tsx`, CommonJS, or default-export activation.
+
+```ts
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import {
+  defineProtocolObject,
+  defineProtocolString,
+} from '@happier-dev/plugin-sdk/protocol';
+
+export const { manifest, activate } = definePlugin({
+  id: 'com.example.echo',
+  version: '0.1.0',
+  actions: {
+    echo: {
+      title: 'Echo',
+      inputSchema: defineProtocolObject({
+        text: defineProtocolString({ minLength: 1 }),
+      }, { policy: 'closed' }),
+      async run(input) {
+        return input;
+      },
+    },
   },
-  "contributes": {
-    "actions": [{
-      "id": "echo",
-      "title": "Echo",
-      "scopes": ["global"],
-      "surfaces": ["agent", "cli", "mcp"],
-      "placement": "commandPalette",
-      "dangerLevel": "safe",
-      "inputSchema": { "type": "object" },
-      "resultSchema": { "type": "object" }
-    }]
-  }
-}
+});
 ```
 
-## Activation and invocation
-
-The daemon entrypoint exports a named `activate(api)` function. Registration is
-static and returns `void`. Successful activation may return one cleanup
+`definePlugin` returns the ordinary named `manifest` and `activate` ABI. It is
+authoring sugar, not a second runtime. Generated registrations run before the
+optional `setup(api)` callback, and `setup` may return the module's one cleanup
 function.
+
+Daemon activation has an internal 30-second deadline for asynchronous
+`activate(api)` settlement. This deadline is host policy, not plugin
+configuration. It cannot preempt synchronous CPU or blocking work in the shared
+daemon process, so activation code should register promptly and defer business
+work until invocation.
+
+Development evaluates the selected module only after source-root trust. Pack
+evaluates the same resolved author module once and serializes its canonical
+projection to `.happier-plugin/plugin.json`. Installed and marketplace
+discovery read that generated JSON and never execute plugin code.
+
+## 3. Test, pack, and exercise the real host boundary
+
+```ts
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import * as module from '../src/index.js';
+
+const plugin = await createPluginTestkit({ manifest: module.manifest, module });
+await plugin.invokeAction('echo', { text: 'hello' });
+await plugin.dispose();
+```
+
+The testkit validates projection, activation, registrations, actions, and
+cleanup without mutating installed state. It is not packed/install evidence.
+Run the source suite first, then the packed daemon boundary for claims about an
+installed plugin:
+
+```bash
+happier plugins test .
+happier plugins test . --packed
+happier plugins pack .
+```
+
+## Manual ABI (advanced conformance)
+
+The manual ABI remains supported for broad/conformance examples: export a
+canonical named `manifest` plus a named `activate(api)` function. It is not the
+ordinary scaffold path. Registration is static and returns `void`; successful
+activation may return one cleanup function. The maintained
+`examples/public-authoring/` package is the broad code-defined conformance
+reference. Prefer `definePlugin(...)` for a normal author package.
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
 export function activate(api: PluginApi) {
   api.actions.register('echo', async (input, context) => {
-    await context.ui.notify('Echoed', { severity: 'info' });
+    const confirmation = await context.services.interactions.confirm({
+      kind: 'confirmation',
+      message: 'Echo this input?',
+    }, { signal: context.signal });
+    if (confirmation.status !== 'approved') return;
+    await context.ui?.notify('Echoed', { severity: 'info', signal: context.signal });
     return input;
   });
 
@@ -137,29 +287,45 @@ export function activate(api: PluginApi) {
 ```
 
 Handlers receive `PluginInvocationContext`, including plugin and contribution
-identity, cancellation, bounded services, and `context.ui`. Fully qualified
-contribution ids use `pluginId/family/localId` slash form; for this action,
+identity, cancellation, bounded services, and optional presentation-only
+`context.ui`. Fully qualified contribution ids use `pluginId/family/localId`
+slash form; for this action,
 `com.example.echo/actions/echo`.
 
-`context.ui` is the simple author-facing intent facade:
+`context.services.interactions` owns present-user requests and the canonical
+approval queue. Each author request has an explicit `kind`; host-generated
+results carry `requestId` and the matching `kind`:
 
-- `requestApproval({ title, description?, subject: { kind: 'tool', name, input },
-  allowSessionPersistence? })` returns `approved`, `denied`, `cancelled`, or
-  `unavailable`; `approved` reports `once` or, only when the request allowed it,
-  `session` persistence;
-- `askQuestions(questions, { title? })` returns `answered`, `cancelled`, or
-  `unavailable`;
-- `confirm(message, { title? })` resolves to a boolean after a host decision,
-  or rejects with `PluginError` code `plugin_ui_cancelled` or
-  `plugin_ui_unavailable` when no decision is available;
+- `requestApproval({ kind: 'approval', title, description?, subject,
+  allowSessionPersistence? })` returns `approved`, `declined`, or a terminal
+  status. An approval can carry `persistence: 'once' | 'session'`, but `session`
+  is possible only when the author allowed it;
+- `askQuestions({ kind: 'questions', title?, questions })` returns `answered`
+  with typed answers, or a terminal status;
+- `confirm({ kind: 'confirmation', title?, message })` returns `approved`,
+  `declined`, or a terminal status—it is not a boolean;
+- `approvals.request/get/list/watch` accesses the host-stamped canonical
+  approval queue.
+
+The exact terminal statuses are `userCancelled`, `requesterAborted`, `timedOut`,
+`sessionEnded`, `generationRetired`, `hostRestarted`, and `unavailable`. They are
+returned in the kind-specific result unions, rather than being remapped into
+legacy interaction `PluginError` codes.
+
+`context.services.sessions.current.setDisplayTitle(title)` is the bounded,
+current-session capability for durable Session titles. Handles from
+`sessions.get(id)` intentionally do not expose it.
+
+When present, `context.ui` owns only invocation-local presentation:
+
 - `notify(message, { severity? })` reports an invocation-local message;
-- `status.set`, `widget.set`, `title.set`, and `composer.replace` update
-  host-owned presentation state.
+- `status.set`, `widget.set`, and `composer.replace` update host-owned
+  presentation state.
 
 The host owns request identity, correlation, cancellation, currentness,
-reconnect state, and present-user custody. Authors supply UI intent and typed
-answers, not transport, provider-specific interaction metadata, or broader
-workspace/account persistence.
+reconnect state, and present-user custody. Authors supply typed intent, not
+transport, provider-specific interaction metadata, host request stamps, or
+broader workspace/account persistence.
 
 ## Connected Accounts
 
@@ -171,22 +337,29 @@ The stable consumer methods are:
 - `requestSelection({ purpose, reason })` for host-owned selection;
 - `materialize(purpose, request)` for a point-in-time header, environment, or
   file credential snapshot;
+- `listAccounts({ purpose, limit? })` for bounded non-secret metadata from the
+  exact bound account or the bound group's current enabled members;
+- `materializeListedAccount({ purpose, account, materialization })` for a
+  revalidated snapshot of one account from that same bound target;
 - `watch(purpose, listener)` for generation-local opaque `{ kind: 'resync' }`
   invalidation.
 
 Only `requestSelection()` requires an available current-session interaction
-owner. It fails typed with `plugin_ui_cancelled` or `plugin_ui_unavailable`
+owner. It fails typed with `plugin_interaction_cancelled` or `plugin_interaction_unavailable`
 when the host cannot complete that user decision. An already-bound,
 currently authorized purpose can still use `getBinding()`, `materialize()`,
-and `watch()` outside a session; none of these methods exposes the
-host-private account inventory.
+`listAccounts()`, `materializeListedAccount()`, and `watch()` outside a session;
+these methods expose only the exact purpose-bound target, never the host-private
+account inventory.
 
 Actions and hooks use the ID of their existing `connectedAccounts` HostAccess
 request as the purpose. `select` authorizes selection; `use` authorizes binding
-inspection, materialization, and watch. Agent contributions declare their
-long-lived purposes in `connectedAccounts[]`. A plugin cannot enumerate
-accounts, choose a group member, refresh credentials, report account failures,
-or observe Connected Services generations/revisions through this API.
+inspection, listing, materialization, and watch. Agent contributions declare
+their long-lived purposes in `connectedAccounts[]`; a declaration may include a
+localized title for host presentation, but its raw purpose ID remains
+machine-only. A plugin cannot enumerate unrelated accounts, choose a group
+member, refresh credentials, report account failures, or observe Connected
+Services generations/revisions through this API.
 
 Materialized credentials must not be persisted or emitted. On a resync,
 discard reliance on the previous snapshot and materialize again. See the
@@ -251,60 +424,97 @@ origins, or permissions. Producer network authority comes only from the
 existing manifest `network` HostAccess request for the exact
 `connectedAccountOrigin`.
 
-`askQuestions` accepts a non-empty question tuple. These are the exact
-supported-preview question and answer shapes:
+`askQuestions` uses the exact `InteractionTransientQuestionsAuthorRequestV1`
+shape: a non-empty `questions` array under `kind: 'questions'`. The question
+types are `text`, `singleChoice`, and `multipleChoice`; author `required`,
+`allowCustom`, and choice labels are optional.
 
 ```ts
-type Question =
-  | Readonly<{
-      id: string;
-      prompt: string;
-      type: 'text';
-      required?: boolean;
-    }>
-  | Readonly<{
-      id: string;
-      prompt: string;
-      type: 'single' | 'multiple';
-      required?: boolean;
-      choices: readonly [
-        Readonly<{ id: string; label?: string; description?: string }>,
-        ...Readonly<{ id: string; label?: string; description?: string }>[],
-      ];
-      allowCustom?: boolean;
-    }>;
+const result = await context.services.interactions.askQuestions({
+  kind: 'questions',
+  title: 'Choose a destination',
+  questions: [{
+    id: 'destination',
+    prompt: 'Where should this publish?',
+    type: 'singleChoice',
+    required: true,
+    choices: [
+      { id: 'staging', label: 'Staging' },
+      { id: 'production', label: 'Production' },
+    ],
+  }],
+}, { signal: context.signal });
 
-type Questions = readonly [Question, ...Question[]];
-
-type ChoiceAnswer =
-  | Readonly<{ type: 'choice'; choiceId: string }>
-  | Readonly<{ type: 'custom'; value: string }>;
-
-type QuestionAnswer =
-  | Readonly<{ type: 'text'; value: string }>
-  | Readonly<{ type: 'single'; answer: ChoiceAnswer }>
-  | Readonly<{
-      type: 'multiple';
-      answers: readonly [ChoiceAnswer, ...ChoiceAnswer[]];
-    }>;
+if (result.status === 'answered') {
+  const answer = result.answers.destination;
+  if (answer?.kind === 'singleChoice' && answer.answer.kind === 'choice') {
+    await publishTo(answer.answer.choiceId);
+  }
+}
 ```
 
-An answered result is
-`{ status: 'answered', answers: Readonly<Record<string, QuestionAnswer>> }`,
-keyed by question `id`. Cancellation is
-`{ status: 'cancelled', diagnostic?: PluginDiagnosticData }`; unavailability is
-`{ status: 'unavailable', diagnostic: PluginDiagnosticData }`. Custom values
-are the provider-neutral “Other” answer; provider-native adapters preserve
-their own answer semantics behind this boundary.
+Text answers are `{ kind: 'text', value }`; single-choice and multiple-choice
+answers use `kind: 'singleChoice'` and `kind: 'multipleChoice'`. A choice
+selection is `{ kind: 'choice', choiceId }` or `{ kind: 'custom', value }`.
+Custom values are the provider-neutral “Other” answer; provider-native adapters
+preserve their own answer semantics behind this boundary.
 
 ## Agent runtimes
 
 Register native `AgentRuntime` implementations from
-`@happier-dev/plugin-sdk/agent-runtime`. A runtime supplies a `sessions` factory,
+`@happier-dev/plugin-sdk/agents/runtime`. A runtime supplies a `sessions` factory,
 an `executionRuns` factory, or both. Happier owns shared session and turn
 lifecycle, input custody, transcript persistence, activity, and process-terminal
 state; the plugin supplies Agent-native commands, codecs, correlation, and
 authoritative evidence.
+
+Choose the task before writing a factory:
+
+- declarative ACP uses `runtime.kind: 'acp'` and cold transport data only—no
+  factory, registration, or locator;
+- custom execution-run-only Agents register an `executionRuns` factory and have
+  no Session runner locator;
+- custom persistent Session Agents register a factory and require a distinct
+  named `sessionRunnerFactory` leaf that exports that same factory; and
+- composite Agents expose both facets, but still use the Session runner leaf.
+
+The daemon activation entry calls `activate`; the Session runner imports only
+the named leaf. They can run in different realms, so neither relies on a
+process-global singleton. The maintained
+`examples/advanced-package-root/` reference is a compiled package-root example
+with a custom Session Agent, External Sessions companion, Connected Account
+purpose, managed Provider, background runner, and public-testkit check.
+
+## Task guides
+
+The ordinary author journey continues in the task-first guides under
+`apps/docs/content/docs/plugins/guides/`:
+
+- `providers.mdx` distinguishes descriptor-only Providers from managed local
+  Provider lifecycle/adoption.
+- `scm.mdx` distinguishes forge hosting Providers from repository backends.
+- `voice.mdx` distinguishes conversation, STT, and TTS.
+- `background-services.mdx` covers daemon-generation background work.
+- `invocation-services.mdx` maps actions, events, HTTP, interactions,
+  Providers, resources, and MCP to their one context service owner.
+
+## Voice author paths
+
+Voice has three realm-correct public paths:
+
+```text
+@happier-dev/plugin-sdk/voice
+@happier-dev/plugin-sdk/voice/client
+@happier-dev/plugin-sdk/voice/speech
+```
+
+`/voice` owns realm-neutral declarations, credentials, and the discriminated
+runtime registration contract. Conversation leaves import browser/mobile
+runtime types from `/voice/client`; daemon STT/TTS leaves import speech runtime
+types from `/voice/speech`. Each binds through
+`api.voiceProviders.register(localId, runtime)`. Give independently selectable
+STT and TTS implementations separate contribution ids. The similarly named UI
+client path is only the hosted-web bootstrap and is not a Voice runtime API.
 
 ## Plugin UI
 
@@ -316,31 +526,42 @@ authoritative evidence.
 Hosted web isolation does not sandbox daemon code. Installation is a
 whole-package **Install & Trust** decision.
 
-Hosted web code constructs its client from the injected bootstrap at the exact
-public path:
+Hosted web code receives its whole render context from the injected bootstrap
+at the exact public path:
 
 ```ts
-import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
+import { createPluginUiRenderContext } from '@happier-dev/plugin-sdk/ui/client';
 
-const host = await createPluginUiHostApiClient();
+const context = await createPluginUiRenderContext();
+const host = context.hostApi;
 ```
 
-React Native code instead exports a `PluginUiRenderSurface` from
-`@happier-dev/plugin-sdk/ui`. The host passes its `PluginUiRenderContext`,
-including the already-bound `hostApi`, directly; React Native renderers do not
-use the hosted-web bootstrap client.
+The context is host-issued and is cancelled when its surface retires. Do not
+parse launch input or subpaths from a frame URL. React Native code instead
+exports a surface through the public semantic package:
+
+```tsx
+import { defineUiSurface } from '@happier-dev/plugin-ui';
+
+export const renderSurface = defineUiSurface(function PluginSurface() {
+  return null;
+});
+```
+
+`defineUiSurface` installs the one provider around the host's
+`RenderContext`; React Native renderers do not use the hosted-web bootstrap
+client or construct another provider.
 
 Build UI with public helpers from `@happier-dev/plugin-sdk/ui/build`; the host
 verifies the emitted artifact manifest and content before use.
 
-## Testing
+## Testkit reference
 
 ```ts
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import manifest from '../.happier-plugin/plugin.json';
 import * as module from '../src/index';
 
-const plugin = await createPluginTestkit({ manifest, module });
+const plugin = await createPluginTestkit({ manifest: module.manifest, module });
 await plugin.invokeAction('echo', { text: 'hello' });
 await plugin.dispose();
 ```
@@ -351,8 +572,9 @@ packing and exercising install, trust, development, update, UI, and uninstall
 flows in a real host.
 
 Canonical author docs live in `apps/docs/content/docs/plugins/`. Source examples
-under this package are compile fixtures; the CLI scaffold and cold manifest are
-the external authoring source of truth.
+under this package are compile fixtures; the CLI scaffold's code-defined module
+is the external development authoring source of truth, while packed and installed
+discovery consumes its generated cold manifest.
 
 ## Repository validation
 

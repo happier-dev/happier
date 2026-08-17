@@ -1,11 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
   normalizeDetectedMcpServerV1,
   type DetectedMcpServerV1,
+  type McpServerTransportV1,
 } from './mcp.js';
+import type { PluginExecSpawnRequest } from './services/io.js';
+import type {
+  PluginMcpClient,
+  PluginMcpToolPage,
+} from './services/resources.js';
+import type { PluginMcpListToolsResult } from './activation.js';
+import type { PluginMcpServerRuntime } from './activation.js';
+
+type StdioMcpTransport = Extract<McpServerTransportV1, { kind: 'stdio' }>;
+type ManagedMcpTransport = Extract<McpServerTransportV1, { kind: 'managed' }>;
 
 describe('normalizeDetectedMcpServerV1', () => {
+  it('uses one canonical tool-page result across MCP clients and server runtimes', () => {
+    expectTypeOf<Awaited<ReturnType<PluginMcpClient['listTools']>>>()
+      .toEqualTypeOf<PluginMcpToolPage>();
+    expectTypeOf<PluginMcpListToolsResult>().toEqualTypeOf<PluginMcpToolPage>();
+    expectTypeOf<Awaited<ReturnType<PluginMcpServerRuntime['listTools']>>>()
+      .toEqualTypeOf<PluginMcpToolPage>();
+  });
+
+  it('composes stdio with the canonical exec request and exposes no managed transport arm', () => {
+    expectTypeOf<StdioMcpTransport['launch']>().toEqualTypeOf<PluginExecSpawnRequest>();
+    expectTypeOf<ManagedMcpTransport>().toEqualTypeOf<never>();
+  });
   it('returns canonical detected MCP servers from valid provider discovery payloads', () => {
     const normalized = normalizeDetectedMcpServerV1({
       provider: 'opencode',

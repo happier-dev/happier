@@ -4,13 +4,13 @@ import type { AgentSessionRuntime } from '../../agentRuntime/session.js';
 import {
     assertExperimentalAgentSessionRealtimeRuntime,
     type AgentSessionRealtimeAvailability,
+    type AgentSessionRealtimeConversation,
     type AgentSessionRealtimeHandle,
     type AgentSessionRealtimeLifecycleEvent,
     type AgentSessionRealtimeStartInput,
     type AgentSessionRealtimeStartResult,
     type AgentSessionRealtimeStopResult,
     type ExperimentalAgentSessionRealtimeRuntime,
-    type PluginVoiceAgentSessionRealtimeService,
 } from './realtime.js';
 
 describe('experimental Agent session realtime contract', () => {
@@ -111,18 +111,11 @@ describe('experimental Agent session realtime contract', () => {
         expectTypeOf(event).not.toHaveProperty('cancelResponse');
     });
 
-    it('owns the exact bound Plugin-facing service without graduating it', () => {
-        expectTypeOf<PluginVoiceAgentSessionRealtimeService>().toEqualTypeOf<Readonly<{
-            inspect(
-                options?: Readonly<{ signal?: AbortSignal }>,
-            ): Promise<AgentSessionRealtimeAvailability>;
-            start(
-                input: AgentSessionRealtimeStartInput,
-                options?: Readonly<{ signal?: AbortSignal }>,
-            ): Promise<AgentSessionRealtimeStartResult>;
-        }>>();
-        expectTypeOf<keyof PluginVoiceAgentSessionRealtimeService>().toEqualTypeOf<
+    it('owns one exact Agent realtime conversation contract', () => {
+        expectTypeOf<keyof AgentSessionRealtimeConversation>().toEqualTypeOf<
             'inspect' | 'start'
         >();
+        expectTypeOf<ExperimentalAgentSessionRealtimeRuntime['realtimeConversation']>()
+            .toEqualTypeOf<AgentSessionRealtimeConversation>();
     });
 });

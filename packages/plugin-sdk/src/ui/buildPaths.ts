@@ -34,6 +34,9 @@ export function readRelativeBuildPath(value: string, field: string): string {
         normalized.length === 0
         || normalized.startsWith('/')
         || normalized.includes('\\')
+        // A drive-qualified path escapes `projectRoot` on Windows even though
+        // it does not begin with a forward slash on POSIX hosts.
+        || /^[A-Za-z]:/u.test(normalized)
         || segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
     ) {
         throw new Error(`${field} must be a relative path without parent traversal`);

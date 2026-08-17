@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 export {
   REVIEW_SCM_SCOPE_INPUT_KEY,
   ReviewScmScopeBaseRefSourceV1Schema,

@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { PluginApi } from '../activation.js';
 import type { AgentRuntimeFactory } from '../agentRuntime/index.js';
@@ -7,7 +7,7 @@ import type {
     AgentExternalSessionTakeoverContribution,
     AgentExternalSessionTakeoverResolveLaunchRequest,
 } from '../sessions/externalSessionTakeover.js';
-import { createPluginRegistrationScope } from './registrationScope.js';
+import { createPluginRegistrationScope } from '../host/registration/index.js';
 
 const factory = (async () => ({
     sessions: {
@@ -41,6 +41,17 @@ const externalSessions: AgentExternalSessionsContribution = {
     }),
 };
 
+function externalSessionsSnapshotShape() {
+    return {
+        resolveSource: expect.any(Function),
+        listCandidates: expect.any(Function),
+        resolveLinkIdentity: expect.any(Function),
+        resolveLinkedIdentity: expect.any(Function),
+        pageTranscript: expect.any(Function),
+        readAfterTranscript: expect.any(Function),
+    };
+}
+
 const takeover: AgentExternalSessionTakeoverContribution = {
     resolveLaunch: async () => ({
         ok: true,
@@ -55,7 +66,8 @@ function scope(
 ) {
     return createPluginRegistrationScope({
         pluginId: 'acme.external',
-        rights: [{ family: 'agents', localId: 'assistant', requiredFields }],
+        target: { realm: 'daemon' },
+        rights: [{ family: 'agents', localId: 'assistant', target: { realm: 'daemon' }, requiredFields }],
     });
 }
 
@@ -112,8 +124,8 @@ describe('Agent External Session takeover registration staging', () => {
             localId: 'assistant',
             value: {
                 ...(order.includes('runtime') ? { factory } : {}),
-                externalSessions,
-                externalSessionTakeover: takeover,
+                externalSessions: externalSessionsSnapshotShape(),
+                externalSessionTakeover: { resolveLaunch: expect.any(Function) },
             },
         }]);
     });
@@ -135,7 +147,9 @@ describe('Agent External Session takeover registration staging', () => {
         if (registration?.family !== 'agents') {
             throw new Error('Expected Agent registration');
         }
-        expect(registration.value.externalSessionTakeover).toEqual(takeover);
+        expect(registration.value.externalSessionTakeover).toEqual({
+            resolveLaunch: expect.any(Function),
+        });
         expect(registration.value.externalSessionTakeover).not.toBe(mutable);
 
         const duplicate = scope();
@@ -149,9 +163,48 @@ describe('Agent External Session takeover registration staging', () => {
         )).toThrow(/duplicate Agent External Session takeover/u);
     });
 
+    it('captures class, prototype, and accessor-backed callbacks with the author receiver', async () => {
+        class StructuralTakeover implements AgentExternalSessionTakeoverContribution {
+            readonly ignoredByRegistration = true;
+            readonly owner = 'structural-takeover';
+
+            get resolveLaunch() {
+                return this.resolveLaunchImplementation;
+            }
+
+            resolveLaunchImplementation(_request: AgentExternalSessionTakeoverResolveLaunchRequest) {
+                return Promise.resolve({
+                    ok: true as const,
+                    value: { directory: '/workspace', owner: this.owner },
+                });
+            }
+        }
+        const contribution = new StructuralTakeover();
+        const registrationScope = scope();
+        registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
+        registrationScope.api.agents.registerExternalSessionTakeover(
+            'assistant',
+            contribution,
+        );
+
+        const [registration] = registrationScope.commit();
+        expect(registration?.family).toBe('agents');
+        if (registration?.family !== 'agents' || !registration.value.externalSessionTakeover) {
+            throw new Error('Expected Agent External Session takeover snapshot');
+        }
+        const snapshot = registration.value.externalSessionTakeover;
+        expect(snapshot).not.toBe(contribution);
+        expect(Object.isFrozen(snapshot)).toBe(true);
+        expect(snapshot).not.toHaveProperty('ignoredByRegistration');
+        await expect(Reflect.apply(snapshot.resolveLaunch, { owner: 'foreign' }, [])).resolves.toMatchObject({
+            value: { directory: '/workspace', owner: 'structural-takeover' },
+        });
+    });
+
     it('rejects undeclared, factory-only, and takeover-without-External-Sessions registrations', () => {
         const undeclared = createPluginRegistrationScope({
             pluginId: 'acme.external',
+            target: { realm: 'daemon' },
             rights: [],
         });
         expect(() => undeclared.api.agents.registerExternalSessionTakeover(
@@ -179,28 +232,30 @@ describe('Agent External Session takeover registration staging', () => {
     it.each([
         {
             label: 'missing operation',
-            value: {},
-        },
-        {
-            label: 'unknown operation',
-            value: { ...takeover, spawn: vi.fn() },
+            value: new Proxy(takeover, {
+                get(target, property, receiver) {
+                    return property === 'resolveLaunch'
+                        ? undefined
+                        : Reflect.get(target, property, receiver);
+                },
+            }),
         },
         {
             label: 'non-function operation',
-            value: { resolveLaunch: null },
-        },
-        {
-            label: 'accessor operation',
-            value: Object.defineProperty({}, 'resolveLaunch', {
-                enumerable: true,
-                get: () => takeover.resolveLaunch,
+            value: new Proxy(takeover, {
+                get(target, property, receiver) {
+                    return property === 'resolveLaunch'
+                        ? null
+                        : Reflect.get(target, property, receiver);
+                },
             }),
         },
-    ])('rejects a malformed strict contribution: $label', ({ value }) => {
+    ])('rejects a malformed required contribution: $label', ({ value }) => {
         const registrationScope = scope();
-        expect(() => registrationScope.api.agents.registerExternalSessionTakeover(
+        registrationScope.api.agents.registerExternalSessionTakeover(
             'assistant',
-            value as AgentExternalSessionTakeoverContribution,
-        )).toThrow(/invalid Agent External Session takeover/u);
+            value,
+        );
+        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
     });
 });

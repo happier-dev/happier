@@ -1,0 +1,173 @@
+import { describe, expect, expectTypeOf, it } from 'vitest';
+
+import { definePlugin } from '../definePlugin.js';
+import { defineBuildConfig } from './build/config.js';
+import { buildUiSurfaceTargets, defineUiSurface } from './surface.js';
+
+if (false) {
+    /* @sdk-negative-type-case:src-ui-surface-test-ts-right-pane-app:cmlnaHRQYW5lIGhhcyBubyBhcHAgdGFyZ2V0IGJpbmRpbmc7IHRoZSBzaG9ydGhhbmQgbXVzdCBwcmVzZXJ2ZSB0aGUgUHJvdG9jb2wgcmVsYXRpb24u:ZGVmaW5lVWlTdXJmYWNlKHsKICAgICAgICBpZDogJ2ludmFsaWQtYXBwLXBhbmUnLAogICAgICAgIHBsYWNlbWVudDogJ3JpZ2h0UGFuZScsCiAgICAgICAgdGFyZ2V0OiB7IGtpbmQ6ICdhcHAnIH0sCiAgICAgICAgcmVuZGVyZXI6IHsga2luZDogJ2hvc3RlZFdlYicgfSwKICAgICAgICBidWlsZDogeyBlbnRyeTogJ3VpL2ludmFsaWQudHMnIH0sCiAgICB9KTs */
+    void undefined; /* @sdk-negative-type-case-end */
+}
+
+describe('defineUiSurface', () => {
+    it('projects one executable surface declaration into matching cold manifest and build targets', () => {
+        const app = defineUiSurface({
+            id: 'home',
+            placement: 'appPage',
+            title: 'Home',
+            renderer: {
+                kind: 'reactNative',
+                requiredHostMethods: ['context', 'executeAction'],
+            },
+            build: {
+                entry: 'ui/HomeSurface.tsx',
+                platforms: ['web', 'ios', 'android'],
+                module: {
+                    containerName: 'acme_home',
+                    modulePath: './HomeSurface',
+                    exportName: 'renderSurface',
+                },
+            },
+        });
+        const settings = defineUiSurface({
+            id: 'settings',
+            placement: 'settingsPage',
+            group: { kind: 'host', id: 'general' },
+            title: 'Settings',
+            renderer: {
+                kind: 'hostedWeb',
+                requiredHostMethods: ['context'],
+            },
+            build: {
+                entry: 'ui/settings.ts',
+            },
+        });
+        const project = defineUiSurface({
+            id: 'project-review',
+            placement: 'rightSidebarTab',
+            target: { kind: 'project' },
+            title: 'Project review',
+            renderer: {
+                kind: 'hostedWeb',
+            },
+            build: {
+                entry: 'ui/projectReview.ts',
+            },
+        });
+        const session = defineUiSurface({
+            id: 'session-details',
+            placement: 'detailsTab',
+            target: { kind: 'session' },
+            title: 'Session details',
+            renderer: {
+                kind: 'declarative',
+                root: { kind: 'text', text: 'Details' },
+            },
+        });
+
+        expectTypeOf(app.renderer.kind).toEqualTypeOf<'reactNative'>();
+        expectTypeOf(app.build.entry).toEqualTypeOf<'ui/HomeSurface.tsx'>();
+
+        expect(buildUiSurfaceTargets(app)).toEqual([{
+            kind: 'reactNative',
+            rendererId: 'home-renderer',
+            entry: 'ui/HomeSurface.tsx',
+            platforms: ['web', 'ios', 'android'],
+            module: {
+                containerName: 'acme_home',
+                modulePath: './HomeSurface',
+                exportName: 'renderSurface',
+            },
+        }]);
+        expect(buildUiSurfaceTargets(settings)).toEqual([{
+            kind: 'hostedWeb',
+            rendererId: 'settings-renderer',
+            entry: 'ui/settings.ts',
+        }]);
+        expect(buildUiSurfaceTargets(project)).toEqual([{
+            kind: 'hostedWeb',
+            rendererId: 'project-review-renderer',
+            entry: 'ui/projectReview.ts',
+        }]);
+        expect(buildUiSurfaceTargets(session)).toEqual([]);
+
+        const build = defineBuildConfig({
+            targets: [
+                ...buildUiSurfaceTargets(app),
+                ...buildUiSurfaceTargets(settings),
+                ...buildUiSurfaceTargets(project),
+            ],
+        });
+        const plugin = definePlugin({
+            id: 'com.acme.ui-surface',
+            version: '1.0.0',
+            ui: {
+                surfaces: [app, settings, project, session],
+            },
+        });
+
+        expect(build.targets.map(({ rendererId }) => rendererId)).toEqual([
+            'home-renderer',
+            'settings-renderer',
+            'project-review-renderer',
+        ]);
+        expect(plugin.manifest.contributes.ui).toMatchObject({
+            views: [
+                {
+                    id: 'home',
+                    container: 'appPage',
+                    target: { kind: 'app' },
+                    renderer: 'home-renderer',
+                },
+                {
+                    id: 'project-review',
+                    container: 'rightSidebarTab',
+                    target: { kind: 'project' },
+                    renderer: 'project-review-renderer',
+                },
+                {
+                    id: 'session-details',
+                    container: 'detailsTab',
+                    target: { kind: 'session' },
+                    renderer: 'session-details-renderer',
+                },
+            ],
+            settingsPages: [{
+                id: 'settings',
+                renderer: 'settings-renderer',
+            }],
+            renderers: [
+                {
+                    id: 'home-renderer',
+                    kind: 'reactNative',
+                    artifact: 'home-renderer',
+                    requiredHostMethods: ['context', 'executeAction'],
+                },
+                {
+                    id: 'settings-renderer',
+                    kind: 'hostedWeb',
+                    source: { kind: 'artifact', artifact: 'settings-renderer' },
+                    requiredHostMethods: ['context'],
+                },
+                {
+                    id: 'project-review-renderer',
+                    kind: 'hostedWeb',
+                    source: { kind: 'artifact', artifact: 'project-review-renderer' },
+                },
+                {
+                    id: 'session-details-renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Details' },
+                },
+            ],
+        });
+    });
+
+    it('fails closed instead of synthesizing a build target for an undeclared executable surface build', () => {
+        expect(() => buildUiSurfaceTargets({
+            id: 'missing-build',
+            placement: 'appPage',
+            renderer: { kind: 'reactNative' },
+        } as never)).toThrow('defineUiSurface executable surface missing-build requires build metadata');
+    });
+});

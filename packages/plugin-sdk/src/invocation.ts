@@ -1,112 +1,106 @@
+/** @moduleRealm daemon */
+import {
+    PluginMachineMaterializationRefV1Schema as canonicalPluginMachineMaterializationRefV1Schema,
+} from '@happier-dev/protocol';
 import type { PluginServices } from './services/index.js';
-import type { PluginDiagnosticData } from './diagnostics.js';
+import type { PresentationService } from './interactions.js';
 import type {
-    JsonValue,
     PluginIdentity,
     PluginInvocationContributionIdentity,
 } from './identity.js';
+import type {
+    PluginMachineExecutionOriginV1,
+    PluginMachineMaterializationRefV1,
+} from './executionOrigin.js';
 
-export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui';
+/**
+ * Runtime Protocol parser projected through the SDK's portable materialization
+ * DTO. The structural annotation deliberately keeps the author declaration
+ * free of Protocol and Zod implementation types.
+ */
+export const PluginMachineMaterializationRefV1Schema: Readonly<{
+    parse(value: unknown): PluginMachineMaterializationRefV1;
+    safeParse(value: unknown):
+        | Readonly<{ success: true; data: PluginMachineMaterializationRefV1 }>
+        | Readonly<{ success: false; error: unknown }>;
+}> = canonicalPluginMachineMaterializationRefV1Schema;
+export type {
+    PluginMachineExecutionOriginV1,
+    PluginMachineMaterializationRefV1,
+};
 
-export type PluginUiSeverity = 'info' | 'warning' | 'error';
-
-export type PluginUiApprovalRequest = Readonly<{
-    title: string;
-    description?: string;
-    subject: Readonly<{
-        kind: 'tool';
-        name: string;
-        input: JsonValue;
-    }>;
-    allowSessionPersistence?: boolean;
-}>;
-
-export type PluginUiApprovalResult =
-    | Readonly<{ status: 'approved'; persistence: 'once' | 'session' }>
-    | Readonly<{ status: 'denied'; rationale?: string }>
-    | Readonly<{ status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
-
-export type PluginUiQuestionChoice = Readonly<{
-    id: string;
-    label?: string;
-    description?: string;
-}>;
-
-export type PluginUiQuestion =
-    | Readonly<{
-        id: string;
-        prompt: string;
-        type: 'text';
-        required?: boolean;
-    }>
-    | Readonly<{
-        id: string;
-        prompt: string;
-        type: 'single' | 'multiple';
-        required?: boolean;
-        choices: readonly [PluginUiQuestionChoice, ...PluginUiQuestionChoice[]];
-        allowCustom?: boolean;
-    }>;
-
-export type PluginUiChoiceAnswer =
-    | Readonly<{ type: 'choice'; choiceId: string }>
-    | Readonly<{ type: 'custom'; value: string }>;
-
-export type PluginUiQuestionAnswer =
-    | Readonly<{ type: 'text'; value: string }>
-    | Readonly<{ type: 'single'; answer: PluginUiChoiceAnswer }>
-    | Readonly<{ type: 'multiple'; answers: readonly [PluginUiChoiceAnswer, ...PluginUiChoiceAnswer[]] }>;
-
-export type PluginUiQuestionsResult =
-    | Readonly<{ status: 'answered'; answers: Readonly<Record<string, PluginUiQuestionAnswer>> }>
-    | Readonly<{ status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
-    | Readonly<{ status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
-
-export type PluginUiWidget = Readonly<{
-    placement: 'beforeComposer' | 'afterComposer';
-    lines: readonly string[];
+/** Least-disclosure snapshot made available to a whole-message Action. */
+export type MessageActionAvailableSnapshotV1 = Readonly<{
+    sessionId: string;
+    messageId: string;
+    observedRevision: string;
+    role: 'user' | 'agent' | 'event' | 'unknown';
+    contentCategory: 'text' | 'structured';
+    seq: number;
+    visibleText: string | null;
+    structuredPresentationSummary: string | null;
+    provenanceCategory:
+        | 'owner'
+        | 'collaborator'
+        | 'plugin'
+        | 'external_human'
+        | 'automation'
+        | 'voice'
+        | 'terminal'
+        | 'recovered_history'
+        | 'unknown';
 }>;
 
 /**
- * Author-facing UI intent for the current invocation.
- *
- * The host owns target selection, correlation, deduplication, reconnect state,
- * and present-user interaction custody. Structured questions return a typed
- * terminal result; presentation effects reject with `PluginError` when they are
- * unavailable, conflicted, cancelled, or may have been applied without a
- * conclusive acknowledgement.
+ * The surface executing the current invocation. Plugin-to-plugin calls always
+ * receive the target `plugin` surface; an origin is diagnostic caller data,
+ * never a way to inherit the caller's authority.
  */
-export interface PluginInvocationUi {
-    requestApproval(request: PluginUiApprovalRequest): Promise<PluginUiApprovalResult>;
-    askQuestions(
-        questions: readonly [PluginUiQuestion, ...PluginUiQuestion[]],
-        options?: Readonly<{ title?: string }>,
-    ): Promise<PluginUiQuestionsResult>;
-    confirm(message: string, options?: Readonly<{ title?: string }>): Promise<boolean>;
-    notify(message: string, options?: Readonly<{ severity?: PluginUiSeverity }>): Promise<void>;
-    readonly status: Readonly<{
-        set(key: string, text: string | null): Promise<void>;
+export type PluginInvocationSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'background' | 'plugin';
+
+export type PluginInvocationOriginSurface = Exclude<PluginInvocationSurface, 'plugin'>;
+
+/**
+ * Host-stamped provenance for an invocation. Plugins receive this data but do
+ * not supply it, so a nested call gets a fresh caller for its immediate edge.
+ */
+export type PluginInvocationCaller =
+    | Readonly<{
+        kind: 'plugin';
+        pluginId: string;
+        contribution: PluginInvocationContributionIdentity;
+        /** Current host-stamped materialization for the immediate caller. */
+        materialization: PluginMachineMaterializationRefV1;
+        originSurface?: PluginInvocationOriginSurface;
+    }>
+    | Readonly<{
+        kind: 'host';
+        domain: 'ingress';
+        originSurface: 'http' | 'webhook';
+        contribution: PluginInvocationContributionIdentity;
+    }>
+    | Readonly<{
+        kind: 'automationRun';
+        runId: string;
+        automationId: string;
+        origin: 'schedule' | 'manual' | 'event' | 'conversation';
     }>;
-    readonly widget: Readonly<{
-        set(key: string, widget: PluginUiWidget | null): Promise<void>;
-    }>;
-    readonly title: Readonly<{
-        set(title: string | null): Promise<void>;
-    }>;
-    readonly composer: Readonly<{
-        replace(text: string): Promise<void>;
-    }>;
-}
 
 export interface PluginInvocationContext {
     readonly plugin: PluginIdentity;
     readonly contribution: PluginInvocationContributionIdentity;
-    readonly surface?: PluginInvocationSurface;
+    readonly surface: PluginInvocationSurface;
+    readonly caller?: PluginInvocationCaller;
     readonly session?: Readonly<{ id: string }>;
+    /**
+     * A bounded, host-stamped snapshot resolved immediately before a
+     * whole-message Action dispatch. It is never Action input and absent for
+     * ordinary invocations.
+     */
+    readonly messageAction?: MessageActionAvailableSnapshotV1;
     readonly signal: AbortSignal;
     readonly services: PluginServices;
-    readonly ui: PluginInvocationUi;
+    readonly ui?: PresentationService;
 }
 
 export interface AgentRuntimeFactoryContext {

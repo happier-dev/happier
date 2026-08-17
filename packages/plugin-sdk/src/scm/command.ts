@@ -1,6 +1,6 @@
 import {
-    readCurrentScmBackendRuntimeServices,
-    type ScmBackendCommandRunResult,
+    readCurrentBackendRuntimeServices,
+    type BackendCommandRunResult,
 } from './backend.js';
 
 export type ScmBackendCommandSpec = Readonly<{
@@ -48,8 +48,8 @@ export function resolveScmBackendCommandMaxOutputBytes(input?: Readonly<{
 export function runScmBackendCommand(
     command: ScmBackendCommandSpec,
     input: ScmBackendCommandInput,
-): Promise<ScmBackendCommandRunResult> {
-    const runtimeServices = readCurrentScmBackendRuntimeServices();
+): Promise<BackendCommandRunResult> {
+    const runtimeServices = readCurrentBackendRuntimeServices();
     if (!runtimeServices) {
         return Promise.resolve({
             success: false,

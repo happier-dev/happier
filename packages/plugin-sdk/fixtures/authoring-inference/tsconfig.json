@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@happier-dev/plugin-sdk": ["../../src/index.ts"],
+      "@happier-dev/plugin-sdk/actions": ["../../src/actions/index.ts"],
+      "@happier-dev/plugin-sdk/agents/runtime": ["../../src/agents/runtime/index.ts"],
+      "@happier-dev/plugin-sdk/collections": ["../../src/collections/index.ts"],
+      "@happier-dev/plugin-sdk/interactions": ["../../src/interactions.ts"],
+      "@happier-dev/plugin-sdk/manifest": ["../../src/manifest.ts"],
+      "@happier-dev/plugin-sdk/providers": ["../../src/providers/index.ts"],
+      "@happier-dev/plugin-sdk/protocol": ["../../src/protocol/index.ts"],
+      "@happier-dev/plugin-sdk/contributions": ["../../src/contributions/index.ts"],
+      "@happier-dev/plugin-sdk/resources": ["../../src/resources.ts"],
+      "@happier-dev/plugin-sdk/storage": ["../../src/storage/index.ts"],
+      "@happier-dev/plugin-sdk/testing": ["../../src/testing/index.ts"],
+      "@happier-dev/plugin-sdk/ui": ["../../src/ui.ts"],
+      "@happier-dev/plugin-sdk/voice/speech": ["../../src/voice/speech.ts"]
+    }
+  },
+  "include": ["accountCollections.ts", "actions.ts", "agentRuntimeSurfaces.ts", "index.ts", "managedProvider.ts", "manual.ts", "promptAsset.ts", "publicServices.ts", "run.ts", "targetedContributions.ts", "testing.ts"]
+}

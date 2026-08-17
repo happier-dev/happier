@@ -1,0 +1,14 @@
+{
+  "name": "@happier-fixture/physical-contributor",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  }
+}

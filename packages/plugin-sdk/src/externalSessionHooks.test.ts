@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { PluginInvocationContext } from './invocation.js';
+import type { JsonValue } from './identity.js';
 import {
     AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
     validateAgentExternalSessionHookMapEventRequest,
@@ -17,8 +18,7 @@ import {
     type AgentExternalSessionHookResolveInstallationRequest,
     type AgentExternalSessionHookResolveInstallationResult,
     type AgentExternalSessionHooksContribution,
-    type StrictJsonValue,
-} from './sessions/index.js';
+} from './sessions/external/index.js';
 
 const encoder = new TextEncoder();
 const invocation = {
@@ -147,7 +147,7 @@ describe('External Session hooks public contract', () => {
             'installationVariants' | 'resolveInstallation' | 'mapHookEvent'
         >();
         expectTypeOf<AgentExternalSessionHookMapEventRequest['nativePayload']>()
-            .toEqualTypeOf<StrictJsonValue>();
+            .toEqualTypeOf<JsonValue>();
         expectTypeOf<Parameters<typeof hooks.resolveInstallation>>()
             .toEqualTypeOf<[
                 request: AgentExternalSessionHookResolveInstallationRequest,
@@ -161,24 +161,30 @@ describe('External Session hooks public contract', () => {
         const packageJson = JSON.parse(
             await readFile(new URL('../package.json', import.meta.url), 'utf8'),
         ) as { exports?: Record<string, unknown> };
-        expect(packageJson.exports?.['./experimental/sessions']).toEqual({
-            types: './dist/sessions/index.d.ts',
-            default: './dist/sessions/index.js',
+        expect(packageJson.exports?.['./experimental/sessions']).toBeUndefined();
+        expect(packageJson.exports?.['./sessions/external']).toEqual({
+            default: './dist/sessions/external/index.js',
+            types: './dist/sessions/external/index.d.ts',
         });
     });
 
-    it('normalizes and deeply snapshots variants while preserving callback identity', () => {
+    it('normalizes and deeply snapshots variants with captured callbacks', () => {
         const input = {
             ...hooks,
             installationVariants: [{
                 ...variant(),
                 variantId: '  session-lifecycle-v1  ',
             }],
-        } satisfies AgentExternalSessionHooksContribution;
+            planConfiguration: () => ({ ok: true as const, value: {} }),
+        } as AgentExternalSessionHooksContribution & Readonly<{
+            planConfiguration(): unknown;
+        }>;
         const snapshot = validateAgentExternalSessionHooksContribution(input);
 
         expect(snapshot.installationVariants[0]?.variantId).toBe('session-lifecycle-v1');
-        expect(snapshot.resolveInstallation).toBe(hooks.resolveInstallation);
+        expect(snapshot.resolveInstallation).not.toBe(hooks.resolveInstallation);
+        expect(snapshot.mapHookEvent).not.toBe(hooks.mapHookEvent);
+        expect(snapshot).not.toHaveProperty('planConfiguration');
         expect(Object.isFrozen(snapshot)).toBe(true);
         expect(Object.isFrozen(snapshot.installationVariants)).toBe(true);
         expect(Object.isFrozen(snapshot.installationVariants[0]?.targets)).toBe(true);
@@ -187,6 +193,54 @@ describe('External Session hooks public contract', () => {
         (input.installationVariants[0]!.events[0]!.command as { matcher?: string }).matcher =
             'changed';
         expect(snapshot.installationVariants[0]?.events[0]?.command.matcher).toBe('identity');
+    });
+
+    it('captures class, prototype, and accessor-backed contributions with the author receiver', async () => {
+        class StructuralHooks {
+            readonly ignoredByRegistration = true;
+            readonly owner = 'structural-hooks';
+            readonly variants = [{
+                ...variant(),
+                variantId: '  structural-hooks  ',
+            }];
+
+            get installationVariants() {
+                return this.variants;
+            }
+
+            get resolveInstallation() {
+                return this.resolveInstallationImplementation;
+            }
+
+            resolveInstallationImplementation() {
+                return Promise.resolve({
+                    ...resolveResult,
+                    value: { ...resolveResult.value, owner: this.owner },
+                });
+            }
+
+            mapHookEvent() {
+                return Promise.resolve({
+                    ...mapResult,
+                    value: { ...mapResult.value, owner: this.owner },
+                });
+            }
+        }
+        const contribution = new StructuralHooks();
+        const snapshot = validateAgentExternalSessionHooksContribution(
+            contribution as unknown as AgentExternalSessionHooksContribution,
+        );
+
+        expect(snapshot).not.toBe(contribution);
+        expect(Object.isFrozen(snapshot)).toBe(true);
+        expect(snapshot).not.toHaveProperty('ignoredByRegistration');
+        expect(snapshot.installationVariants).not.toBe(contribution.variants);
+        expect(snapshot.installationVariants[0]?.variantId).toBe('structural-hooks');
+        await expect(Reflect.apply(
+            snapshot.resolveInstallation,
+            { owner: 'foreign' },
+            [resolveRequest, {}],
+        )).resolves.toMatchObject({ value: { owner: 'structural-hooks' } });
     });
 
     it('enforces inclusive variant, target, and event count limits', () => {
@@ -288,7 +342,6 @@ describe('External Session hooks public contract', () => {
         for (const retired of [
             { adapters: [] },
             { recipes: [] },
-            { ...hooks, planConfiguration: () => ({ ok: true, value: {} }) },
             {
                 ...hooks,
                 installationVariants: [{

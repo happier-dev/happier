@@ -8,9 +8,9 @@ import type {
 } from '../activation.js';
 import type { AgentRuntimeFactory } from '../agentRuntime/index.js';
 import type {
-    ExternalAgentObservationResourceDescriptorOutcomeV1,
+    AgentExternalSessionObservationResourceDescriptorOutcomeV1,
 } from '../externalSessionObservation.js';
-import { createPluginRegistrationScope } from './registrationScope.js';
+import { createPluginRegistrationScope } from '../host/registration/index.js';
 
 const factory = (async () => ({
     sessions: {
@@ -46,10 +46,30 @@ const observation: AgentExternalSessionObservationContribution = {
     }),
 };
 
+function externalSessionsSnapshotShape() {
+    return {
+        resolveSource: expect.any(Function),
+        listCandidates: expect.any(Function),
+        resolveLinkIdentity: expect.any(Function),
+        resolveLinkedIdentity: expect.any(Function),
+        pageTranscript: expect.any(Function),
+        readAfterTranscript: expect.any(Function),
+    };
+}
+
+function observationSnapshotShape() {
+    return {
+        describeResource: expect.any(Function),
+        observeResource: expect.any(Function),
+        reconcileResource: expect.any(Function),
+    };
+}
+
 function scope(requiredFields: readonly ('factory' | 'externalSessions')[] = ['externalSessions']) {
     return createPluginRegistrationScope({
         pluginId: 'acme.external',
-        rights: [{ family: 'agents', localId: 'assistant', requiredFields }],
+        target: { realm: 'daemon' },
+        rights: [{ family: 'agents', localId: 'assistant', target: { realm: 'daemon' }, requiredFields }],
     });
 }
 
@@ -65,7 +85,7 @@ describe('Agent External Session observation registration staging', () => {
         expectTypeOf<
             AgentExternalSessionObservationReconcileResourceRequest['purpose']
         >().toEqualTypeOf<'observation_evidence' | 'resource_descriptors'>();
-        expectTypeOf<ExternalAgentObservationResourceDescriptorOutcomeV1>()
+        expectTypeOf<AgentExternalSessionObservationResourceDescriptorOutcomeV1>()
             .toMatchTypeOf<
                 | Readonly<{
                     kind: 'described';
@@ -106,8 +126,8 @@ describe('Agent External Session observation registration staging', () => {
             localId: 'assistant',
             value: {
                 ...(order.includes('runtime') ? { factory } : {}),
-                externalSessions,
-                externalSessionObservation: observation,
+                externalSessions: externalSessionsSnapshotShape(),
+                externalSessionObservation: observationSnapshotShape(),
             },
         }]);
     });
@@ -115,6 +135,7 @@ describe('Agent External Session observation registration staging', () => {
     it('rejects undeclared, factory-only, observation-without-External-Sessions, and duplicate bindings', () => {
         const undeclared = createPluginRegistrationScope({
             pluginId: 'acme.external',
+            target: { realm: 'daemon' },
             rights: [],
         });
         expect(() => undeclared.api.agents.registerExternalSessionObservation('assistant', observation))
@@ -144,33 +165,19 @@ describe('Agent External Session observation registration staging', () => {
             },
         },
         {
-            label: 'unknown operation',
-            value: { ...observation, status: vi.fn() },
-        },
-        {
             label: 'non-function operation',
             value: { ...observation, reconcileResource: null },
         },
-        {
-            label: 'accessor operation',
-            value: Object.defineProperty(
-                {
-                    describeResource: observation.describeResource,
-                    observeResource: observation.observeResource,
-                },
-                'reconcileResource',
-                { enumerable: true, get: () => observation.reconcileResource },
-            ),
-        },
-    ])('rejects a malformed strict contribution: $label', ({ value }) => {
+    ])('rejects a malformed required contribution: $label', ({ value }) => {
         const registrationScope = scope();
-        expect(() => registrationScope.api.agents.registerExternalSessionObservation(
+        registrationScope.api.agents.registerExternalSessionObservation(
             'assistant',
             value as AgentExternalSessionObservationContribution,
-        )).toThrow(/invalid Agent External Session observation/u);
+        );
+        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
     });
 
-    it('rejects a fourth observation operation', () => {
+    it('rejects a fourth enumerable observation operation before publishing the aggregate', () => {
         const registrationScope = scope();
         const fourthOperationName = ['resolve', 'TopologyRoots'].join('');
         const fourthOperation = vi.fn(() => ['/provider/sessions']);
@@ -179,11 +186,65 @@ describe('Agent External Session observation registration staging', () => {
             [fourthOperationName]: fourthOperation,
         };
 
-        expect(() => registrationScope.api.agents.registerExternalSessionObservation(
+        registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
+        registrationScope.api.agents.registerExternalSessionObservation(
             'assistant',
             contributed,
-        )).toThrow(/invalid Agent External Session observation/u);
+        );
+        expect(() => registrationScope.commit()).toThrow(/invalid 'agents\/assistant' runtime/u);
         expect(fourthOperation).not.toHaveBeenCalled();
+    });
+
+    it('captures class, prototype, and accessor-backed operations with the author receiver', async () => {
+        class StructuralObservation {
+            readonly ignoredByRegistration = true;
+            readonly owner = 'structural-observation';
+
+            describeResource() {
+                return {
+                    resourceKey: 'resource-1',
+                    linkKey: 'link-1',
+                    changeObservation: 'observe_resource',
+                    owner: this.owner,
+                };
+            }
+
+            observeResource() {
+                return Promise.resolve({ dispose() {} });
+            }
+
+            get reconcileResource() {
+                return this.reconcileResourceImplementation;
+            }
+
+            reconcileResourceImplementation() {
+                return Promise.resolve({
+                    purpose: 'observation_evidence',
+                    outcomes: [],
+                    owner: this.owner,
+                });
+            }
+        }
+        const contribution = new StructuralObservation();
+        const registrationScope = scope();
+        registrationScope.api.agents.registerExternalSessions('assistant', externalSessions);
+        registrationScope.api.agents.registerExternalSessionObservation(
+            'assistant',
+            contribution as unknown as AgentExternalSessionObservationContribution,
+        );
+
+        const [registration] = registrationScope.commit();
+        expect(registration?.family).toBe('agents');
+        if (registration?.family !== 'agents' || !registration.value.externalSessionObservation) {
+            throw new Error('Expected Agent External Session observation snapshot');
+        }
+        const snapshot = registration.value.externalSessionObservation;
+        expect(snapshot).not.toBe(contribution);
+        expect(Object.isFrozen(snapshot)).toBe(true);
+        expect(snapshot).not.toHaveProperty('ignoredByRegistration');
+        expect(Reflect.apply(snapshot.describeResource, { owner: 'foreign' }, [])).toMatchObject({
+            owner: 'structural-observation',
+        });
     });
 
     it('rejects a non-string Agent id before right lookup can coerce it', () => {

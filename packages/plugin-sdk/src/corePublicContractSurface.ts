@@ -2,12 +2,14 @@ import type { PluginApi } from './activation.js';
 import type { AgentRuntimeFactoryContext, PluginInvocationContext } from './invocation.js';
 import type { PluginServiceId, PluginServices } from './services/index.js';
 import type {
-    ManagedServerStopResult,
+    ManagedDependenciesService,
+    ManagedServiceHandle,
+    ManagedServiceSpec,
+    ManagedServices,
     PluginConnectedAccountAuthCompletionResult,
     PluginConnectedAccountBindingEvent,
     PluginConnectedAccountBindingSummary,
     PluginConnectedAccountCommonRuntime,
-    PluginConnectedAccountCredentialReader,
     PluginConnectedAccountDeviceBeginResult,
     PluginConnectedAccountDevicePollResult,
     PluginConnectedAccountManualCompletion,
@@ -18,8 +20,6 @@ import type {
     PluginConnectedAccountRefreshResult,
     PluginConnectedAccountRevocationResult,
     PluginFetchCredentialBinding,
-    PluginManagedDependenciesService,
-    PluginManagedServersService,
     PluginMcpContributionRef,
     PluginMcpElicitationMode,
     PluginMcpServerSummary,
@@ -28,13 +28,13 @@ import type {
     PluginNotificationPreferences,
     PluginProtocolClientSpecByKind,
     PluginSecretMutationResult,
-    PluginSessionWatchEvent,
-    PluginSessionWatchQuery,
+    SessionWatchEvent,
+    SessionWatchQuery,
     PluginSettingDescriptorBase,
-    PluginSubagentObservation,
+    SubagentObservation,
 } from './services/index.js';
 import type {
-    PluginInterceptorResult,
+    PluginMcpDiscoveredEndpoint,
     PluginMcpDiscoveryRequest,
     PluginMcpDiscoveryResult,
     PluginMcpToolCallContent,
@@ -68,7 +68,7 @@ type _SubagentOperationsMustBeIntentOriented = AssertTrue<Equal<
     'observe'
 >>;
 type _SubagentObservationMustNotExposeLedgerMechanics = AssertTrue<Equal<
-    keyof PluginSubagentObservation,
+    keyof SubagentObservation,
     'observationId' | 'groupId' | 'status' | 'detail'
 >>;
 type _SubagentCapabilitiesMustUseIntentVocabulary = AssertTrue<Equal<
@@ -82,27 +82,34 @@ type _ServiceIdsMustBeExact = AssertTrue<Equal<
     | 'settings'
     | 'secrets'
     | 'events'
-    | 'fetch'
+    | 'http'
     | 'fs'
     | 'exec'
-    | 'managed'
+    | 'providers'
+    | 'managedServices'
     | 'sessions'
     | 'resources'
     | 'mcp'
     | 'notifications'
     | 'connectedAccounts'
+    | 'actions'
+    | 'targetedContributions'
+    | 'interactions'
+    | 'composerContent'
 >>;
 type _ServicePropertiesMustBeExact = AssertTrue<Equal<
     Exclude<keyof PluginServices, 'availability'>,
     PluginServiceId
 >>;
 type _NamedPacketServiceTypesMustResolve = [
-    ManagedServerStopResult,
+    ManagedDependenciesService,
+    ManagedServiceHandle,
+    ManagedServiceSpec,
+    ManagedServices,
     PluginConnectedAccountAuthCompletionResult,
     PluginConnectedAccountBindingEvent,
     PluginConnectedAccountBindingSummary,
     PluginConnectedAccountCommonRuntime,
-    PluginConnectedAccountCredentialReader,
     PluginConnectedAccountDeviceBeginResult,
     PluginConnectedAccountDevicePollResult,
     PluginConnectedAccountManualCompletion,
@@ -113,8 +120,6 @@ type _NamedPacketServiceTypesMustResolve = [
     PluginConnectedAccountRefreshResult,
     PluginConnectedAccountRevocationResult,
     PluginFetchCredentialBinding,
-    PluginManagedDependenciesService,
-    PluginManagedServersService,
     PluginMcpContributionRef,
     PluginMcpElicitationMode,
     PluginMcpServerSummary,
@@ -123,11 +128,11 @@ type _NamedPacketServiceTypesMustResolve = [
     PluginNotificationPreferences,
     PluginProtocolClientSpecByKind<'jsonRpc'>,
     PluginSecretMutationResult,
-    PluginSessionWatchEvent,
-    PluginSessionWatchQuery,
+    SessionWatchEvent,
+    SessionWatchQuery,
     PluginSettingDescriptorBase,
-    PluginSubagentObservation,
-    PluginInterceptorResult,
+    SubagentObservation,
+    PluginMcpDiscoveredEndpoint,
     PluginMcpDiscoveryRequest,
     PluginMcpDiscoveryResult,
     PluginMcpToolCallContent,
@@ -144,53 +149,30 @@ type PluginMcpDiscoveryWarning = NonNullable<
 type _McpDiscoveryWarningMustCarryOnlyLeafDiagnosticData = AssertTrue<
     Equal<keyof PluginMcpDiscoveryWarning, 'code' | 'path' | 'detail'>
 >;
+type _McpDiscoveredEndpointMustBeExact = AssertTrue<
+    Equal<keyof PluginMcpDiscoveredEndpoint, 'id' | 'name' | 'kind' | 'url'>
+>;
 
-declare const sessionWatchEvent: PluginSessionWatchEvent;
+declare const sessionWatchEvent: SessionWatchEvent;
 if (sessionWatchEvent.kind === 'snapshot') {
-    const items: readonly import('./services/sessions.js').PluginSessionSummary[] = sessionWatchEvent.items;
+    const items: readonly import('./services/sessions.js').SessionSummary[] = sessionWatchEvent.items;
     void items;
-    // @ts-expect-error — only snapshot events carry the complete item collection.
-    sessionWatchEvent.item;
+/* @sdk-negative-type-case:src-corePublicContractSurface-ts-29:4oCUIG9ubHkgc25hcHNob3QgZXZlbnRzIGNhcnJ5IHRoZSBjb21wbGV0ZSBpdGVtIGNvbGxlY3Rpb24u:c2Vzc2lvbldhdGNoRXZlbnQuaXRlbTs */
+void 0; /* @sdk-negative-type-case-end */
 }
 if (sessionWatchEvent.kind === 'upserted') {
-    const item: import('./services/sessions.js').PluginSessionSummary = sessionWatchEvent.item;
+    const item: import('./services/sessions.js').SessionSummary = sessionWatchEvent.item;
     void item;
-    // @ts-expect-error — only removed events carry a removed id.
-    sessionWatchEvent.id;
+/* @sdk-negative-type-case:src-corePublicContractSurface-ts-30:4oCUIG9ubHkgcmVtb3ZlZCBldmVudHMgY2FycnkgYSByZW1vdmVkIGlkLg:c2Vzc2lvbldhdGNoRXZlbnQuaWQ7 */
+void 0; /* @sdk-negative-type-case-end */
 }
 if (sessionWatchEvent.kind === 'removed') {
     const id: string = sessionWatchEvent.id;
     void id;
-    // @ts-expect-error — removed events cannot carry an upserted item.
-    sessionWatchEvent.item;
+/* @sdk-negative-type-case:src-corePublicContractSurface-ts-31:4oCUIHJlbW92ZWQgZXZlbnRzIGNhbm5vdCBjYXJyeSBhbiB1cHNlcnRlZCBpdGVtLg:c2Vzc2lvbldhdGNoRXZlbnQuaXRlbTs */
+void 0; /* @sdk-negative-type-case-end */
 }
 
-// @ts-expect-error — a removed session event requires its removed id.
-const removedSessionWithoutId: PluginSessionWatchEvent = { kind: 'removed', revision: 'r1' };
+/* @sdk-negative-type-case:src-corePublicContractSurface-ts-32:4oCUIGEgcmVtb3ZlZCBzZXNzaW9uIGV2ZW50IHJlcXVpcmVzIGl0cyByZW1vdmVkIGlkLg:Y29uc3QgcmVtb3ZlZFNlc3Npb25XaXRob3V0SWQ6IFNlc3Npb25XYXRjaEV2ZW50ID0geyBraW5kOiAncmVtb3ZlZCcsIHJldmlzaW9uOiAncjEnIH07 */
+const removedSessionWithoutId = undefined as never; /* @sdk-negative-type-case-end */
 void removedSessionWithoutId;
-type SessionServiceExports = keyof typeof import('./services/sessions.js');
-type EventServiceExports = keyof typeof import('./services/core.js');
-type IoServiceExports = keyof typeof import('./services/io.js');
-type ResourceServiceExports = keyof typeof import('./services/resources.js');
-type ConnectedAccountServiceExports = keyof typeof import('./services/connectedAccounts.js');
-type _DeferredCapacityConstantsMustRemainPrivate = AssertNever<Extract<
-    SessionServiceExports
-    | EventServiceExports
-    | IoServiceExports
-    | ResourceServiceExports
-    | ConnectedAccountServiceExports,
-    | 'MAX_PLUGIN_EVENT_PENDING_DELIVERIES_PER_SUBSCRIPTION'
-    | 'MAX_PLUGIN_EVENT_PENDING_BYTES_PER_SUBSCRIPTION'
-    | 'MAX_PLUGIN_PROTOCOL_PENDING_CALLBACKS'
-    | 'MAX_PLUGIN_PROTOCOL_PENDING_CALLBACK_BYTES'
-    | 'MAX_MANAGED_SERVER_HANDLES_PER_GENERATION'
-    | 'MAX_PLUGIN_SESSION_PRESENTATION_COMPOSER_CODE_UNITS'
-    | 'MAX_PLUGIN_SESSION_PRESENTATION_STATE_CODE_UNITS'
-    | 'MAX_AGENT_WORK_STATE_SOURCE_JSON_BYTES'
-    | 'MAX_PLUGIN_SESSION_SEND_IDEMPOTENCY_RECORDS'
-    | 'MAX_PLUGIN_SUBAGENT_IDEMPOTENCY_RECORDS'
-    | 'MAX_PLUGIN_NOTIFICATION_IDEMPOTENCY_RECORDS'
-    | 'PLUGIN_SESSION_SEND_IDEMPOTENCY_RETENTION_MS'
-    | 'PLUGIN_SUBAGENT_IDEMPOTENCY_RETENTION_MS'
-    | 'HOST_CONNECTED_ACCOUNT_UNKNOWN_JOURNAL_BYTES'
->>;

@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node"],
+    "paths": {
+      "@happier-dev/plugin-sdk": ["../../src/index.ts"],
+      "@happier-dev/plugin-sdk/actions": ["../../src/actions/index.ts"],
+      "@happier-dev/plugin-sdk/agents/runtime": ["../../src/agents/runtime/index.ts"],
+      "@happier-dev/plugin-sdk/protocol": ["../../src/protocol/index.ts"],
+      "@happier-dev/plugin-sdk/contributions": ["../../src/contributions/index.ts"],
+      "@happier-dev/plugin-sdk/ui": ["../../src/ui/index.ts"],
+      "@happier-dev/plugin-sdk/ui/build": ["../../src/ui/build/index.ts"],
+      "@happier-dev/plugin-ui": ["../../../plugin-ui/src/index.ts"],
+      "@happier-dev/plugin-sdk/sessions/external": ["../../src/sessions/external/index.ts"]
+    }
+  },
+  "include": [
+    "agent-runtime-source.ts",
+    "target/src/**/*.ts",
+    "target/src/**/*.tsx",
+    "contributor/src/**/*.ts"
+  ]
+}

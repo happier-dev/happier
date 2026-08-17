@@ -1,12 +1,8 @@
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type {
-  AgentSessionConversationRollbackReconciliationResult as ProtocolAgentSessionConversationRollbackReconciliationResult,
-  AgentSessionConversationRollbackRequest as ProtocolAgentSessionConversationRollbackRequest,
-  AgentSessionConversationRollbackResult as ProtocolAgentSessionConversationRollbackResult,
-} from '@happier-dev/protocol/runtime';
-import type {
-  PluginCurrentSessionWorkStatePublisher,
+  WorkStatePublisher,
 } from '../services/sessions.js';
+import type { JsonValue } from '../identity.js';
 import type { AgentRuntimeContext, AgentSessionRuntimeContext } from './context.js';
 import type {
   AgentSessionConnectedAccountSelection,
@@ -32,14 +28,41 @@ export type AgentSessionControlContext = Omit<AgentSessionRuntimeContext, 'sessi
   }>;
 }>;
 
-export type AgentSessionConversationRollbackRequest =
-  ProtocolAgentSessionConversationRollbackRequest;
+/** SDK-local projection of the parsed, host-resolved rollback request. */
+export type AgentSessionConversationRollbackRequest = Readonly<{
+  operationId: string;
+  target: Readonly<{ kind: 'beforeTurn'; turnId: string }>;
+  affectedTurns: readonly [
+    Readonly<{
+      turnId: string;
+      providerCheckpoint?: JsonValue;
+    }>,
+    ...Readonly<{
+      turnId: string;
+      providerCheckpoint?: JsonValue;
+    }>[],
+  ];
+  providerSessionId: string;
+  runtimeIncarnationId: string;
+  managedServerInstanceId?: string;
+}>;
+
 export type AgentSessionConversationRollbackResult =
-  ProtocolAgentSessionConversationRollbackResult;
+  | Readonly<{ status: 'applied' }>
+  | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>
+  | AgentSessionControlFailure;
+
 export type AgentSessionConversationRollbackReconciliationRequest =
-  ProtocolAgentSessionConversationRollbackRequest;
+  AgentSessionConversationRollbackRequest;
+
 export type AgentSessionConversationRollbackReconciliationResult =
-  ProtocolAgentSessionConversationRollbackReconciliationResult;
+  | Readonly<{ status: 'applied' | 'notApplied' }>
+  | Readonly<{ status: 'outcomeUnknown'; diagnostic: PluginDiagnosticData }>
+  | Readonly<{
+    status: 'unavailable';
+    diagnostic: PluginDiagnosticData;
+    retryable: boolean;
+  }>;
 
 export interface AgentSessionConversationRollbackControl {
   rollback(
@@ -47,7 +70,7 @@ export interface AgentSessionConversationRollbackControl {
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<AgentSessionConversationRollbackResult>;
   reconcile(
-    request: AgentSessionConversationRollbackReconciliationRequest,
+    request: AgentSessionConversationRollbackRequest,
     options?: Readonly<{ signal?: AbortSignal }>,
   ): Promise<AgentSessionConversationRollbackReconciliationResult>;
 }
@@ -68,7 +91,7 @@ export type AgentSessionGoalMutationResult =
   | AgentSessionControlFailure;
 
 export type AgentSessionGoalControlContext = AgentSessionControlContext & Readonly<{
-  goalSource: PluginCurrentSessionWorkStatePublisher;
+  goalSource: WorkStatePublisher;
 }>;
 
 export interface AgentSessionGoalControl {

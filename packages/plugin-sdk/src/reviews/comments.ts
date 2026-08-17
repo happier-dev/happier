@@ -1,3 +1,4 @@
+/** @moduleRealm daemon */
 import { createHash } from 'node:crypto';
 
 import type {
@@ -10,11 +11,11 @@ import type {
 
 import { redactBugReportSensitiveText } from '../diagnostics.js';
 
-export type ReviewCommentSensitiveTextRedactionOptionsV1 = Readonly<{
+export type ReviewCommentSensitiveTextRedactionOptions = Readonly<{
     redactedValues?: readonly (string | null | undefined)[];
 }>;
 
-export type CreateReviewCommentFingerprintInputV1 = Readonly<{
+export type CreateReviewCommentFingerprintInput = Readonly<{
     ruleId?: string | null;
     fileSha?: string | null;
     anchor?: ReviewCommentAnchorV1 | null;
@@ -136,7 +137,7 @@ function lineRangeFromAnchor(
 
 export function redactReviewCommentSensitiveText(
     input: string,
-    options: ReviewCommentSensitiveTextRedactionOptionsV1 = {},
+    options: ReviewCommentSensitiveTextRedactionOptions = {},
 ): string {
     let out = redactBugReportSensitiveText(String(input ?? ''));
     for (const raw of options.redactedValues ?? []) {
@@ -150,7 +151,7 @@ export function redactReviewCommentSensitiveText(
 }
 
 export function createReviewCommentFingerprintV1(
-    input: CreateReviewCommentFingerprintInputV1,
+    input: CreateReviewCommentFingerprintInput,
 ): ReviewCommentFingerprintV1 {
     const ruleId = normalizeOptionalText(input.ruleId);
     const fileSha = normalizeOptionalText(input.fileSha);
@@ -179,3 +180,8 @@ export type {
     ReviewCommentSnapshotV1,
     ReviewCommentV1,
 };
+
+export type CreateReviewCommentFingerprintInputV1 = CreateReviewCommentFingerprintInput;
+export type ReviewCommentSensitiveTextRedactionOptionsV1 = ReviewCommentSensitiveTextRedactionOptions;
+
+export { createReviewCommentFingerprintV1 as createReviewCommentFingerprint };

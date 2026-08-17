@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "paths": {
+      "@happier-dev/plugin-sdk": ["../../src/index.ts"],
+      "@happier-dev/plugin-sdk/browser": ["../../src/browser/index.ts"],
+      "@happier-dev/plugin-sdk/protocol": ["../../src/protocol/index.ts"],
+      "@happier-dev/plugin-sdk/contributions": ["../../src/contributions/index.ts"],
+      "@happier-dev/triage-sources-protocol": ["../feature-protocols/triage-sources-protocol/src/index.ts"],
+      "@happier-dev/triage-sources-protocol/v1": ["../feature-protocols/triage-sources-protocol/src/v1.ts"],
+      "@happier-dev/triage-sources-protocol/testing/v1": ["../feature-protocols/triage-sources-protocol/src/testing/v1.ts"]
+    }
+  },
+  "include": [
+    "triageSourceAuthoringExactness.ts",
+    "../../examples/triage-source-target/src/index.ts",
+    "../../examples/triage-source-contributor/src/index.ts",
+    "../feature-protocols/triage-sources-protocol/src/**/*.ts"
+  ]
+}

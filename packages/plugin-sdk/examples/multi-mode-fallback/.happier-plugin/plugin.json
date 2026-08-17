@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2, "id": "examples.multi-mode-fallback", "version": "0.1.0", "displayName": "Multi-Mode Fallback Example",
-  "description": "React Native, hosted web, then declarative fallback.", "engines": { "happier": "^0.2.0" },
+  "description": "React Native, hosted web, then declarative fallback.", "engines": { "happier": "0.2.10" },
   "runtime": { "apiVersion": 1 },
   "hostAccess": { "required": [], "optional": [] },
   "contributes": { "ui": {
-    "views": [{ "id": "panel", "placement": "session.details", "renderer": "panel-native", "fallbackRenderers": ["panel-web", "panel-declarative"], "title": "Multi-mode fallback example" }],
+    "views": [{ "id": "panel", "container": "appPage", "target": { "kind": "app" }, "renderer": "panel-native", "fallbackRenderers": ["panel-web", "panel-declarative"], "title": "Multi-mode fallback example" }],
     "renderers": [
       { "id": "panel-native", "kind": "reactNative", "artifact": "panel-native", "requiredHostMethods": ["context"] },
       { "id": "panel-web", "kind": "hostedWeb", "source": { "kind": "artifact", "artifact": "panel-web" }, "requiredHostMethods": ["context"] },

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Production Hosted Review Reference</title>
+    <link rel="stylesheet" href="./ui/reviewPanel.css" />
+  </head>
+  <body>
+    <main id="root" data-status="loading">
+      <h1>Review dashboard</h1>
+      <p data-role="status">Connecting to Happier…</p>
+      <p data-role="mount" aria-live="polite"></p>
+      <article data-role="guide" aria-live="polite"></article>
+      <div data-role="actions">
+        <button type="button" data-role="retry">Retry guide</button>
+        <button type="button" data-role="refresh-review">Refresh review status</button>
+        <button type="button" data-role="open-history">Open review history</button>
+      </div>
+      <pre data-role="result" aria-live="polite"></pre>
+    </main>
+    <script type="module" src="./ui/reviewPanel.web.ts"></script>
+  </body>
+</html>

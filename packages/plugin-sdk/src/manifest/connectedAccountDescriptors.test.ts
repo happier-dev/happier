@@ -34,6 +34,7 @@ describe('plugin SDK connected account descriptor manifest surface', () => {
         }, {
           id: 'authorization-code',
           kind: 'oauthAuthorizationCode',
+          callbackUrl: 'https://provider.example/oauth/callback',
           pkce: 'required',
           outcomeReconciliation: 'providerCheck',
           scopes: ['repository.read'],
@@ -72,6 +73,7 @@ describe('plugin SDK connected account descriptor manifest surface', () => {
       ],
     });
     expect(descriptor.authentication.modes[1]).toMatchObject({
+      callbackUrl: 'https://provider.example/oauth/callback',
       outcomeReconciliation: 'providerCheck',
       configuration: {
         scope: 'service',
@@ -84,6 +86,23 @@ describe('plugin SDK connected account descriptor manifest surface', () => {
         }],
       },
     });
+  });
+
+  it('rejects malformed provider-fixed OAuth callback URLs', () => {
+    expect(PluginConnectedAccountDescriptorContributionV2Schema.safeParse({
+      id: 'example-connected-account',
+      title: 'Example account',
+      authentication: {
+        defaultModeId: 'oauth',
+        modes: [{
+          id: 'oauth',
+          kind: 'oauthAuthorizationCode',
+          callbackUrl: 'not-a-url',
+          pkce: 'required',
+          outcomeReconciliation: 'none',
+        }],
+      },
+    }).success).toBe(false);
   });
 
   it('requires a unique declared default mode and rejects settings-only configuration bindings', () => {
@@ -184,7 +203,12 @@ describe('plugin SDK connected account descriptor manifest surface', () => {
 
   it('projects a configured-origin semantic without granting or declaring an origin', () => {
     expectTypeOf<PluginConnectedAccountConfigurationFieldV2['semantic']>()
-      .toEqualTypeOf<'connectedAccountOrigin' | undefined>();
+      .toEqualTypeOf<
+        | 'connectedAccountOrigin'
+        | 'connectedAccountFixedOrigin'
+        | 'connectedAccountBase'
+        | undefined
+      >();
     type ConnectedAccountOriginField = Extract<
       PluginConnectedAccountConfigurationFieldV2,
       { semantic: 'connectedAccountOrigin' }

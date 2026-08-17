@@ -1,10 +1,11 @@
 import type { AgentRuntimeFactoryContext, PluginInvocationContext } from '../invocation.js';
-import type { PluginCurrentSessionWorkStateService } from '../services/sessions.js';
+import type { WorkStateService } from '../services/sessions.js';
 import type {
   AgentModelDescriptor,
   TerminalControlPort,
   TerminalHostHandle,
   TerminalHostKind,
+  TerminalHostLivenessV1,
   TerminalHostPreference,
   TerminalInputInjectionResult,
   TerminalInputState,
@@ -15,8 +16,13 @@ import type { Disposable } from '../lifecycle.js';
 import type { JsonValue } from '../identity.js';
 import type { AgentPermissionIntent } from './session.js';
 import type {
-  SessionSystemRecordKind,
-  SessionSystemRecordNamespace,
+  AgentModelOptionOverrideRule,
+  AgentSessionAuthRefreshClassificationV1,
+  AgentSessionAuthRefreshErrorV1,
+  AgentSessionAuthRefreshPayloadV1,
+  AgentSessionAuthRefreshRecoveryV1,
+  AgentSessionAuthRefreshSelectionV1,
+  TranscriptRawAgentEventV1,
 } from '@happier-dev/protocol';
 import type {
   AgentAccountUsageRecordKey,
@@ -24,13 +30,24 @@ import type {
 } from './accountUsage.js';
 
 export type { AgentRuntimeFactoryContext } from '../invocation.js';
+export type {
+  SessionRuntimeAuthRefreshResultV1 as AgentSessionAuthRefreshResult,
+  TerminalControlPort,
+  TerminalHostHandle,
+  TerminalHostKind,
+  TerminalHostLivenessV1 as TerminalHostLiveness,
+  TerminalHostPreference,
+  TerminalInputInjectionResult,
+  TerminalInputState,
+  TerminalPromptInput,
+} from '@happier-dev/agents';
 
 export type AgentRuntimeContext = PluginInvocationContext & Readonly<{
   agent: Readonly<{ id: string }>;
   protocols: AgentRuntimeProtocolComposers;
 }>;
 
-type AgentSessionHookProviderPayload = Readonly<Record<string, unknown>>;
+export type AgentSessionHookProviderPayload = Readonly<Record<string, unknown>>;
 
 export type AgentSessionHookServerStartRequest = Readonly<{
   onSessionHook?: (providerSessionId: string, data: AgentSessionHookProviderPayload) => void | Promise<void>;
@@ -66,11 +83,11 @@ export type AgentSessionHookPluginFile =
   | Readonly<{ path: string; json: unknown; contents?: never }>
   | Readonly<{ path: string; contents: string; json?: never }>;
 
-type AgentSessionHookPluginDirCreateRequest = Readonly<{
+export type AgentSessionHookPluginDirCreateRequest = Readonly<{
   files: readonly AgentSessionHookPluginFile[];
 }>;
 
-type AgentSessionProviderTranscriptPublishRequest = Readonly<{
+export type AgentSessionProviderTranscriptPublishRequest = Readonly<{
   providerSessionId?: string;
   kind: string;
   turnId?: string;
@@ -89,7 +106,7 @@ export interface AgentSessionHooksService {
   ): Promise<void>;
 }
 
-type AgentTranscriptFileFollowLine = Readonly<{
+export type AgentTranscriptFileFollowLine = Readonly<{
   line: string;
   sourcePath: string;
   sequence: number;
@@ -121,60 +138,68 @@ export interface AgentTranscriptFileFollowService {
   follow(input: AgentTranscriptFileFollowInput): Promise<AgentTranscriptFileFollowHandle>;
 }
 
-type AgentConnectedServiceId =
-  | 'anthropic'
-  | 'bitbucket'
-  | 'claude-subscription'
-  | 'gemini'
-  | 'github'
-  | 'openai'
-  | 'openai-codex';
+export type AgentTranscriptSessionEventPublicationResult = Readonly<{
+  status: 'custodied';
+}>;
 
-type AgentAccountUsageSourceContextInput = Readonly<{
-  serviceId: AgentConnectedServiceId;
+export interface AgentTranscriptSessionEventPublisher {
+  /**
+   * Publishes one protocol-validated Session event into the host-owned durable
+   * transcript. Resolution means the canonical outbox accepted durable custody;
+   * failures reject so callers can preserve retry semantics.
+   */
+  publishSessionEvent(
+    event: TranscriptRawAgentEventV1,
+  ): Promise<AgentTranscriptSessionEventPublicationResult>;
+  /**
+   * Reserves an exact provider-fact identity already represented by a host-owned
+   * transcript row. This prevents later source catch-up from duplicating the echo.
+   */
+  markSourceFactConsumed?(
+    request: Readonly<{
+      localId: string;
+      reason: 'host_prompt_echo';
+    }>,
+  ): Promise<AgentTranscriptSessionEventPublicationResult>;
+}
+
+export type AgentAccountUsageSourceContextInput = Readonly<{
+  serviceId: string;
   env?: Readonly<Record<string, string | undefined>>;
 }>;
 
-type AgentAccountUsageSourceContext = Readonly<{
-  serviceId: AgentConnectedServiceId;
+export type AgentAccountUsageSourceContext = Readonly<{
+  serviceId: string;
   profileId: string;
   bindingKind: 'profile' | 'group_member';
   groupId?: string;
-  groupGeneration?: number;
 }>;
 
-type AgentAccountUsageRecordSnapshotInput = Readonly<{
+export type AgentAccountUsageRecordSnapshotInput = Readonly<{
   snapshot: AgentAccountUsageSnapshot;
   /**
    * Evidence read after an already-surfaced hard failure. The host records it but must not
    * start predictive switching; the runtime-auth failure owner already owns recovery.
    */
   policyDisposition?: 'evidence_only';
-  source?: AgentAccountUsageSourceContext | null;
-  appliedIdentity?: Readonly<{
-    serviceId: AgentConnectedServiceId;
-    profileId: string;
-    groupId: string | null;
-    groupGeneration: number | null;
-    providerAccountId: string;
-    credentialFingerprint: string | null;
-    observedAtMs: number;
-  }> | null;
+  /**
+   * Semantic address of the service/account source. The host resolves its current binding
+   * and private currentness witnesses again when recording the observation.
+   */
+  source?: AgentAccountUsageSourceContextInput | null;
 }>;
 
-type AgentAccountUsageRecordSnapshotResult =
-  | Readonly<{ status: 'recorded'; recordId: string; persisted?: boolean }>
+export type AgentAccountUsageRecordSnapshotResult =
+  | Readonly<{ status: 'recorded' }>
   | Readonly<{ status: 'unavailable'; reason: 'session_scope_unavailable' | 'daemon_unavailable' }>
   | Readonly<{ status: 'rejected'; reason: 'invalid_snapshot' | 'session_mismatch' | 'daemon_rejected' }>;
 
-type AgentAccountUsageAdoptionProof =
-  | Readonly<{ kind: 'opaque_local_credential_ref_match'; localCredentialRef: string }>
-  | Readonly<{ kind: 'session_subject_match'; sessionId?: string | null }>
+export type AgentAccountUsageAdoptionProof =
   | Readonly<{ kind: 'id_token_account_id'; issuer?: string }>
   | Readonly<{ kind: 'provider_account_id_match' }>
   | Readonly<{ kind: 'provider_owned_subject_proof'; detail?: string }>;
 
-type AgentAccountUsageAdoptProvisionalRecordInput = Readonly<{
+export type AgentAccountUsageAdoptProvisionalRecordInput = Readonly<{
   adoption: Readonly<{
     fromRecordId: string;
     toRecordId: string;
@@ -184,8 +209,8 @@ type AgentAccountUsageAdoptProvisionalRecordInput = Readonly<{
   }>;
 }>;
 
-type AgentAccountUsageAdoptProvisionalRecordResult =
-  | Readonly<{ status: 'adopted' | 'already_adopted'; fromRecordId: string; toRecordId: string; persisted?: boolean }>
+export type AgentAccountUsageAdoptProvisionalRecordResult =
+  | Readonly<{ status: 'adopted' | 'already_adopted' }>
   | Readonly<{ status: 'unavailable'; reason: 'session_scope_unavailable' | 'daemon_unavailable' }>
   | Readonly<{ status: 'rejected'; reason: 'invalid_adoption' | 'session_mismatch' | 'daemon_rejected' }>;
 
@@ -204,38 +229,29 @@ export interface AgentAccountUsageService {
   ): Promise<AgentAccountUsageAdoptProvisionalRecordResult>;
 }
 
+export type AgentSessionAuthRefreshSelection = AgentSessionAuthRefreshSelectionV1;
+export type AgentSessionAuthRefreshClassification = AgentSessionAuthRefreshClassificationV1;
+export type AgentSessionAuthRefreshPayload = AgentSessionAuthRefreshPayloadV1;
+export type AgentSessionAuthRefreshRecovery = AgentSessionAuthRefreshRecoveryV1;
+export type AgentSessionAuthRefreshError = AgentSessionAuthRefreshErrorV1;
+
 export type AgentSessionAuthRefreshRequest = Readonly<{
   serviceId: string;
   refreshAttemptId?: string;
   targetId?: string | null;
-  selection?: unknown;
+  selection?: AgentSessionAuthRefreshSelection;
   planType?: string | null;
   env?: Readonly<Record<string, string>> | null;
   materializedEnv?: Readonly<Record<string, string>> | null;
   targetMaterializedEnv?: Readonly<Record<string, string>> | null;
-  classification?: unknown;
+  classification?: AgentSessionAuthRefreshClassification;
   failingAccessTokenFingerprint?: string | null;
   expectedCredentialRevision?: string | null;
   reason?: string | null;
 }>;
 
-export type AgentSessionAuthRefreshResult = Readonly<
-  | { status: 'refreshed'; result?: unknown }
-  | { status: 'unavailable'; reason: string; recovery?: unknown }
-  | { status: 'failed'; reason: string; error?: unknown; runtimeAuthClassification?: unknown; recovery?: unknown }
-  | { status: 'pending'; refreshAttemptId: string }
->;
-
-export interface AgentSessionAuthService {
-  refreshRuntimeAuth(
-    request: AgentSessionAuthRefreshRequest,
-    options?: Readonly<{ signal?: AbortSignal }>,
-  ): Promise<AgentSessionAuthRefreshResult>;
-}
-
 export type AgentSessionMcpTransport =
   | Readonly<{ kind: 'http' | 'sse'; url: string }>
-  | Readonly<{ kind: 'managed'; url?: string }>
   | Readonly<{ kind: 'hosted' | 'stdio' }>;
 
 export type AgentSessionMcpServer = Readonly<{
@@ -248,11 +264,11 @@ export interface AgentSessionMcpService {
   resolveServers(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly AgentSessionMcpServer[]>;
 }
 
-type AgentFeatureDecisionService = Readonly<{
+export type AgentFeatureDecisionService = Readonly<{
   isEnabled(featureId: string): boolean;
 }>;
 
-type AgentTerminalHostResolutionReason =
+export type AgentTerminalHostResolutionReason =
   | 'tmux_available'
   | 'tmux_forced'
   | 'tmux_unavailable'
@@ -267,11 +283,11 @@ type AgentTerminalHostResolutionReason =
   | 'windows_arm64_unsupported'
   | 'no_host_available';
 
-type AgentTerminalHostResolveRequest = Readonly<{
+export type AgentTerminalHostResolveRequest = Readonly<{
   preference: TerminalHostPreference;
 }>;
 
-type AgentTerminalHostResolveResult =
+export type AgentTerminalHostResolveResult =
   | Readonly<{
       status: 'resolved';
       hostKind: TerminalHostKind;
@@ -283,7 +299,7 @@ type AgentTerminalHostResolveResult =
       message: string;
     }>;
 
-type AgentTerminalHostLaunchInput = Readonly<{
+export type AgentTerminalHostLaunchInput = Readonly<{
   kind: 'agent-cli';
   agentId: string;
   args?: readonly string[];
@@ -293,7 +309,7 @@ type AgentTerminalHostLaunchInput = Readonly<{
   stdin?: string | Uint8Array;
 }>;
 
-type AgentTerminalHostCreateOrAttachRequest = Readonly<{
+export type AgentTerminalHostCreateOrAttachRequest = Readonly<{
   preference: TerminalHostPreference;
   sessionName: string;
   workingDirectory: string;
@@ -301,7 +317,7 @@ type AgentTerminalHostCreateOrAttachRequest = Readonly<{
   isolatedEnv: boolean;
 }>;
 
-type AgentTerminalHostDisposeIntent =
+export type AgentTerminalHostDisposeIntent =
   | Readonly<{
       kind: 'preserve_host';
       reason: 'plugin_deactivated' | 'host_shutdown' | 'runtime_recovery' | 'unspecified';
@@ -311,46 +327,39 @@ type AgentTerminalHostDisposeIntent =
       reason: 'session_closed';
     }>;
 
-type AgentTerminalHostLiveness = Readonly<{
-  paneAlive: boolean;
-  probeInconclusive?: boolean;
-  paneDead?: boolean;
-  panePid?: number;
-  paneCurrentCommand?: string;
-  paneExitStatus?: number;
-  paneScreenDumpCaptured?: boolean;
-  paneScreenDumpTruncated?: boolean;
-  paneScreenDumpError?: string;
-  observedAt: number;
-}>;
-
-type AgentTerminalHostService = Readonly<{
+export type AgentTerminalHostService = Readonly<{
   resolve(request: AgentTerminalHostResolveRequest): Promise<AgentTerminalHostResolveResult>;
   createOrAttachHost(request: AgentTerminalHostCreateOrAttachRequest): Promise<TerminalHostHandle>;
   injectUserPrompt(handle: TerminalHostHandle, input: TerminalPromptInput): Promise<TerminalInputInjectionResult>;
   interruptTurn(handle: TerminalHostHandle): Promise<void>;
-  evaluateLiveness(handle: TerminalHostHandle): Promise<AgentTerminalHostLiveness>;
+  evaluateLiveness(handle: TerminalHostHandle): Promise<TerminalHostLivenessV1>;
   captureInputState(handle: TerminalHostHandle): Promise<TerminalInputState | null>;
   controlPort(handle: TerminalHostHandle): Promise<TerminalControlPort | null>;
   dispose(handle: TerminalHostHandle, intent: AgentTerminalHostDisposeIntent): Promise<void>;
 }>;
 
-type AgentSessionModelOptionChoice = Readonly<{
+export type AgentSessionModelOptionChoice = Readonly<{
   value: string | number | boolean | null;
   name: string;
   description?: string;
 }>;
 
-type AgentSessionModelOption = Readonly<{
+export type AgentSessionModelOption = Readonly<{
   id: string;
   name: string;
   description?: string;
   type: string;
   currentValue: string | number | boolean | null;
   options?: readonly AgentSessionModelOptionChoice[];
+  /**
+   * Producer-declared override rule (see {@link AgentModelOptionOverrideRule}). This runtime
+   * mirror widens `currentValue` but must otherwise carry the same producer facts as the
+   * catalog descriptor, or a runtime republication silently narrows what was published.
+   */
+  overridesWhenOn?: AgentModelOptionOverrideRule;
 }>;
 
-type AgentSessionModel = Readonly<
+export type AgentSessionModel = Readonly<
   Omit<AgentModelDescriptor, 'modelOptions'> & {
     modelOptions?: readonly AgentSessionModelOption[];
     /**
@@ -362,28 +371,28 @@ type AgentSessionModel = Readonly<
   }
 >;
 
-type AgentSessionModelsSnapshot = Readonly<{
+export type AgentSessionModelsSnapshot = Readonly<{
   models: readonly AgentSessionModel[] | null;
   currentModelId?: string | null;
 }>;
 
-type AgentSessionModelsSource = Readonly<{
+export type AgentSessionModelsSource = Readonly<{
   read(): AgentSessionModelsSnapshot;
   subscribe(listener: (snapshot: AgentSessionModelsSnapshot) => void): Disposable;
 }>;
 
-type AgentSessionModelsService = Readonly<{
+export type AgentSessionModelsService = Readonly<{
   bind(source: AgentSessionModelsSource): Disposable;
 }>;
 
-type AgentSessionInFlightConfigurationOutcome = Readonly<
+export type AgentSessionInFlightConfigurationOutcome = Readonly<
   | { status: 'applied' }
   | { status: 'scheduled_in_turn' }
   | { status: 'unsupported'; reason?: string }
   | { status: 'failed'; reason?: string }
 >;
 
-type AgentSessionTerminalComposerClearOutcome =
+export type AgentSessionTerminalComposerClearOutcome =
   | Readonly<{ ok: true; status: 'cleared' | 'already_empty' }>
   | Readonly<{
       ok: false;
@@ -402,9 +411,10 @@ type AgentSessionTerminalComposerClearOutcome =
       error?: string;
     }>;
 
-type AgentSessionActiveInputBinding = Readonly<{
+export type AgentSessionActiveInputBinding = Readonly<{
   isTurnInFlight(): boolean;
   canSteer(): boolean;
+  canInterruptForPendingInput?(): boolean;
   onPromptQueued(): void;
   applyPermissionIntentDuringTurn(
     permissionIntent: AgentPermissionIntent,
@@ -417,7 +427,7 @@ type AgentSessionActiveInputBinding = Readonly<{
   ): Promise<unknown> | unknown;
 }>;
 
-type AgentSessionActiveInputStatus = Readonly<{
+export type AgentSessionActiveInputStatus = Readonly<{
   steerAvailable: boolean;
   steerUnavailableReason: 'unsafe_window' | 'user_terminal_draft' | 'turn_settling' | null;
   stateUpdatedAtMs: number;
@@ -428,32 +438,41 @@ type AgentSessionActiveInputStatus = Readonly<{
   pendingInputInterruptAndRunStateAt: number | null;
 }>;
 
-type AgentSessionActiveInputService = Readonly<{
+export type AgentSessionActiveInputService = Readonly<{
   bind(binding: AgentSessionActiveInputBinding): Disposable;
   publishStatus(status: AgentSessionActiveInputStatus): void;
 }>;
 
-type AgentSessionSystemRecordsService = Readonly<{
-  write(request: Readonly<{
-    namespace: SessionSystemRecordNamespace;
-    kind: SessionSystemRecordKind;
-    localId: string;
-    payload: JsonValue;
-  }>): Promise<void>;
-  read(request: Readonly<{
-    namespace: SessionSystemRecordNamespace;
-    localId: string;
-  }>): Promise<Readonly<{
-    namespace: SessionSystemRecordNamespace;
-    kind: SessionSystemRecordKind;
-    localId: string;
-    payload: JsonValue;
-  }> | null>;
+export type AgentSessionWorkflowActivityService = Readonly<{
+  /**
+   * Publishes the canonical compact session-activity headlines; invalid JSON fails closed.
+   *
+   * ONE call carrying BOTH keys (`SessionActivityHeadlineBundleV1`), because they describe the same
+   * committed run snapshots in two vocabularies. Two calls would mean two session-metadata
+   * mutations per drain — double the write traffic on every progress tick, and a window in which
+   * the two keys describe different worlds.
+   */
+  publishHeadlines(bundle: JsonValue): Promise<void>;
 }>;
 
-type AgentSessionWorkflowActivityService = Readonly<{
-  /** Publishes only the canonical compact workflow headline; invalid JSON fails closed. */
-  publishHeadline(headline: JsonValue): Promise<void>;
+export type AgentToolExecutionBeforeRequest = Readonly<{
+  turnId?: string;
+  callId: string;
+  name: string;
+  input: JsonValue;
+}>;
+
+export type AgentToolExecutionBeforeResult = Readonly<
+  | { status: 'continue'; input: JsonValue }
+  | { status: 'rejected'; code?: string; message?: string }
+  | { status: 'failed'; code: string }
+>;
+
+export type AgentToolExecutionService = Readonly<{
+  before(
+    request: AgentToolExecutionBeforeRequest,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<AgentToolExecutionBeforeResult>;
 }>;
 
 export type AgentSessionHostServices = Readonly<{
@@ -462,14 +481,13 @@ export type AgentSessionHostServices = Readonly<{
   models: AgentSessionModelsService;
   activeInput: AgentSessionActiveInputService;
   sessionHooks: AgentSessionHooksService;
-  transcripts: Readonly<{
+  transcripts: AgentTranscriptSessionEventPublisher & Readonly<{
     fileFollow: AgentTranscriptFileFollowService;
   }>;
   accountUsage: AgentAccountUsageService;
-  auth: AgentSessionAuthService;
   mcp: AgentSessionMcpService;
-  systemRecords: AgentSessionSystemRecordsService;
   workflowActivity: AgentSessionWorkflowActivityService;
+  toolExecution: AgentToolExecutionService;
 }>;
 
 export type AgentSessionRuntimeContext = AgentRuntimeContext & Readonly<{
@@ -477,5 +495,5 @@ export type AgentSessionRuntimeContext = AgentRuntimeContext & Readonly<{
     id: string;
     services: AgentSessionHostServices;
   }>;
-  workState: PluginCurrentSessionWorkStateService;
+  workState: WorkStateService;
 }>;

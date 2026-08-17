@@ -16,7 +16,13 @@ import type {
   AgentSessionConfigurationUpdate,
   AgentSessionConversationRollbackRequest,
   AgentSessionOpenRequest,
+  AgentSessionAuthRefreshClassification,
+  AgentSessionAuthRefreshError,
+  AgentSessionAuthRefreshPayload,
+  AgentSessionAuthRefreshRecovery,
   AgentSessionAuthRefreshRequest,
+  AgentSessionAuthRefreshResult,
+  AgentSessionAuthRefreshSelection,
   AgentSessionHooksService,
   AgentSessionHostServices,
   AgentSessionMcpServer,
@@ -24,16 +30,28 @@ import type {
   AgentSessionMcpService,
   AgentSessionRuntimeContext,
   AgentSessionRuntime,
+  AgentSessionRuntimeAuthApplyRequest,
+  AgentSessionRuntimeAuthApplyResult,
+  AgentSessionRuntimeAuthControl,
+  AgentSessionRuntimeAuthIdentityRequest,
+  AgentSessionRuntimeAuthIdentityResult,
   AgentSessionRuntimeFactory,
   AgentSessionRuntimeEvent,
   AgentSessionSendRequest,
   AgentSessionSendResult,
   AgentTerminalControlPresentation,
   AgentTerminalLaunchPlan,
+  AgentTerminalSessionStateUpdate,
   AgentTerminalSurface,
+  AgentToolExecutionLifecycle,
+  AgentToolExecutionService,
   AgentTranscriptFileFollowService,
 } from './agent-runtime.js';
-import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
+import type {
+  AgentSessionStartupInstructionsV1,
+  TranscriptRawAgentEventV1,
+} from '@happier-dev/protocol';
+import type { SessionRuntimeAuthRefreshResultV1 } from '@happier-dev/agents';
 import type { PluginAgentAcpTransport } from '@happier-dev/protocol';
 import type {
   ProviderAccountUsageRecordKeyV1,
@@ -55,60 +73,60 @@ import type {
 // curated `agent-runtime` declaration surface.
 // @ts-expect-error CORE.T2A: RuntimeCoreV1 is a retired shadow runtime ABI.
 import type { RuntimeCoreV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: RuntimeCore is a retired shadow runtime ABI.
-import type { RuntimeCore } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: SessionRuntimeV1 is a retired shadow runtime ABI.
-import type { SessionRuntimeV1 } from './agent-runtime.js';
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-63:Q09SRS5UMkE6IFJ1bnRpbWVDb3JlIGlzIGEgcmV0aXJlZCBzaGFkb3cgcnVudGltZSBBQkku:aW1wb3J0IHR5cGUgeyBSdW50aW1lQ29yZSB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type RuntimeCore = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-64:Q09SRS5UMkE6IFNlc3Npb25SdW50aW1lVjEgaXMgYSByZXRpcmVkIHNoYWRvdyBydW50aW1lIEFCSS4:aW1wb3J0IHR5cGUgeyBTZXNzaW9uUnVudGltZVYxIH0gZnJvbSAnLi9hZ2VudC1ydW50aW1lLmpzJzs */
+type SessionRuntimeV1 = never; /* @sdk-negative-type-case-end */
 // @ts-expect-error CORE.T2A: AcpSessionRuntimeV1 is replaced by the common ACP composer.
 import type { AcpSessionRuntimeV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: ExecutionRunBackendV1 is replaced by AgentExecutionRunRuntime.
-import type { ExecutionRunBackendV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: ExecutionRunBackend is replaced by AgentExecutionRunRuntime.
-import type { ExecutionRunBackend } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: ExecutionRunHostBackendV1 is host-private migration state.
-import type { ExecutionRunHostBackendV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: ExecutionRunHostBackend is host-private migration state.
-import type { ExecutionRunHostBackend } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: RuntimeEventV1 is replaced by AgentSessionRuntimeEvent.
-import type { RuntimeEventV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: RuntimeEventKindV1 is not a stable generic escape hatch.
-import type { RuntimeEventKindV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: RuntimeEventEnvelopeV1 is not a stable generic escape hatch.
-import type { RuntimeEventEnvelopeV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: RuntimeControlContribution is a retired private corridor.
-import type { RuntimeControlContribution } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: HostRuntimeControlServiceV1 is a retired private corridor.
-import type { HostRuntimeControlServiceV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: AgentRuntimeFacets is replaced by the closed runtime shape.
-import type { AgentRuntimeFacets } from './agent-runtime.js';
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-65:Q09SRS5UMkE6IEV4ZWN1dGlvblJ1bkJhY2tlbmRWMSBpcyByZXBsYWNlZCBieSBBZ2VudEV4ZWN1dGlvblJ1blJ1bnRpbWUu:aW1wb3J0IHR5cGUgeyBFeGVjdXRpb25SdW5CYWNrZW5kVjEgfSBmcm9tICcuL2FnZW50LXJ1bnRpbWUuanMnOw */
+type ExecutionRunBackendV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-66:Q09SRS5UMkE6IEV4ZWN1dGlvblJ1bkJhY2tlbmQgaXMgcmVwbGFjZWQgYnkgQWdlbnRFeGVjdXRpb25SdW5SdW50aW1lLg:aW1wb3J0IHR5cGUgeyBFeGVjdXRpb25SdW5CYWNrZW5kIH0gZnJvbSAnLi9hZ2VudC1ydW50aW1lLmpzJzs */
+type ExecutionRunBackend = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-67:Q09SRS5UMkE6IEV4ZWN1dGlvblJ1bkhvc3RCYWNrZW5kVjEgaXMgaG9zdC1wcml2YXRlIG1pZ3JhdGlvbiBzdGF0ZS4:aW1wb3J0IHR5cGUgeyBFeGVjdXRpb25SdW5Ib3N0QmFja2VuZFYxIH0gZnJvbSAnLi9hZ2VudC1ydW50aW1lLmpzJzs */
+type ExecutionRunHostBackendV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-68:Q09SRS5UMkE6IEV4ZWN1dGlvblJ1bkhvc3RCYWNrZW5kIGlzIGhvc3QtcHJpdmF0ZSBtaWdyYXRpb24gc3RhdGUu:aW1wb3J0IHR5cGUgeyBFeGVjdXRpb25SdW5Ib3N0QmFja2VuZCB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type ExecutionRunHostBackend = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-69:Q09SRS5UMkE6IFJ1bnRpbWVFdmVudFYxIGlzIHJlcGxhY2VkIGJ5IEFnZW50U2Vzc2lvblJ1bnRpbWVFdmVudC4:aW1wb3J0IHR5cGUgeyBSdW50aW1lRXZlbnRWMSB9IGZyb20gJy4vYWdlbnRzL3J1bnRpbWUvaW5kZXguanMnOw== */
+type RuntimeEventV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-70:Q09SRS5UMkE6IFJ1bnRpbWVFdmVudEtpbmRWMSBpcyBub3QgYSBzdGFibGUgZ2VuZXJpYyBlc2NhcGUgaGF0Y2gu:aW1wb3J0IHR5cGUgeyBSdW50aW1lRXZlbnRLaW5kVjEgfSBmcm9tICcuL2FnZW50LXJ1bnRpbWUuanMnOw */
+type RuntimeEventKindV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-71:Q09SRS5UMkE6IFJ1bnRpbWVFdmVudEVudmVsb3BlVjEgaXMgbm90IGEgc3RhYmxlIGdlbmVyaWMgZXNjYXBlIGhhdGNoLg:aW1wb3J0IHR5cGUgeyBSdW50aW1lRXZlbnRFbnZlbG9wZVYxIH0gZnJvbSAnLi9hZ2VudC1ydW50aW1lLmpzJzs */
+type RuntimeEventEnvelopeV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-72:Q09SRS5UMkE6IFJ1bnRpbWVDb250cm9sQ29udHJpYnV0aW9uIGlzIGEgcmV0aXJlZCBwcml2YXRlIGNvcnJpZG9yLg:aW1wb3J0IHR5cGUgeyBSdW50aW1lQ29udHJvbENvbnRyaWJ1dGlvbiB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type RuntimeControlContribution = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-73:Q09SRS5UMkE6IEhvc3RSdW50aW1lQ29udHJvbFNlcnZpY2VWMSBpcyBhIHJldGlyZWQgcHJpdmF0ZSBjb3JyaWRvci4:aW1wb3J0IHR5cGUgeyBIb3N0UnVudGltZUNvbnRyb2xTZXJ2aWNlVjEgfSBmcm9tICcuL2FnZW50LXJ1bnRpbWUuanMnOw */
+type HostRuntimeControlServiceV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-74:Q09SRS5UMkE6IEFnZW50UnVudGltZUZhY2V0cyBpcyByZXBsYWNlZCBieSB0aGUgY2xvc2VkIHJ1bnRpbWUgc2hhcGUu:aW1wb3J0IHR5cGUgeyBBZ2VudFJ1bnRpbWVGYWNldHMgfSBmcm9tICcuL2FnZW50LXJ1bnRpbWUuanMnOw */
+type AgentRuntimeFacets = never; /* @sdk-negative-type-case-end */
 // @ts-expect-error G6: AgentRuntimeV1 is replaced by the native AgentRuntime contract.
 import type { AgentRuntimeV1 } from './agent-runtime.js';
-// @ts-expect-error G5/G6: V1 compatibility factory typing is experimental-only.
-import type { AgentRuntimeV1CompatibilityFactory } from './agent-runtime.js';
-// @ts-expect-error G5: provider-binding drafts are graduated under unsuffixed names.
-import type { AgentProviderBindingAdapterV1 } from './agent-runtime.js';
-// @ts-expect-error G5: provider-binding drafts are graduated under unsuffixed names.
-import type { AgentProviderBindingPrepareInputV1 } from './agent-runtime.js';
-// @ts-expect-error G5: provider-binding drafts are graduated under unsuffixed names.
-import type { AgentProviderBindingPreparedV1 } from './agent-runtime.js';
-// @ts-expect-error G5: provider-binding drafts are graduated under unsuffixed names.
-import type { AgentProviderBindingCredentialV1 } from './agent-runtime.js';
-// @ts-expect-error G5: provider-binding drafts are graduated under unsuffixed names.
-import type { AgentProviderBindingResolvedFactsV1 } from './agent-runtime.js';
-// @ts-expect-error G5: provider-binding drafts are graduated under unsuffixed names.
-import type { AgentProviderBindingMaterializeInputV1 } from './agent-runtime.js';
-// @ts-expect-error CORE.T2A: native session MCP belongs only to `/agent-runtime`.
-import type { AgentSessionMcpServer as RootAgentSessionMcpServer } from './index.js';
-// @ts-expect-error CORE.T2A: native session MCP belongs only to `/agent-runtime`.
-import type { AgentSessionMcpService as RootAgentSessionMcpService } from './index.js';
-// @ts-expect-error CORE.T2A: native session MCP belongs only to `/agent-runtime`.
-import type { AgentSessionMcpTransport as RootAgentSessionMcpTransport } from './index.js';
-// @ts-expect-error CORE.T2A: native session MCP is not part of the generic `/runtime` service seam.
-import type { AgentSessionMcpServer as RuntimeAgentSessionMcpServer } from './runtime/index.js';
-// @ts-expect-error CORE.T2A: native session MCP is not part of the generic `/runtime` service seam.
-import type { AgentSessionMcpService as RuntimeAgentSessionMcpService } from './runtime/index.js';
-// @ts-expect-error CORE.T2A: native session MCP is not part of the generic `/runtime` service seam.
-import type { AgentSessionMcpTransport as RuntimeAgentSessionMcpTransport } from './runtime/index.js';
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-75:RzUvRzY6IFYxIGNvbXBhdGliaWxpdHkgZmFjdG9yeSB0eXBpbmcgaXMgZXhwZXJpbWVudGFsLW9ubHku:aW1wb3J0IHR5cGUgeyBBZ2VudFJ1bnRpbWVWMUNvbXBhdGliaWxpdHlGYWN0b3J5IH0gZnJvbSAnLi9hZ2VudC1ydW50aW1lLmpzJzs */
+type AgentRuntimeV1CompatibilityFactory = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-76:RzU6IHByb3ZpZGVyLWJpbmRpbmcgZHJhZnRzIGFyZSBncmFkdWF0ZWQgdW5kZXIgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBBZ2VudFByb3ZpZGVyQmluZGluZ0FkYXB0ZXJWMSB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type AgentProviderBindingAdapterV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-77:RzU6IHByb3ZpZGVyLWJpbmRpbmcgZHJhZnRzIGFyZSBncmFkdWF0ZWQgdW5kZXIgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBBZ2VudFByb3ZpZGVyQmluZGluZ1ByZXBhcmVJbnB1dFYxIH0gZnJvbSAnLi9hZ2VudC1ydW50aW1lLmpzJzs */
+type AgentProviderBindingPrepareInputV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-78:RzU6IHByb3ZpZGVyLWJpbmRpbmcgZHJhZnRzIGFyZSBncmFkdWF0ZWQgdW5kZXIgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBBZ2VudFByb3ZpZGVyQmluZGluZ1ByZXBhcmVkVjEgfSBmcm9tICcuL2FnZW50LXJ1bnRpbWUuanMnOw */
+type AgentProviderBindingPreparedV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-79:RzU6IHByb3ZpZGVyLWJpbmRpbmcgZHJhZnRzIGFyZSBncmFkdWF0ZWQgdW5kZXIgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBBZ2VudFByb3ZpZGVyQmluZGluZ0NyZWRlbnRpYWxWMSB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type AgentProviderBindingCredentialV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-80:RzU6IHByb3ZpZGVyLWJpbmRpbmcgZHJhZnRzIGFyZSBncmFkdWF0ZWQgdW5kZXIgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBBZ2VudFByb3ZpZGVyQmluZGluZ1Jlc29sdmVkRmFjdHNWMSB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type AgentProviderBindingResolvedFactsV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-81:RzU6IHByb3ZpZGVyLWJpbmRpbmcgZHJhZnRzIGFyZSBncmFkdWF0ZWQgdW5kZXIgdW5zdWZmaXhlZCBuYW1lcy4:aW1wb3J0IHR5cGUgeyBBZ2VudFByb3ZpZGVyQmluZGluZ01hdGVyaWFsaXplSW5wdXRWMSB9IGZyb20gJy4vYWdlbnQtcnVudGltZS5qcyc7 */
+type AgentProviderBindingMaterializeInputV1 = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-82:Q09SRS5UMkE6IG5hdGl2ZSBzZXNzaW9uIE1DUCBiZWxvbmdzIG9ubHkgdG8gYC9hZ2VudC1ydW50aW1lYC4:aW1wb3J0IHR5cGUgeyBBZ2VudFNlc3Npb25NY3BTZXJ2ZXIgYXMgUm9vdEFnZW50U2Vzc2lvbk1jcFNlcnZlciB9IGZyb20gJy4vaW5kZXguanMnOw */
+type RootAgentSessionMcpServer = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-83:Q09SRS5UMkE6IG5hdGl2ZSBzZXNzaW9uIE1DUCBiZWxvbmdzIG9ubHkgdG8gYC9hZ2VudC1ydW50aW1lYC4:aW1wb3J0IHR5cGUgeyBBZ2VudFNlc3Npb25NY3BTZXJ2aWNlIGFzIFJvb3RBZ2VudFNlc3Npb25NY3BTZXJ2aWNlIH0gZnJvbSAnLi9pbmRleC5qcyc7 */
+type RootAgentSessionMcpService = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-84:Q09SRS5UMkE6IG5hdGl2ZSBzZXNzaW9uIE1DUCBiZWxvbmdzIG9ubHkgdG8gYC9hZ2VudC1ydW50aW1lYC4:aW1wb3J0IHR5cGUgeyBBZ2VudFNlc3Npb25NY3BUcmFuc3BvcnQgYXMgUm9vdEFnZW50U2Vzc2lvbk1jcFRyYW5zcG9ydCB9IGZyb20gJy4vaW5kZXguanMnOw */
+type RootAgentSessionMcpTransport = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-85:Q09SRS5UMkE6IG5hdGl2ZSBzZXNzaW9uIE1DUCBpcyBub3QgcGFydCBvZiB0aGUgZ2VuZXJpYyBgL3J1bnRpbWVgIHNlcnZpY2Ugc2VhbS4:aW1wb3J0IHR5cGUgeyBBZ2VudFNlc3Npb25NY3BTZXJ2ZXIgYXMgUnVudGltZUFnZW50U2Vzc2lvbk1jcFNlcnZlciB9IGZyb20gJy4vcnVudGltZS9pbmRleC5qcyc7 */
+type RuntimeAgentSessionMcpServer = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-86:Q09SRS5UMkE6IG5hdGl2ZSBzZXNzaW9uIE1DUCBpcyBub3QgcGFydCBvZiB0aGUgZ2VuZXJpYyBgL3J1bnRpbWVgIHNlcnZpY2Ugc2VhbS4:aW1wb3J0IHR5cGUgeyBBZ2VudFNlc3Npb25NY3BTZXJ2aWNlIGFzIFJ1bnRpbWVBZ2VudFNlc3Npb25NY3BTZXJ2aWNlIH0gZnJvbSAnLi9ydW50aW1lL2luZGV4LmpzJzs */
+type RuntimeAgentSessionMcpService = never; /* @sdk-negative-type-case-end */
+/* @sdk-negative-type-case:src-agentRuntimeSurfaceContract-ts-87:Q09SRS5UMkE6IG5hdGl2ZSBzZXNzaW9uIE1DUCBpcyBub3QgcGFydCBvZiB0aGUgZ2VuZXJpYyBgL3J1bnRpbWVgIHNlcnZpY2Ugc2VhbS4:aW1wb3J0IHR5cGUgeyBBZ2VudFNlc3Npb25NY3BUcmFuc3BvcnQgYXMgUnVudGltZUFnZW50U2Vzc2lvbk1jcFRyYW5zcG9ydCB9IGZyb20gJy4vcnVudGltZS9pbmRleC5qcyc7 */
+type RuntimeAgentSessionMcpTransport = never; /* @sdk-negative-type-case-end */
 
 type AssertNever<T extends never> = T;
 type AssertTrue<T extends true> = T;
@@ -117,7 +135,6 @@ type Equal<TLeft, TRight> =
   (<T>() => T extends TRight ? 1 : 2) ? true : false;
 
 type AgentAccountUsageService = AgentSessionHostServices['accountUsage'];
-type AgentSessionAuthService = AgentSessionHostServices['auth'];
 type AgentSessionMcpTransport = AgentSessionMcpServer['transport'];
 type AgentTerminalLaunchRequest =
   Parameters<AgentTerminalSurface['resolveLaunch']>[0];
@@ -180,6 +197,175 @@ type _FactoryContextMustBeServiceFree = AssertNever<
 >;
 type _FactoryContextIdentityMustBeExact = AssertTrue<
   Equal<keyof AgentRuntimeFactoryContext, 'plugin' | 'agent' | 'signal'>
+>;
+
+type _AgentToolLifecycleMustAdvertiseHonestBoundaryCapability = AssertTrue<
+  Equal<
+    AgentToolExecutionLifecycle['capability'],
+    'interceptable' | 'observable'
+  >
+>;
+type _AgentRuntimeMustProjectToolLifecycleCapability = AssertTrue<
+  Equal<NonNullable<AgentRuntime['toolExecution']>, AgentToolExecutionLifecycle>
+>;
+
+type _SessionRuntimeAuthMustBeOneSemanticFacet = AssertTrue<
+  Equal<NonNullable<AgentSessionRuntime['runtimeAuth']>, AgentSessionRuntimeAuthControl>
+>;
+
+type _SessionRuntimeAuthControlMustExposeOnlySemanticOperations = AssertTrue<
+  Equal<keyof AgentSessionRuntimeAuthControl, 'apply' | 'readIdentity'>
+>;
+
+type _SessionRuntimeAuthApplyMustBeTyped = AssertTrue<
+  AgentSessionRuntimeAuthControl['apply'] extends (
+    request: AgentSessionRuntimeAuthApplyRequest,
+  ) => Promise<AgentSessionRuntimeAuthApplyResult>
+    ? true
+    : false
+>;
+
+type _SessionRuntimeAuthApplyRequestMustBeBounded = AssertTrue<
+  Equal<
+    keyof AgentSessionRuntimeAuthApplyRequest,
+    | 'serviceId'
+    | 'reason'
+    | 'requireDirectLiveHotApply'
+    | 'expected'
+    | 'authGeneration'
+  >
+>;
+
+type _SessionRuntimeAuthExpectedBindingMustBeBounded = AssertTrue<
+  Equal<
+    keyof NonNullable<AgentSessionRuntimeAuthApplyRequest['expected']>,
+    'profileId' | 'groupId' | 'generation' | 'credentialRevision'
+  >
+>;
+
+type _SessionRuntimeAuthGenerationMustBeJsonSafe = AssertTrue<
+  Equal<
+    AgentSessionRuntimeAuthApplyRequest['authGeneration'],
+    Readonly<Record<string, JsonValue>>
+  >
+>;
+
+type _SessionRuntimeAuthApplyResultMustBeBounded = AssertTrue<
+  Equal<
+    keyof Extract<AgentSessionRuntimeAuthApplyResult, { ok: true }>,
+    | 'ok'
+    | 'appliedVia'
+    | 'activeAccountId'
+    | 'verification'
+    | 'durability'
+  >
+>;
+
+type _SessionRuntimeAuthApplyFailureMustBeBounded = AssertTrue<
+  Equal<
+    keyof Extract<AgentSessionRuntimeAuthApplyResult, { ok: false }>,
+    | 'ok'
+    | 'error'
+    | 'errorCode'
+    | 'appliedVia'
+    | 'activeAccountId'
+    | 'recovery'
+    | 'verification'
+    | 'durability'
+  >
+>;
+
+type _SessionRuntimeAuthVerificationMustBeBounded = AssertTrue<
+  Equal<
+    keyof NonNullable<AgentSessionRuntimeAuthApplyResult['verification']>,
+    | 'activeAccountId'
+    | 'providerAccountId'
+    | 'proofStrength'
+    | 'source'
+    | 'generationApplication'
+  >
+>;
+
+type _SessionRuntimeAuthGenerationProofMustBeBounded = AssertTrue<
+  Equal<
+    keyof NonNullable<
+      NonNullable<AgentSessionRuntimeAuthApplyResult['verification']>['generationApplication']
+    >,
+    | 'serviceId'
+    | 'groupId'
+    | 'profileId'
+    | 'generation'
+    | 'credentialRevision'
+    | 'credentialFingerprint'
+  >
+>;
+
+type _SessionRuntimeAuthDurabilityMustBeBounded = AssertTrue<
+  Equal<
+    keyof NonNullable<AgentSessionRuntimeAuthApplyResult['durability']>,
+    'persisted' | 'errorCode'
+  >
+>;
+
+type _SessionRuntimeAuthIdentityMustBeTyped = AssertTrue<
+  AgentSessionRuntimeAuthControl['readIdentity'] extends (
+    request: AgentSessionRuntimeAuthIdentityRequest,
+  ) => Promise<AgentSessionRuntimeAuthIdentityResult>
+    ? true
+    : false
+>;
+
+type _SessionRuntimeAuthIdentityRequestMustBeBounded = AssertTrue<
+  Equal<
+    keyof AgentSessionRuntimeAuthIdentityRequest,
+    'serviceId' | 'reason' | 'requireExactProof' | 'expected'
+  >
+>;
+
+type _SessionRuntimeAuthIdentityResultMustBeBounded = AssertTrue<
+  Equal<
+    keyof Extract<AgentSessionRuntimeAuthIdentityResult, { ok: true }>,
+    'ok' | 'serviceId' | 'identity' | 'runtime'
+  >
+>;
+
+type _SessionRuntimeAuthIdentityFailureMustBeBounded = AssertTrue<
+  Equal<
+    keyof Extract<AgentSessionRuntimeAuthIdentityResult, { ok: false }>,
+    'ok' | 'error' | 'errorCode'
+  >
+>;
+
+type _SessionRuntimeAuthIdentityMustBeBounded = AssertTrue<
+  Equal<
+    keyof Extract<AgentSessionRuntimeAuthIdentityResult, { ok: true }>['identity'],
+    | 'strategy'
+    | 'proofStrength'
+    | 'providerAccountId'
+    | 'sharedAuthSurfaceId'
+    | 'accountLabel'
+    | 'source'
+  >
+>;
+
+type _SessionRuntimeAuthRuntimeFactsMustBeBounded = AssertTrue<
+  Equal<
+    keyof NonNullable<Extract<AgentSessionRuntimeAuthIdentityResult, { ok: true }>['runtime']>,
+    | 'safeToProbe'
+    | 'safeToApply'
+    | 'inProviderTurn'
+    | 'profileId'
+    | 'groupId'
+    | 'generation'
+    | 'credentialRevision'
+  >
+>;
+
+type _SessionRuntimeAuthMustNotExposeTransportMethodNames = AssertNever<
+  Extract<
+    keyof AgentSessionRuntime,
+    'applyConnectedServiceAuthGeneration' | 'readConnectedServiceRuntimeIdentity'
+  >
 >;
 
 type _RuntimeMustNotExposeShadowLifecycle = AssertNever<
@@ -266,15 +452,31 @@ type _ForkMustNotCarryStartupInstructions = AssertNever<
   >
 >;
 
-type _ExecutionRunOpenMustReuseTheBoundedLaunchEnvironment = AssertTrue<
+type _ExecutionRunOpenMustCarryTheBoundedLaunchEnvironment = AssertTrue<
+  AgentExecutionRunOpenRequest extends Readonly<{
+    launchEnvironment?: AgentLaunchEnvironment;
+  }> ? true : false
+>;
+
+type _ExecutionRunOpenMustCarryProviderBoundLaunchInputs = AssertTrue<
   Equal<
-    Extract<keyof AgentExecutionRunOpenRequest, 'launchEnvironment'>,
-    'launchEnvironment'
+    Extract<
+      keyof AgentExecutionRunOpenRequest,
+      'modelSelection' | 'configuration' | 'providerBinding'
+    >,
+    'modelSelection' | 'configuration' | 'providerBinding'
   >
 >;
 
 type _ExecutionRunOpenMustNotExposeAnotherEnvironmentCarrier = AssertNever<
   Extract<keyof AgentExecutionRunOpenRequest, 'env' | 'environment' | 'unsetEnvKeys' | 'rawMetadata'>
+>;
+
+type _ExecutionRunOpenMustNotBecomeAPersistentSessionCarrier = AssertNever<
+  Extract<
+    keyof AgentExecutionRunOpenRequest,
+    'connectedAccounts' | 'mcpServers' | 'startupInstructions'
+  >
 >;
 
 type _SessionOpenMustNotExposeASecondPermissionOrMcpOwner = AssertNever<
@@ -348,13 +550,23 @@ type _AgentRuntimeMustNotExposeGenericControls = AssertNever<
 >;
 
 type _TerminalLaunchRequestMustStayHostResolved = AssertTrue<
-  Equal<keyof AgentTerminalLaunchRequest, 'sessionId' | 'cwd' | 'metadata'>
+  Equal<
+    keyof AgentTerminalLaunchRequest,
+    'sessionId' | 'cwd' | 'metadata' | 'modelSelection'
+  >
 >;
 
 type _TerminalLaunchPlanMustStayDataOnly = AssertTrue<
   Equal<
     keyof AgentTerminalLaunchPlan,
     'argv' | 'environment' | 'process' | 'presentation' | 'resultMetadata'
+  >
+>;
+
+type _TerminalResultUpdatesMustStayIdentityOnly = AssertTrue<
+  Equal<
+    AgentTerminalSessionStateUpdate['fieldId'],
+    'identity.runtimeDescriptor' | 'identity.providerSessionId'
   >
 >;
 
@@ -380,22 +592,24 @@ type _SessionHostServicesMustStayNarrowAndProviderNeutral = AssertTrue<
     | 'sessionHooks'
     | 'transcripts'
     | 'accountUsage'
-    | 'auth'
     | 'mcp'
     | 'features'
     | 'terminalHost'
     | 'models'
     | 'activeInput'
-    | 'systemRecords'
     | 'workflowActivity'
+    | 'toolExecution'
   >
+>;
+
+type _AgentToolExecutionServiceMustExposeOnlyThePreEffectBoundary = AssertTrue<
+  Equal<keyof AgentToolExecutionService, 'before'>
 >;
 
 type _SessionMcpTransportMustStayBounded = AssertTrue<
   Equal<
     AgentSessionMcpTransport,
     | Readonly<{ kind: 'http' | 'sse'; url: string }>
-    | Readonly<{ kind: 'managed'; url?: string }>
     | Readonly<{ kind: 'hosted' | 'stdio' }>
   >
 >;
@@ -419,48 +633,29 @@ type _SessionHookServiceMustExposeOnlyTheExistingLifecycleOwner = AssertTrue<
   >
 >;
 
-type _SessionTranscriptServiceMustExposeOnlyFileFollow = AssertTrue<
-  Equal<keyof AgentSessionHostServices['transcripts'], 'fileFollow'>
->;
-
-type AgentSessionSystemRecordWriteRequest = Parameters<
-  AgentSessionHostServices['systemRecords']['write']
->[0];
-
-type AgentSessionSystemRecordReadRequest = Parameters<
-  AgentSessionHostServices['systemRecords']['read']
->[0];
-
-type AgentSessionSystemRecordReadResult = Exclude<
-  Awaited<ReturnType<AgentSessionHostServices['systemRecords']['read']>>,
-  null
->;
-
-type _SessionSystemRecordWriteMustStaySessionScopedAndPayloadOnly = AssertTrue<
+type _SessionTranscriptServiceMustExposeOnlyDurableHostOwnedOperations = AssertTrue<
   Equal<
-    keyof AgentSessionSystemRecordWriteRequest,
-    'namespace' | 'kind' | 'localId' | 'payload'
+    keyof AgentSessionHostServices['transcripts'],
+    'fileFollow' | 'markSourceFactConsumed' | 'publishSessionEvent'
   >
 >;
 
-type _SessionSystemRecordReadMustStayKeyedAndSessionScoped = AssertTrue<
-  Equal<keyof AgentSessionSystemRecordReadRequest, 'namespace' | 'localId'>
->;
-
-type _SessionSystemRecordReadResultMustNotExposeStorageEnvelope = AssertTrue<
+type _SessionEventPublicationMustAwaitDurableCustody = AssertTrue<
   Equal<
-    keyof AgentSessionSystemRecordReadResult,
-    'namespace' | 'kind' | 'localId' | 'payload'
+    AgentSessionHostServices['transcripts']['publishSessionEvent'],
+    (
+      event: TranscriptRawAgentEventV1,
+    ) => Promise<Readonly<{ status: 'custodied' }>>
   >
 >;
 
 type _SessionWorkflowActivityServiceMustExposeOnlyTheCompactHeadlineProjection = AssertTrue<
-  Equal<keyof AgentSessionHostServices['workflowActivity'], 'publishHeadline'>
+  Equal<keyof AgentSessionHostServices['workflowActivity'], 'publishHeadlines'>
 >;
 
 type _SessionWorkflowActivityPublicationMustAcceptOnlyTheCanonicalHeadline = AssertTrue<
   Equal<
-    Parameters<AgentSessionHostServices['workflowActivity']['publishHeadline']>[0],
+    Parameters<AgentSessionHostServices['workflowActivity']['publishHeadlines']>[0],
     JsonValue
   >
 >;
@@ -476,12 +671,12 @@ type _SessionAccountUsageMustStayOnTheExistingOwner = AssertTrue<
   >
 >;
 
-type _ProtocolAccountUsageSnapshotMustSatisfyTheAuthorDto = AssertTrue<
-  ProviderAccountUsageSnapshotV1 extends AgentAccountUsageSnapshot ? true : false
+type _AgentAccountUsageSnapshotMustNotExposeHostCustody = AssertNever<
+  Extract<keyof AgentAccountUsageSnapshot, 'recordId' | 'persisted'>
 >;
 
-type _AuthorAccountUsageSnapshotMustRemainProtocolCompatible = AssertTrue<
-  AgentAccountUsageSnapshot extends ProviderAccountUsageSnapshotV1 ? true : false
+type _AgentAccountUsageSnapshotMustRemainAProtocolObservation = AssertTrue<
+  AgentAccountUsageSnapshot extends Omit<ProviderAccountUsageSnapshotV1, 'recordId'> ? true : false
 >;
 
 type _ProtocolAccountUsageRecordKeyMustSatisfyTheAuthorDto = AssertTrue<
@@ -492,12 +687,67 @@ type _AuthorAccountUsageRecordKeyMustRemainProtocolCompatible = AssertTrue<
   AgentAccountUsageRecordKey extends ProviderAccountUsageRecordKeyV1 ? true : false
 >;
 
-type _SessionAuthMustExposeOnlyRuntimeRefresh = AssertTrue<
-  Equal<keyof AgentSessionAuthService, 'refreshRuntimeAuth'>
+type _AgentAccountUsageSourceAddressMustAcceptExternalServices = AssertTrue<
+  'third-party.example/usage' extends Parameters<AgentAccountUsageService['resolveSourceContext']>[0]['serviceId']
+    ? true
+    : false
+>;
+
+type _AgentAccountUsageRecordMustUseTheSemanticSourceAddress = AssertTrue<
+  Equal<
+    NonNullable<Parameters<AgentAccountUsageService['recordSnapshot']>[0]['source']>,
+    Parameters<AgentAccountUsageService['resolveSourceContext']>[0]
+  >
+>;
+
+type _AgentAccountUsageSourceContextMustNotExposeHostWitnesses = AssertNever<
+  Extract<
+    keyof NonNullable<Awaited<ReturnType<AgentAccountUsageService['resolveSourceContext']>>>,
+    'groupGeneration' | 'credentialFingerprint'
+  >
+>;
+
+type _AgentAccountUsageRecordResultMustStaySemantic = AssertTrue<
+  Equal<
+    Awaited<ReturnType<AgentAccountUsageService['recordSnapshot']>>,
+    | Readonly<{ status: 'recorded' }>
+    | Readonly<{ status: 'unavailable'; reason: 'session_scope_unavailable' | 'daemon_unavailable' }>
+    | Readonly<{ status: 'rejected'; reason: 'invalid_snapshot' | 'session_mismatch' | 'daemon_rejected' }>
+  >
+>;
+
+type _AgentAccountUsageAdoptionProofMustStayProviderOwned = AssertTrue<
+  Equal<
+    Parameters<AgentAccountUsageService['adoptProvisionalRecord']>[0]['adoption']['proof']['kind'],
+    'id_token_account_id' | 'provider_account_id_match' | 'provider_owned_subject_proof'
+  >
+>;
+
+type _AgentAccountUsageAdoptionResultMustNotEchoHostCustody = AssertTrue<
+  Equal<
+    Awaited<ReturnType<AgentAccountUsageService['adoptProvisionalRecord']>>,
+    | Readonly<{ status: 'adopted' | 'already_adopted' }>
+    | Readonly<{ status: 'unavailable'; reason: 'session_scope_unavailable' | 'daemon_unavailable' }>
+    | Readonly<{ status: 'rejected'; reason: 'invalid_adoption' | 'session_mismatch' | 'daemon_rejected' }>
+  >
 >;
 
 type _SessionAuthRequestMustNotExposeHostAgentIdentity = AssertNever<
   Extract<keyof AgentSessionAuthRefreshRequest, 'agentId'>
+>;
+
+type _SessionAuthRequestMustUseNamedBoundedContracts = AssertTrue<
+  Equal<
+    Pick<AgentSessionAuthRefreshRequest, 'selection' | 'classification'>,
+    Readonly<{
+      selection?: AgentSessionAuthRefreshSelection;
+      classification?: AgentSessionAuthRefreshClassification;
+    }>
+  >
+>;
+
+type _SessionAuthResultMustUseCanonicalRuntimeContract = AssertTrue<
+  Equal<AgentSessionAuthRefreshResult, SessionRuntimeAuthRefreshResultV1>
 >;
 
 type _RollbackRequestMustBeHostResolved = AssertTrue<

@@ -1,17 +1,21 @@
+/** @moduleRealm daemon */
+import {
+  expandHomeDirPath,
+  resolveHomeDirFromEnvironment,
+} from '@happier-dev/cli-common/path';
 import { realpath, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const realpathAsync = promisify(realpath);
 
-export function expandHomePath(raw: string, homeDir: string = homedir()): string {
+export { resolveHomeDirFromEnvironment };
+
+export function expandHomePath(raw: string, homeDir?: string): string {
   const trimmed = raw.trim();
-  if (trimmed === '~') return homeDir;
-  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-    return resolve(homeDir, trimmed.slice(2));
-  }
-  return trimmed;
+  return homeDir === undefined
+    ? expandHomeDirPath(trimmed)
+    : expandHomeDirPath(trimmed, { HOME: homeDir, USERPROFILE: homeDir });
 }
 
 export function resolveConfiguredPath(raw: string, input: Readonly<{

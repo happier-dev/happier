@@ -1,12 +1,12 @@
 {
   "schemaVersion": 2, "id": "examples.hosted-web", "version": "0.1.0", "displayName": "Hosted Web Example",
-  "description": "Hosted-web renderer with a declarative fallback.", "engines": { "happier": "^0.2.0" },
+  "description": "Hosted-web renderer with a declarative fallback.", "engines": { "happier": "0.2.10" },
   "runtime": { "apiVersion": 1 },
   "hostAccess": { "required": [], "optional": [] },
   "contributes": { "ui": {
-    "views": [{ "id": "panel", "placement": "session.details", "renderer": "panel-web", "fallbackRenderers": ["panel-fallback"], "title": "Hosted Web Example" }],
+    "views": [{ "id": "panel", "container": "appPage", "target": { "kind": "app" }, "renderer": "panel-web", "fallbackRenderers": ["panel-fallback"], "title": "Hosted Web Example" }],
     "renderers": [
-      { "id": "panel-web", "kind": "hostedWeb", "source": { "kind": "artifact", "artifact": "panel-web" }, "requiredHostMethods": ["context"] },
+      { "id": "panel-web", "kind": "hostedWeb", "source": { "kind": "artifact", "artifact": "panel-web" }, "requiredHostMethods": ["context", "executeAction"] },
       { "id": "panel-fallback", "kind": "declarative", "root": { "kind": "text", "text": "Hosted web is unavailable.", "tone": "muted" } }
     ], "translations": []
   } }

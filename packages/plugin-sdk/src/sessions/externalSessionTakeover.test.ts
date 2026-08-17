@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type {
     BackendSessionLaunchHintsV1,
-} from './index.js';
+} from '../agents/runtime/index.js';
 import {
     AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS,
     validateAgentExternalSessionTakeoverContribution,
@@ -14,7 +14,7 @@ import {
     type AgentExternalSessionTakeoverResolveLaunchCallback,
     type AgentExternalSessionTakeoverResolveLaunchRequest,
     type AgentExternalSessionTakeoverResolveLaunchResult,
-} from './index.js';
+} from './external/index.js';
 
 const invocation = {
     signal: new AbortController().signal,
@@ -33,6 +33,7 @@ const request = {
     linkData: {
         nativeIdentity: 'native-session-1',
     },
+    targetDirectory: '/local/selected/project',
     linkedDirectory: '/work/project',
 } as const satisfies AgentExternalSessionTakeoverResolveLaunchRequest;
 
@@ -57,7 +58,7 @@ function rejects(run: () => unknown): void {
 }
 
 describe('External Session takeover public contract', () => {
-    it('publishes exactly one request-only callback and the existing result envelope', async () => {
+    it('publishes exactly one request-only callback and ignores unrelated members', async () => {
         expectTypeOf<keyof AgentExternalSessionTakeoverContribution>()
             .toEqualTypeOf<'resolveLaunch'>();
         expectTypeOf<Parameters<AgentExternalSessionTakeoverResolveLaunchCallback>>()
@@ -73,10 +74,39 @@ describe('External Session takeover public contract', () => {
         expect(Object.keys(contribution)).toEqual(['resolveLaunch']);
         await expect(contribution.resolveLaunch(request)).resolves.toEqual(result);
 
-        rejects(() => validateAgentExternalSessionTakeoverContribution({
+        const withRetiredOperation = validateAgentExternalSessionTakeoverContribution({
             resolveLaunch,
             resolveStop: () => result,
-        }));
+        });
+        expect(Object.keys(withRetiredOperation)).toEqual(['resolveLaunch']);
+    });
+
+    it('captures class, prototype, and accessor-backed callbacks with the author receiver', async () => {
+        class StructuralTakeover {
+            readonly ignoredByRegistration = true;
+            readonly owner = 'structural-takeover';
+
+            get resolveLaunch() {
+                return this.resolveLaunchImplementation;
+            }
+
+            resolveLaunchImplementation() {
+                return Promise.resolve({
+                    ...result,
+                    value: { ...result.value, owner: this.owner },
+                });
+            }
+        }
+        const contribution = new StructuralTakeover();
+        const snapshot = validateAgentExternalSessionTakeoverContribution(
+            contribution as unknown as AgentExternalSessionTakeoverContribution,
+        );
+
+        expect(snapshot).not.toBe(contribution);
+        expect(Object.isFrozen(snapshot)).toBe(true);
+        expect(snapshot).not.toHaveProperty('ignoredByRegistration');
+        await expect(Reflect.apply(snapshot.resolveLaunch, { owner: 'foreign' }, [request]))
+            .resolves.toMatchObject({ value: { owner: 'structural-takeover' } });
     });
 
     it('strictly snapshots the bounded fresh linked-identity request', () => {
@@ -88,6 +118,8 @@ describe('External Session takeover public contract', () => {
             { ...request, linkedSessionId: 's'.repeat(2_001) },
             { ...request, remoteSessionId: '' },
             { ...request, remoteSessionId: 'r'.repeat(2_001) },
+            { ...request, targetDirectory: '' },
+            { ...request, targetDirectory: 'd'.repeat(10_001) },
             { ...request, linkedDirectory: '' },
             { ...request, linkedDirectory: 'd'.repeat(10_001) },
             { ...request, source: { kind: '', rootIdentity: 'root-1' } },
@@ -105,10 +137,12 @@ describe('External Session takeover public contract', () => {
             ...request,
             linkedSessionId: 's'.repeat(2_000),
             remoteSessionId: 'r'.repeat(2_000),
+            targetDirectory: 'd'.repeat(10_000),
             linkedDirectory: 'd'.repeat(10_000),
         })).toMatchObject({
             linkedSessionId: 's'.repeat(2_000),
             remoteSessionId: 'r'.repeat(2_000),
+            targetDirectory: 'd'.repeat(10_000),
             linkedDirectory: 'd'.repeat(10_000),
         });
     });

@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://happier.dev/schemas/plugin-sdk-api-surface.schema.json",
+  "title": "Happier Plugin SDK API surface inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "entrypoints",
+    "symbols"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "entrypoints": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/entrypoint"
+      }
+    },
+    "symbols": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/symbol"
+      }
+    }
+  },
+  "$defs": {
+    "realm": {
+      "enum": [
+        "any",
+        "browser",
+        "react-native",
+        "client",
+        "daemon",
+        "build"
+      ]
+    },
+    "specifier": {
+      "type": "string",
+      "pattern": "^(\\.|\\./[a-z0-9][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)*)$"
+    },
+    "sourceModule": {
+      "type": "string",
+      "pattern": "^src/[A-Za-z0-9][A-Za-z0-9._/-]*\\.tsx?$"
+    },
+    "typesConditionTarget": {
+      "type": "string",
+      "pattern": "^\\./dist/[A-Za-z0-9][A-Za-z0-9._/-]*\\.d\\.ts$"
+    },
+    "runtimeConditionTarget": {
+      "type": "string",
+      "pattern": "^\\./dist/[A-Za-z0-9][A-Za-z0-9._/-]*\\.js$"
+    },
+    "conditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "types"
+      ],
+      "properties": {
+        "types": {
+          "$ref": "#/$defs/typesConditionTarget"
+        },
+        "browser": {
+          "$ref": "#/$defs/runtimeConditionTarget"
+        },
+        "react-native": {
+          "$ref": "#/$defs/runtimeConditionTarget"
+        },
+        "default": {
+          "$ref": "#/$defs/runtimeConditionTarget"
+        }
+      }
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "specifier",
+        "sourceModule",
+        "visibility",
+        "realm",
+        "conditions"
+      ],
+      "properties": {
+        "specifier": {
+          "$ref": "#/$defs/specifier"
+        },
+        "sourceModule": {
+          "$ref": "#/$defs/sourceModule"
+        },
+        "visibility": {
+          "enum": [
+            "author",
+            "host"
+          ]
+        },
+        "realm": {
+          "$ref": "#/$defs/realm"
+        },
+        "conditions": {
+          "$ref": "#/$defs/conditions"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "visibility": {
+                "const": "author"
+              }
+            },
+            "required": [
+              "visibility"
+            ]
+          },
+          "then": {
+            "properties": {
+              "specifier": {
+                "not": {
+                  "pattern": "^\\./(?:experimental|internal|host)(?:/|$)"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "visibility": {
+                "const": "host"
+              }
+            },
+            "required": [
+              "visibility"
+            ]
+          },
+          "then": {
+            "properties": {
+              "specifier": {
+                "enum": [
+                  "./host/registration",
+                  "./host/fs/json-owner-file-lock",
+                  "./host/targeted-contributions"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "visibility": {
+                "const": "host"
+              },
+              "specifier": {
+                "const": "./host/registration"
+              }
+            },
+            "required": [
+              "visibility",
+              "specifier"
+            ]
+          },
+          "then": {
+            "properties": {
+              "realm": {
+                "const": "any"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "visibility": {
+                "const": "host"
+              },
+              "specifier": {
+                "enum": [
+                  "./host/fs/json-owner-file-lock",
+                  "./host/targeted-contributions"
+                ]
+              }
+            },
+            "required": [
+              "visibility",
+              "specifier"
+            ]
+          },
+          "then": {
+            "properties": {
+              "realm": {
+                "const": "daemon"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "symbol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "specifier",
+        "exportName",
+        "kind",
+        "sourceModule",
+        "sourceExport",
+        "realm",
+        "stability"
+      ],
+      "properties": {
+        "specifier": {
+          "$ref": "#/$defs/specifier"
+        },
+        "exportName": {
+          "type": "string",
+          "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+        },
+        "kind": {
+          "enum": [
+            "type",
+            "value"
+          ]
+        },
+        "sourceModule": {
+          "$ref": "#/$defs/sourceModule"
+        },
+        "sourceExport": {
+          "type": "string",
+          "pattern": "^[A-Za-z_$][A-Za-z0-9_$]*$"
+        },
+        "realm": {
+          "$ref": "#/$defs/realm"
+        },
+        "stability": {
+          "description": "Current author output uses preview or structured deprecated. Stable and experimental remain readable only for already-emitted inventory rows until the sole publisher rematerializes them.",
+          "enum": [
+            "preview",
+            "deprecated",
+            "stable",
+            "experimental",
+            "host-internal"
+          ]
+        },
+        "replacement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "removalCondition": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "stability": {
+                "const": "deprecated"
+              }
+            },
+            "required": [
+              "stability"
+            ]
+          },
+          "then": {
+            "required": [
+              "replacement",
+              "removalCondition"
+            ]
+          },
+          "else": {
+            "properties": {
+              "replacement": false,
+              "removalCondition": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

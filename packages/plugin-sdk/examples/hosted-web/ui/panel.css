@@ -1,0 +1,35 @@
+:root {
+  background: var(--happier-plugin-color-canvas, transparent);
+  color: var(--happier-plugin-color-text, inherit);
+  font-family: var(--happier-plugin-font-family, system-ui, sans-serif);
+}
+
+body {
+  margin: 0;
+  font-size: var(--happier-plugin-text-body-size, 14px);
+  line-height: var(--happier-plugin-text-body-line-height, 20px);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--happier-plugin-spacing-small, 8px);
+  padding: var(--happier-plugin-spacing-medium, 12px);
+}
+
+[data-role="status"] {
+  color: var(--happier-plugin-color-secondary-text, currentColor);
+}
+
+#root[data-status="error"] [data-role="status"] {
+  color: var(--happier-plugin-color-danger, currentColor);
+}
+
+[data-role="save"] {
+  align-self: flex-start;
+  border: 1px solid var(--happier-plugin-color-border, currentColor);
+  border-radius: var(--happier-plugin-radius-control, 6px);
+  background: var(--happier-plugin-color-control, transparent);
+  color: inherit;
+  padding: var(--happier-plugin-spacing-xsmall, 4px) var(--happier-plugin-spacing-small, 8px);
+}

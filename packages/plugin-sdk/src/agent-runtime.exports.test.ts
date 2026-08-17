@@ -2,14 +2,21 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { AgentProviderBindingLaunchMaterializationV1 } from '@happier-dev/protocol';
 
 import * as agentRuntime from './agent-runtime.js';
+import * as publicAgentRuntime from './agents/runtime/index.js';
 import type {
   AgentRuntime,
   AgentSessionOpenRequest,
   AgentSessionProviderBinding,
   AgentSessionHostServices,
+  AttachSurface,
+  CheckpointSurface,
 } from './agent-runtime.js';
 
 type AgentRuntimeSurfaces = NonNullable<AgentRuntime['surfaces']>;
+type AttachResult = Awaited<ReturnType<AttachSurface['attach']>>;
+type AttachReceipt = NonNullable<Extract<AttachResult, { ok: true }>['receipt']>;
+type CheckpointRestore = NonNullable<CheckpointSurface['restore']>;
+type CheckpointReceipt = NonNullable<Awaited<ReturnType<CheckpointRestore>>['receipt']>;
 
 describe('public agent-runtime entrypoint', () => {
   it('exports the strict provider-neutral wire validators', () => {
@@ -49,15 +56,32 @@ describe('public agent-runtime entrypoint', () => {
     }
   });
 
+  it('keeps the real public ./agents/runtime entrypoint free of retired event validators', () => {
+    const runtime = publicAgentRuntime as Readonly<Record<string, unknown>>;
+    for (const removed of [
+      'RuntimeEventV1Schema',
+      'AgentSessionRuntimeEventV1Schema',
+    ]) {
+      expect(runtime[removed], removed).toBeUndefined();
+    }
+  });
+
   it('keeps External Sessions out of the primary AgentRuntime facets', () => {
     expectTypeOf<AgentRuntimeSurfaces>().toHaveProperty('terminal');
     expectTypeOf<AgentRuntimeSurfaces>().not.toHaveProperty('externalSessions');
   });
 
-  it('keeps feature decisions and optional terminal control session-bound', () => {
+  it('exports SDK-owned attach and checkpoint surfaces with identity-only receipts', () => {
+    expectTypeOf<NonNullable<AttachReceipt['sessionStateUpdates']>[number]['fieldId']>()
+      .toEqualTypeOf<'identity.runtimeDescriptor' | 'identity.providerSessionId'>();
+    expectTypeOf<NonNullable<CheckpointReceipt['sessionStateUpdates']>[number]['fieldId']>()
+      .toEqualTypeOf<'identity.runtimeDescriptor' | 'identity.providerSessionId'>();
+  });
+
+  it('keeps feature decisions and optional terminal control session-bound without exposing private system records', () => {
     expectTypeOf<AgentSessionHostServices>().toHaveProperty('features');
     expectTypeOf<AgentSessionHostServices>().toHaveProperty('terminalHost');
-    expectTypeOf<AgentSessionHostServices>().toHaveProperty('systemRecords');
+    expectTypeOf<AgentSessionHostServices>().not.toHaveProperty('systemRecords');
     expectTypeOf<AgentSessionHostServices>().toHaveProperty('workflowActivity');
   });
 

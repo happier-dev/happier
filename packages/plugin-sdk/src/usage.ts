@@ -4,24 +4,25 @@ export {
     UsageObservationCostSchema,
     UsageObservationScopeSchema,
     UsageObservationTokensSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/runtime';
 export type {
     SessionContextUsageSnapshotV1,
     UsageObservationContext,
     UsageObservationCost,
     UsageObservationScope,
     UsageObservationTokens,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/runtime';
 
 import type {
-    RuntimeOutboundTranscriptPostSendEffectV1,
     RuntimeOutboundTranscriptUsageObservationV1,
 } from '@happier-dev/agents';
 
-export type UsageObservationEffectV1 = Extract<
-    RuntimeOutboundTranscriptPostSendEffectV1,
-    Readonly<{ type: 'usageObservation' }>
->;
+export type UsageObservationEffectV1 = Readonly<{
+    type: 'usageObservation';
+    observation: RuntimeOutboundTranscriptUsageObservationV1;
+    backendMode?: string | null;
+    externalKey?: string | null;
+}>;
 
 export function buildUsageObservationEffect(params: Readonly<{
     observation: RuntimeOutboundTranscriptUsageObservationV1;

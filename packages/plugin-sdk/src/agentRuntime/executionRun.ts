@@ -1,30 +1,39 @@
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { PluginContributionRef } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 import type { AgentRuntimeContext } from './context.js';
-import type { AgentLaunchEnvironment, AgentSessionInput } from './session.js';
-
-type AgentExecutionRunOpenBase = Readonly<{
-  runId: string;
-  cwd: string;
-  profile: PluginContributionRef;
-  launchEnvironment?: AgentLaunchEnvironment;
-}>;
+import type {
+  AgentLaunchEnvironment,
+  AgentSessionConfigurationSnapshot,
+  AgentSessionInput,
+  AgentSessionProviderBinding,
+} from './session.js';
 
 export type AgentExecutionRunOpenRequest =
-  | (AgentExecutionRunOpenBase & Readonly<{
-      kind: 'create';
-      input: AgentSessionInput;
-    }>)
-  | (AgentExecutionRunOpenBase & Readonly<{
-      kind: 'resume';
-      checkpointId: string;
-    }>)
-  | (AgentExecutionRunOpenBase & Readonly<{
-      kind: 'fork';
-      sourceRunId: string;
-      checkpointId?: string;
-    }>);
+  Readonly<{
+    runId: string;
+    cwd: string;
+    profile: PluginContributionRef;
+    launchEnvironment?: AgentLaunchEnvironment;
+    modelSelection?: ProviderBoundModelRef;
+    configuration?: AgentSessionConfigurationSnapshot;
+    providerBinding?: AgentSessionProviderBinding;
+  }> & (
+    | Readonly<{
+        kind: 'create';
+        input: AgentSessionInput;
+      }>
+    | Readonly<{
+        kind: 'resume';
+        checkpointId: string;
+      }>
+    | Readonly<{
+        kind: 'fork';
+        sourceRunId: string;
+        checkpointId?: string;
+      }>
+  );
 
 export type AgentExecutionRunEvent =
   | Readonly<{
