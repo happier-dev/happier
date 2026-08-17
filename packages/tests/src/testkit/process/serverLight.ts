@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomInt } from 'node:crypto';
@@ -174,6 +174,41 @@ async function readUtf8Tail(filePath: string, maxChars: number): Promise<string>
   }
 }
 
+function prepareServerStartAttemptLogs(params: { testDir: string; attempt: number }): {
+  stdoutPath: string;
+  stderrPath: string;
+} {
+  const stdoutPath = resolve(params.testDir, `server.attempt-${params.attempt}.stdout.log`);
+  const stderrPath = resolve(params.testDir, `server.attempt-${params.attempt}.stderr.log`);
+  const currentStdoutPath = resolve(params.testDir, 'server.stdout.log');
+  const currentStderrPath = resolve(params.testDir, 'server.stderr.log');
+
+  writeFileSync(stdoutPath, '');
+  writeFileSync(stderrPath, '');
+
+  for (const [attemptPath, currentPath] of [
+    [stdoutPath, currentStdoutPath],
+    [stderrPath, currentStderrPath],
+  ] as const) {
+    try {
+      unlinkSync(currentPath);
+    } catch (error) {
+      if (
+        !error
+        || typeof error !== 'object'
+        || !('code' in error)
+        || error.code !== 'ENOENT'
+      ) {
+        throw error;
+      }
+    }
+    // Preserve the long-lived convenience paths without copying a live process log.
+    linkSync(attemptPath, currentPath);
+  }
+
+  return { stdoutPath, stderrPath };
+}
+
 function shouldRetryPgliteWasmTrap(params: { attempt: number; maxAttempts: number; stderrTail: string }): boolean {
   if (params.attempt >= params.maxAttempts) return false;
   const idx = params.stderrTail.lastIndexOf('RuntimeError: unreachable');
@@ -263,12 +298,16 @@ let sharedDepsBuildPromise: Promise<void> | null = null;
 let sharedGeneratedProvidersReady = false;
 let sharedGenerateProvidersPromise: Promise<void> | null = null;
 
-export function resolveTestDbProvider(env: NodeJS.ProcessEnv): TestDbProvider {
+export function resolveTestDbProvider(
+  env: NodeJS.ProcessEnv,
+  options?: Readonly<{ fallbackProvider?: TestDbProvider }>,
+): TestDbProvider {
   const raw = (env.HAPPIER_E2E_DB_PROVIDER ?? env.HAPPY_E2E_DB_PROVIDER ?? '').toString().trim().toLowerCase();
+  if (raw === 'pglite') return 'pglite';
   if (raw === 'sqlite') return 'sqlite';
   if (raw === 'postgres' || raw === 'postgresql') return 'postgres';
   if (raw === 'mysql') return 'mysql';
-  return 'pglite';
+  return options?.fallbackProvider ?? 'pglite';
 }
 
 export function resolveServerLightDatabaseUrlEnv(params: {
@@ -465,6 +504,9 @@ function normalizePrismaModelAttributeOrder(lines: string[]): string[] {
   };
 
   for (const line of lines) {
+    if (line === "" && pendingModelAttributes.length > 0) {
+      continue;
+    }
     if (line.startsWith("@@")) {
       pendingModelAttributes.push(line);
       continue;
@@ -671,6 +713,13 @@ async function prepareServerLightDataDir(params: {
         ...(params.dbProvider === 'postgres' || params.dbProvider === 'mysql'
           ? { DATABASE_URL: params.databaseUrlForExternalProvider }
           : {}),
+        ...(params.dbProvider === 'mysql'
+          ? {
+              // The Docker/E2E database is isolated and has no predecessor writers.
+              HAPPIER_DB_MIGRATION_APPROVAL:
+                '20260729102000_add_voice_conversation_grant_provenance',
+            }
+          : {}),
       },
       stdoutPath: resolve(params.testDir, 'server.migrate.stdout.log'),
       stderrPath: resolve(params.testDir, 'server.migrate.stderr.log'),
@@ -836,10 +885,6 @@ export async function startServerLight(params: {
     CI: '1',
     // Avoid global port conflicts during test runs.
     METRICS_ENABLED: 'false',
-    // Auth token seed compatibility derivation can be surprisingly expensive on some machines.
-    // In UI e2e we always generate a fresh HANDY_MASTER_SECRET, so the first (or second) attempt
-    // should succeed; keep the attempt budget tight to avoid stalling server boot past /health timeouts.
-    HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS: mergedEnv.HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS ?? '2',
     // Core E2E assumes a fresh auth key can always mint an account token unless a test explicitly disables it.
     AUTH_ANONYMOUS_SIGNUP_ENABLED: mergedEnv.AUTH_ANONYMOUS_SIGNUP_ENABLED ?? 'true',
     // Core E2E suite expects public file storage to work without extra services (Minio/S3).
@@ -936,6 +981,7 @@ export async function startServerLight(params: {
       provider: dbProvider,
       env,
     });
+    const attemptLogs = prepareServerStartAttemptLogs({ testDir: params.testDir, attempt });
 
     const proc = spawnLoggedProcess({
       command: launchSpec.command,
@@ -945,8 +991,8 @@ export async function startServerLight(params: {
         ...env,
         ...(launchSpec.env ?? {}),
       },
-      stdoutPath: resolve(params.testDir, 'server.stdout.log'),
-      stderrPath: resolve(params.testDir, 'server.stderr.log'),
+      stdoutPath: attemptLogs.stdoutPath,
+      stderrPath: attemptLogs.stderrPath,
     });
 
     await registerProcessOwnershipLease({

@@ -41,6 +41,15 @@ describe("startServerLight planning helpers", () => {
     expect(resolveTestDbProvider({ HAPPIER_E2E_DB_PROVIDER: "mysql" })).toBe("mysql");
   });
 
+  it("allows a suite SQLite fallback without overriding an explicitly selected provider", () => {
+    const options = { fallbackProvider: "sqlite" as const };
+
+    expect(resolveTestDbProvider({}, options)).toBe("sqlite");
+    expect(resolveTestDbProvider({ HAPPIER_E2E_DB_PROVIDER: "pglite" }, options)).toBe("pglite");
+    expect(resolveTestDbProvider({ HAPPIER_E2E_DB_PROVIDER: "postgres" }, options)).toBe("postgres");
+    expect(resolveTestDbProvider({ HAPPIER_E2E_DB_PROVIDER: "mysql" }, options)).toBe("mysql");
+  });
+
   it("preserves explicit sqlite DATABASE_URL for server launch env", () => {
     expect(
       resolveServerLightDatabaseUrlEnv({
@@ -316,6 +325,39 @@ describe("startServerLight planning helpers", () => {
 
     mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
     mkdirSync(resolve(rootDir, "apps", "server", "prisma", "mysql"), { recursive: true });
+    mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
+    mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
+
+    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), sourceSchema, "utf8");
+    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), sourceSchema, "utf8");
+    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
+    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
+    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), generatedSchema, "utf8");
+    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), generatedSchema, "utf8");
+
+    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
+  });
+
+  it("accepts generated provider schemas when Prisma removes blank lines between model attributes", () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-model-attribute-spacing-"));
+    const sourceSchema = [
+      "datasource db { provider = \"postgresql\" }",
+      "model ProviderUsageRecord {",
+      "  id String @id",
+      "  accountId String",
+      "  providerId String",
+      "  @@unique([accountId, id])",
+      "",
+      "  @@index([accountId, providerId])",
+      "}",
+      "",
+    ].join("\n");
+    const generatedSchema = sourceSchema.replace(
+      "  @@unique([accountId, id])\n\n  @@index([accountId, providerId])",
+      "  @@unique([accountId, id])\n  @@index([accountId, providerId])",
+    );
+
+    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
     mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
     mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
 

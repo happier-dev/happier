@@ -77,6 +77,9 @@ describe('extended db docker plan', () => {
       },
     });
     expect(contract[1].kind).toBe('migrate');
+    expect(contract[1].env.HAPPIER_DB_MIGRATION_APPROVAL).toBe(
+      '20260729102000_add_voice_conversation_grant_provenance',
+    );
     expect(contract[2].kind).toBe('contract');
     expect(contract[2].env.HAPPIER_DB_PROVIDER).toBe('mysql');
   });

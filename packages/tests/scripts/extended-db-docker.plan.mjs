@@ -147,7 +147,10 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl }) {
           kind: 'migrate',
           command: 'yarn',
           args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:mysql:deploy'],
-          env: { DATABASE_URL: String(databaseUrl) },
+          env: {
+            DATABASE_URL: String(databaseUrl),
+            HAPPIER_DB_MIGRATION_APPROVAL: '20260729102000_add_voice_conversation_grant_provenance',
+          },
         }
       : {
           kind: 'migrate',
