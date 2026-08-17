@@ -40,6 +40,7 @@ import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
     isRecoveredHistoryTranscriptObservationProvenance,
+    isSessionAgentTransitionDividerLocalId,
     SessionTranscriptObservationV1Schema,
     SessionTurnMutationV1Schema,
 } from "@happier-dev/protocol";
@@ -156,6 +157,14 @@ export function sessionUpdateHandler(
             return;
         }
         const observation = parsed.data;
+        // Reserved Agent-transition divider namespace. Even the current session publisher
+        // may not mint or overwrite a divider row: the owner-only transition cutover is its
+        // sole writer, and the message owner reconciles a same-localId write by overwriting
+        // differing content in place.
+        if (isSessionAgentTransitionDividerLocalId(observation.localId)) {
+            callback?.({ ok: false, error: "invalid_observation" });
+            return;
+        }
         const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(observation.provenance);
         if (!canMutateSocketSession(connection, observation.sessionId)) {
             callback?.({ ok: false, error: "forbidden" });
@@ -747,6 +756,15 @@ export function sessionUpdateHandler(
                 if (isReleasedUiV020DirectUserMessagePayload(data)) {
                     socketMessageAckCounter.inc({ result: 'error', error: 'client-upgrade-required' });
                     respond({ ok: false, error: 'client-upgrade-required' });
+                    return;
+                }
+
+                // The Agent-transition divider namespace belongs to the owner-only
+                // cutover command. Rejecting it here keeps that command the sole
+                // producer of a transition boundary on every generic ingress.
+                if (isSessionAgentTransitionDividerLocalId(localId)) {
+                    socketMessageAckCounter.inc({ result: 'error', error: 'reserved-local-id' });
+                    respond({ ok: false, error: 'reserved-local-id' });
                     return;
                 }
 

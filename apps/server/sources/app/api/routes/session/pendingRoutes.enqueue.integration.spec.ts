@@ -478,4 +478,34 @@ describe("sessionPendingRoutes (enqueue)", () => {
             recipientFilter: { type: "user-machine-scoped-only" },
         });
     });
+
+    it("rejects a reserved Agent-transition divider localId before it can be enqueued", async () => {
+        // A Pending row materializes into a transcript row under its own localId, so this
+        // is a generic client message ingress. The divider namespace belongs to the
+        // owner-only cutover command: a client that could enqueue one could forge a
+        // transition boundary, or pre-plant a conflicting row that makes the real cutover
+        // refuse its append forever.
+        const { sessionPendingRoutes } = await import("./pendingRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v2/sessions/:sessionId/pending",
+            registerRoutes(app) {
+                sessionPendingRoutes(app as any);
+            },
+        });
+
+        const { reply, response } = await route.invoke({
+            userId: "actor",
+            params: { sessionId: "s1" },
+            body: {
+                localId: "agent-transition:local-42",
+                content: { t: "plain", v: { type: "user", text: "hi" } },
+                messageRole: "user",
+            },
+        });
+
+        expect(reply.statusCode).toBe(400);
+        expect(response).toEqual({ error: "invalid-params" });
+        expect(enqueuePendingMessage).not.toHaveBeenCalled();
+    });
 });

@@ -21,6 +21,7 @@ import {
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
 import {
+    isSessionAgentTransitionDividerLocalId,
     PendingDeliveryBlockedReasonSchema,
     PendingLocalIdSchema,
     PendingRequestedActionV1Schema,
@@ -147,6 +148,12 @@ export function sessionPendingRoutes(app: Fastify) {
                 body && typeof body === "object" && "localId" in body && typeof (body as { localId?: unknown }).localId === "string"
                     ? (body as { localId: string }).localId
                     : "";
+            // A Pending row materializes into a transcript row under its own localId, so
+            // this is a generic client message ingress too: the reserved Agent-transition
+            // divider namespace is refused here as well as on the direct message routes.
+            if (isSessionAgentTransitionDividerLocalId(localId)) {
+                return reply.code(400).send({ error: "invalid-params" });
+            }
             const ciphertext =
                 body && typeof body === "object" && "ciphertext" in body && typeof (body as { ciphertext?: unknown }).ciphertext === "string"
                     ? (body as { ciphertext: string }).ciphertext

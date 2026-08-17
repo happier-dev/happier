@@ -512,7 +512,7 @@ function buildSessionTurnWriteData(turn: Readonly<{
     };
 }
 
-type EnsureSessionEditAccessResult =
+export type EnsureSessionEditAccessResult =
     | { ok: true; sessionOwnerId: string; sessionEncryptionMode: "e2ee" | "plain" }
     | { ok: false; error: "session-not-found" | "forbidden" };
 
@@ -1358,6 +1358,90 @@ export async function createSessionMessage(
     }
 }
 
+type SessionUpdateManyArgs = Parameters<Tx["session"]["updateMany"]>[0];
+type SessionUpdateManyData = NonNullable<NonNullable<SessionUpdateManyArgs>["data"]>;
+type SessionUpdateManyWhere = NonNullable<NonNullable<SessionUpdateManyArgs>["where"]>;
+
+export type SessionMetadataVersionCasInTxResult =
+    | { ok: true; version: number; metadata: string }
+    | {
+        ok: false;
+        error: "session-not-found" | "version-mismatch" | "precondition-failed";
+        current?: { version: number; metadata: string };
+      };
+
+/**
+ * The single transaction-local metadata compare-and-set.
+ *
+ * Both the ordinary metadata update and the Agent-transition cutover write the
+ * Session's sealed current view through here, so there is exactly one owner of
+ * "expected metadataVersion wins or nothing is written". A caller that needs a
+ * stronger precondition (the cutover requires `active=false` and
+ * `archivedAt=null`) supplies `additionalWhere`; losing only that predicate is
+ * reported as `precondition-failed`, distinct from a lost version race, so the
+ * caller can tell "someone else changed the metadata" from "the Session is no
+ * longer in the state this write requires".
+ *
+ * `additionalData` is written in the SAME `updateMany`, which is what keeps the
+ * cutover's projection clears on the same CAS as the metadata itself.
+ */
+export async function applySessionMetadataVersionCasInTx(params: Readonly<{
+    tx: Tx;
+    sessionId: string;
+    expectedVersion: number;
+    metadataCiphertext: string;
+    additionalData?: SessionUpdateManyData;
+    additionalWhere?: SessionUpdateManyWhere;
+}>): Promise<SessionMetadataVersionCasInTxResult> {
+    const { count } = await params.tx.session.updateMany({
+        where: {
+            ...(params.additionalWhere ?? {}),
+            id: params.sessionId,
+            metadataVersion: params.expectedVersion,
+        },
+        data: {
+            ...(params.additionalData ?? {}),
+            metadata: params.metadataCiphertext,
+            metadataVersion: params.expectedVersion + 1,
+        },
+    });
+
+    if (count === 0) {
+        const fresh = await params.tx.session.findUnique({
+            where: { id: params.sessionId },
+            select: { metadataVersion: true, metadata: true },
+        });
+        if (!fresh) {
+            return { ok: false, error: "session-not-found" };
+        }
+        if (fresh.metadataVersion !== params.expectedVersion) {
+            return {
+                ok: false,
+                error: "version-mismatch",
+                current: { version: fresh.metadataVersion, metadata: fresh.metadata },
+            };
+        }
+        return {
+            ok: false,
+            error: "precondition-failed",
+            current: { version: fresh.metadataVersion, metadata: fresh.metadata },
+        };
+    }
+
+    return { ok: true, version: params.expectedVersion + 1, metadata: params.metadataCiphertext };
+}
+
+/**
+ * Owner-only access check, exported for the Agent-transition cutover. Sharing
+ * an edit grant is not enough to replace the Session's Agent.
+ */
+export async function ensureSessionOwnerAccessInTx(
+    tx: Tx,
+    params: { actorUserId: string; sessionId: string },
+): Promise<EnsureSessionEditAccessResult> {
+    return await ensureSessionOwnerAccess(tx, params);
+}
+
 export type UpdateSessionMetadataResult =
     | { ok: true; version: number; metadata: string; participantCursors: ParticipantCursor[]; badgeAttentionChanged: boolean; lastViewedSessionSeq?: number }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "version-mismatch" | "internal"; current?: { version: number; metadata: string } };
@@ -1476,13 +1560,14 @@ export async function updateSessionMetadata(params: {
                 };
             }
 
-            const { count } = await tx.session.updateMany({
-                where: { id: sessionId, metadataVersion: expectedVersion },
-                data: {
-                    metadata: metadataCiphertext,
-                    metadataVersion: expectedVersion + 1,
-                    ...(typeof nextLastViewedSessionSeq === "number"
-                        ? {
+            const cas = await applySessionMetadataVersionCasInTx({
+                tx,
+                sessionId,
+                expectedVersion,
+                metadataCiphertext,
+                ...(typeof nextLastViewedSessionSeq === "number"
+                    ? {
+                        additionalData: {
                             lastViewedSessionSeq: nextLastViewedSessionSeq,
                             ...resolveSessionUnreadSinceWrite({
                                 stored: session,
@@ -1491,24 +1576,21 @@ export async function updateSessionMetadata(params: {
                                 }),
                                 now: new Date(),
                             }),
-                        }
-                        : {}),
-                },
+                        },
+                    }
+                    : {}),
             });
 
-            if (count === 0) {
-                const fresh = await tx.session.findUnique({
-                    where: { id: sessionId },
-                    select: { metadataVersion: true, metadata: true },
-                });
-                if (!fresh) {
-                    return { ok: false, error: "session-not-found" };
+            if (!cas.ok) {
+                // This caller supplies no `additionalWhere`, so `precondition-failed`
+                // cannot be produced here; it is mapped rather than assumed unreachable
+                // because the CAS core is shared with the Agent-transition cutover.
+                if (cas.error === "precondition-failed") {
+                    return { ok: false, error: "internal" };
                 }
-                return {
-                    ok: false,
-                    error: "version-mismatch",
-                    current: { version: fresh.metadataVersion, metadata: fresh.metadata },
-                };
+                return cas.current
+                    ? { ok: false, error: cas.error, current: cas.current }
+                    : { ok: false, error: cas.error };
             }
 
             const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });

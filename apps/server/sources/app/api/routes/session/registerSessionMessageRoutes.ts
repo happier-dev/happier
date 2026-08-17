@@ -8,6 +8,7 @@ import {
     SessionMessageRoleSchema,
     SessionStoredMessageContentSchema,
     SessionTranscriptObservationProvenanceV1Schema,
+    isSessionAgentTransitionDividerLocalId,
     type SessionMessageRole,
 } from "@happier-dev/protocol";
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
@@ -386,6 +387,12 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     : null;
 
         const effectiveLocalId = localId ?? idempotencyKey ?? null;
+        // The Agent-transition divider namespace is reserved for the owner-only
+        // cutover command. The check is on `effectiveLocalId` because the
+        // `idempotency-key` header is a second injection path for a localId.
+        if (isSessionAgentTransitionDividerLocalId(effectiveLocalId)) {
+            return reply.code(400).send({ error: "Invalid parameters", code: "reserved-local-id" });
+        }
         const result =
             "content" in body
                 ? await createSessionMessage({

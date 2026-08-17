@@ -540,6 +540,63 @@ describe("sessionUpdateHandler", () => {
         expect(createSessionMessage).not.toHaveBeenCalled();
     });
 
+    it("rejects a reserved Agent-transition divider localId before any transcript effect", async () => {
+        // The divider namespace belongs to the owner-only cutover command. A
+        // client that could write it could forge a transition boundary, or
+        // overwrite a real one — the message owner reconciles a same-localId
+        // write by overwriting differing content in place.
+        const socket = createFakeSocket();
+
+        registerSessionUpdateHandler(
+            "user-1",
+            socket,
+            { connectionType: "session-scoped", socket, userId: "user-1", sessionId: "s-1" },
+        );
+
+        const callback = vi.fn();
+        await getSocketHandler(socket, "message")({
+            sid: "s-1",
+            message: { t: "plain", v: { role: "agent", content: { type: "event", data: { type: "message" } } } },
+            localId: "agent-transition:local-42",
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith({ ok: false, error: "reserved-local-id" });
+        expect(createSessionMessage).not.toHaveBeenCalled();
+    });
+
+    it("rejects a reserved Agent-transition divider localId on the transcript-observation ingress", async () => {
+        // A transcript observation writes a row at a caller-supplied localId through the
+        // same message owner. Being the current publisher grants the right to mirror
+        // provider output, not the right to mint the owner-only transition divider: a
+        // forged divider is read as a departure boundary, and a conflicting one makes the
+        // real cutover's append refuse forever.
+        const socket = createFakeSocket();
+        registerSessionUpdateHandler(
+            "user-1",
+            socket as any,
+            { connectionType: "session-scoped", socket, userId: "user-1", sessionId: "s-1" } as any,
+            {
+                presence: { resolveCurrentPublisher },
+                binding: { accountId: "user-1", machineId: "machine-1", sessionId: "s-1" },
+            },
+        );
+        const callback = vi.fn();
+
+        await getSocketHandler(socket, "transcript-observation-v1")({
+            v: 1,
+            sessionId: "s-1",
+            localId: "agent-transition:local-42",
+            messageRole: "agent",
+            content: { t: "plain", v: { role: "agent", content: { type: "event", data: { type: "message" } } } },
+            createdAt: 1234,
+            updatedAt: 1567,
+            provenance: { kind: "non_dependent", source: "history" },
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith({ ok: false, error: "invalid_observation" });
+        expect(createSessionMessage).not.toHaveBeenCalled();
+    });
+
     it("keeps a padded sentFrom value on the ordinary transcript mutation path", async () => {
         const socket = createFakeSocket();
 
