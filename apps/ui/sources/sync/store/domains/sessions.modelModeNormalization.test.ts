@@ -210,4 +210,71 @@ describe('sessions domain: modelMode normalization', () => {
         expect(firstUpdatedAt).toBe(1000);
         expect(secondUpdatedAt).toBe(1000);
     });
+    it('drops a local model selection the Agent transition explicitly cleared', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1000);
+        const { get, domain } = createHarness();
+
+        domain.applySessions([
+            {
+                id: 's1',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                metadata: { flavor: 'gemini' },
+            } as any,
+        ]);
+        domain.updateSessionModelMode('s1', 'gemini-2.5-flash' as any);
+        expect(get().sessions.s1.modelMode).toBe('gemini-2.5-flash');
+
+        // The cutover to an Agent that accepts freeform model ids: the local
+        // selection is not "invalid" for Claude, so the selectability clamp
+        // cannot catch it. Only the transition's own clear tombstone can.
+        domain.applySessions([
+            {
+                id: 's1',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                metadata: {
+                    flavor: 'claude',
+                    modelOverrideV1: { v: 1, updatedAt: 2000, modelId: null },
+                },
+            } as any,
+        ]);
+
+        expect(get().sessions.s1.modelMode).toBe('default');
+        expect(get().sessions.s1.modelModeUpdatedAt).toBe(2000);
+    });
+
+    it('keeps a local model selection that is newer than the clear tombstone', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(3000);
+        const { get, domain } = createHarness();
+
+        domain.applySessions([
+            {
+                id: 's1',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                metadata: { flavor: 'claude' },
+            } as any,
+        ]);
+        domain.updateSessionModelMode('s1', 'claude-3-5-sonnet-latest' as any);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                metadata: {
+                    flavor: 'claude',
+                    modelOverrideV1: { v: 1, updatedAt: 2000, modelId: null },
+                },
+            } as any,
+        ]);
+
+        expect(get().sessions.s1.modelMode).toBe('claude-3-5-sonnet-latest');
+        expect(get().sessions.s1.modelModeUpdatedAt).toBe(3000);
+    });
 });
