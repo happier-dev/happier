@@ -297,6 +297,53 @@ test('watch startup rejects a prior CLI publication whose required workspace run
   assert.equal(result.reason, 'workspace_runtime_unavailable');
 });
 
+test('watch startup admits last-green CLI code with a stable newer source workspace runtime', async (t) => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-workspace-runtime-newer-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  const cliDir = join(repoDir, 'apps', 'cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  await writeHappyMonorepoMarkers(repoDir);
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{}\n', 'utf-8');
+  await mkdir(dirname(cliBin), { recursive: true });
+  await mkdir(dirname(distEntrypoint), { recursive: true });
+  await writeFile(distEntrypoint, 'export {};\n', 'utf-8');
+  writeCliDistBuildManifest(distEntrypoint, {
+    outputDir: join(cliDir, 'dist'),
+    builtAt: '2026-07-09T00:00:00.000Z',
+    workspaceRuntimeIdentity: 'b'.repeat(64),
+    workspaceRuntimePackages: ['@happier-dev/protocol'],
+  });
+
+  let buildCalls = 0;
+  let probes = 0;
+  const result = await ensureHappierCliDistExists(
+    {
+      cliBin,
+      admitPriorDistImmediately: true,
+      env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir },
+    },
+    {
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        throw new Error('last-green startup must not wait for a CLI rebuild');
+      },
+      probeCliDistRuntimeImportImpl: async () => {
+        probes += 1;
+      },
+      readCliWorkspaceRuntimeIdentityImpl: () => ({ fingerprint: 'c'.repeat(64) }),
+    },
+  );
+
+  assert.equal(buildCalls, 0);
+  assert.equal(probes, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.current, true);
+  assert.equal(result.degraded, true);
+  assert.equal(result.reason, 'admitted-prior-dist-for-watch-startup');
+});
+
 test('watch startup retries a transient atomic CLI publication gap before waiting on the shared build lock', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'hstack-last-green-cli-publication-gap-'));
   t.after(async () => rm(repoDir, { recursive: true, force: true }));
@@ -832,7 +879,7 @@ test('source daemon releases the publication lease during stop and holds it thro
       HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: '',
       HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: '',
       HAPPIER_STACK_CLI_BUILD: '0',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '3000',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '10000',
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '300',
       HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',

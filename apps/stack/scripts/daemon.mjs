@@ -83,35 +83,78 @@ function readSourceCliWorkspaceRuntimeReadiness({
   repoRoot,
   readCliWorkspaceRuntimeIdentityImpl = readCliNodeWorkspaceRuntimeIdentity,
 }) {
-  if (!repoRoot) return { current: true, reason: 'not-source-monorepo' };
+  if (!repoRoot) return {
+    current: true,
+    available: true,
+    actualFingerprint: null,
+    reason: 'not-source-monorepo',
+  };
   const distClosure = readCliDistBuildManifest(distEntrypoint);
   const expectedFingerprint = String(
     distClosure.manifest?.workspaceRuntimeIdentity ?? '',
   ).trim().toLowerCase();
-  if (!expectedFingerprint) return { current: true, reason: 'no-workspace-runtime' };
+  if (!expectedFingerprint) return {
+    current: true,
+    available: true,
+    actualFingerprint: null,
+    reason: 'no-workspace-runtime',
+  };
   if (!/^[a-f0-9]{64}$/.test(expectedFingerprint)) {
-    return { current: false, reason: 'workspace_runtime_unavailable' };
+    return {
+      current: false,
+      available: false,
+      actualFingerprint: null,
+      reason: 'workspace_runtime_unavailable',
+    };
   }
   try {
     const actualFingerprint = String(
       readCliWorkspaceRuntimeIdentityImpl({ repoRoot })?.fingerprint ?? '',
     ).trim().toLowerCase();
-    return actualFingerprint === expectedFingerprint
-      ? { current: true, reason: 'workspace-runtime-current' }
-      : { current: false, reason: 'workspace_runtime_unavailable' };
+    if (!/^[a-f0-9]{64}$/.test(actualFingerprint)) {
+      return {
+        current: false,
+        available: false,
+        actualFingerprint: null,
+        reason: 'workspace_runtime_unavailable',
+      };
+    }
+    return {
+      current: actualFingerprint === expectedFingerprint,
+      available: true,
+      actualFingerprint,
+      reason: actualFingerprint === expectedFingerprint
+        ? 'workspace-runtime-current'
+        : 'workspace-runtime-newer-than-cli-code',
+    };
   } catch {
-    return { current: false, reason: 'workspace_runtime_unavailable' };
+    return {
+      current: false,
+      available: false,
+      actualFingerprint: null,
+      reason: 'workspace_runtime_unavailable',
+    };
   }
 }
 
-function assertSourceCliWorkspaceRuntimeStillCurrent({ cliBin, distEntrypoint }) {
+function assertSourceCliWorkspaceRuntimeStillCurrent({
+  cliBin,
+  distEntrypoint,
+  admittedWorkspaceRuntimeIdentity = null,
+}) {
   const workspaceRuntimeReadiness = readSourceCliWorkspaceRuntimeReadiness({
     distEntrypoint,
     repoRoot: coerceHappyMonorepoRootFromPath(
       resolveCliDistOwnerDirForDaemonLaunch({ cliBin, distEntrypoint }),
     ),
   });
-  if (workspaceRuntimeReadiness.current) return;
+  if (
+    workspaceRuntimeReadiness.available
+    && (
+      !admittedWorkspaceRuntimeIdentity
+      || workspaceRuntimeReadiness.actualFingerprint === admittedWorkspaceRuntimeIdentity
+    )
+  ) return;
   const error = new Error(
     '[local] happier-cli workspace runtime closure changed after source generation admission; refusing to launch a different generation.',
   );
@@ -880,14 +923,58 @@ export async function ensureHappierCliDistExists(
     const priorFallbackIntegrity = priorIntegrity.ok
       ? priorIntegrity
       : priorReleaseBackupIntegrity;
-    if (admitPriorDistImmediately && priorIntegrity.ok && readWorkspaceRuntimeReadiness().current) {
+    const priorWorkspaceRuntimeReadiness = readWorkspaceRuntimeReadiness();
+    const admitPinnedRunnerForWatchStartup = async () => {
+      const pinnedRunner = resolveNewestReadyPinnedSnapshotLocationImpl(distEntrypoint);
+      if (!pinnedRunner?.snapshotEntrypoint || !pinnedRunner?.fingerprint) return null;
+      try {
+        await probeCliDistRuntimeImportImpl(pinnedRunner.snapshotEntrypoint, {
+          cwd: cliDir,
+          env,
+          timeoutMs: resolveStackDaemonStartVerifyTimeoutMs(env),
+        });
+        return {
+          ok: true,
+          current: true,
+          degraded: true,
+          immutableRunner: true,
+          fallbackFingerprint: pinnedRunner.fingerprint,
+          fallbackRejectedReason: null,
+          generationAdmissionRequired: true,
+          distEntrypoint: pinnedRunner.snapshotEntrypoint,
+          built: false,
+          reason: 'admitted-pinned-runner-for-watch-startup',
+        };
+      } catch {
+        return null;
+      }
+    };
+    if (
+      admitPriorDistImmediately
+      && priorIntegrity.ok
+      && priorWorkspaceRuntimeReadiness.available
+      && !priorWorkspaceRuntimeReadiness.current
+    ) {
+      const pinnedAdmission = await admitPinnedRunnerForWatchStartup();
+      if (pinnedAdmission) return pinnedAdmission;
+    }
+    if (
+      admitPriorDistImmediately
+      && priorIntegrity.ok
+      && priorWorkspaceRuntimeReadiness.available
+    ) {
       try {
         await probeCliDistRuntimeImportImpl(distEntrypoint, {
           cwd: cliDir,
           env,
           timeoutMs: resolveStackDaemonStartVerifyTimeoutMs(env),
         });
-        if (readWorkspaceRuntimeReadiness().current) {
+        const verifiedWorkspaceRuntimeReadiness = readWorkspaceRuntimeReadiness();
+        if (
+          verifiedWorkspaceRuntimeReadiness.available
+          && verifiedWorkspaceRuntimeReadiness.actualFingerprint
+            === priorWorkspaceRuntimeReadiness.actualFingerprint
+        ) {
           return {
             ok: true,
             current: true,
@@ -908,31 +995,8 @@ export async function ensureHappierCliDistExists(
       }
     }
     if (admitPriorDistImmediately) {
-      const pinnedRunner = resolveNewestReadyPinnedSnapshotLocationImpl(distEntrypoint);
-      if (pinnedRunner?.snapshotEntrypoint && pinnedRunner?.fingerprint) {
-        try {
-          await probeCliDistRuntimeImportImpl(pinnedRunner.snapshotEntrypoint, {
-            cwd: cliDir,
-            env,
-            timeoutMs: resolveStackDaemonStartVerifyTimeoutMs(env),
-          });
-          return {
-            ok: true,
-            current: true,
-            degraded: true,
-            immutableRunner: true,
-            fallbackFingerprint: pinnedRunner.fingerprint,
-            fallbackRejectedReason: null,
-            generationAdmissionRequired: true,
-            distEntrypoint: pinnedRunner.snapshotEntrypoint,
-            built: false,
-            reason: 'admitted-pinned-runner-for-watch-startup',
-          };
-        } catch {
-          // A ready marker is necessary but the import probe is the final cold-start
-          // admission. Fall through to the normal publisher when the snapshot cannot run.
-        }
-      }
+      const pinnedAdmission = await admitPinnedRunnerForWatchStartup();
+      if (pinnedAdmission) return pinnedAdmission;
     }
     let buildResult = null;
     let buildError = null;
@@ -1985,6 +2049,12 @@ export async function startLocalDaemonWithAuth({
   });
   const sourceCliDir = resolveCliDistOwnerDirForDaemonLaunch({ cliBin, distEntrypoint });
   const sourceRepoRoot = coerceHappyMonorepoRootFromPath(sourceCliDir);
+  const admittedSourceWorkspaceRuntimeIdentity = guardSourceCliDistRestart
+    ? readSourceCliWorkspaceRuntimeReadiness({
+        distEntrypoint,
+        repoRoot: sourceRepoRoot,
+      }).actualFingerprint
+    : null;
   const sourcePublicationLockPath = sourceRepoRoot
     ? resolveCliDistBuildLockPath(sourceRepoRoot)
     : join(sourceCliDir, '.dist.hstack-build.lock');
@@ -2280,7 +2350,11 @@ export async function startLocalDaemonWithAuth({
           admittedDistClosureFingerprint,
           finalFingerprint: guardedDistIntegrity.fingerprint,
         });
-        assertSourceCliWorkspaceRuntimeStillCurrent({ cliBin, distEntrypoint });
+        assertSourceCliWorkspaceRuntimeStillCurrent({
+          cliBin,
+          distEntrypoint,
+          admittedWorkspaceRuntimeIdentity: admittedSourceWorkspaceRuntimeIdentity,
+        });
       });
     } catch (error) {
       sourceAdmissionError = error;
@@ -2407,7 +2481,11 @@ export async function startLocalDaemonWithAuth({
         admittedDistClosureFingerprint,
         finalFingerprint: guardedDistIntegrity.fingerprint,
       });
-      assertSourceCliWorkspaceRuntimeStillCurrent({ cliBin, distEntrypoint });
+      assertSourceCliWorkspaceRuntimeStillCurrent({
+        cliBin,
+        distEntrypoint,
+        admittedWorkspaceRuntimeIdentity: admittedSourceWorkspaceRuntimeIdentity,
+      });
       // The source publisher lease makes this the single current generation that can reach the
       // spawned child. Re-read every launch-derived value after admission rather than carrying
       // the pre-stop A generation into a B publication that completed while stop was running.
