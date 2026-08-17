@@ -39,6 +39,15 @@ Rolling tags and current branch names are discovery pointers, not final release 
 
 Development builds can explain a report but are not permanent compatibility obligations. Stable and preview releases are treated according to `docs/compatibility.md`.
 
+Map a verified correction to the issue lifecycle without overstating it:
+
+- `stage:source` requires integration and verification on canonical `dev`, not a local checkout, `remote-dev`, branch, open pull request, or unmerged commit;
+- `stage:dev`, `stage:preview`, and `stage:stable` require the corresponding release workflow to verify the promoted candidate;
+- no stage label means no correction boundary has been proven;
+- a stage label is the highest verified channel containing the correction, not proof that the reporter uses that channel or that the issue can close.
+
+Once a complete correction for an open issue is integrated and verified on canonical `dev`, propose `stage:source` in the exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or no correction exists to release; state that reason explicitly. Lack of mutation approval delays application, not the obligation to surface the proposal.
+
 ## Release response
 
 When source is fixed but users remain affected, identify the release action separately from the source diagnosis:
@@ -50,3 +59,5 @@ When source is fixed but users remain affected, identify the release action sepa
 - what evidence would prove the reporter can receive the corrected artifact.
 
 Route signing, packaging, publication, promotion, notarization, and artifact-identity defects to the appropriate `skills/happier-release*` authority.
+
+Match the response to the reported channel. If preview is affected while only dev is corrected, say the correction `will reach preview on the next preview release`; do not ask the reporter to retest merely because dev is available. If the channel is unknown, state current availability and ask for the relevant channel/component versions. If the reporter is already on the same or a newer corrected build, request the exact reproduction and relevant evidence because the previous diagnosis is no longer sufficient.

@@ -139,9 +139,9 @@ Runtime observations are scoped to the machine and exact provider connection, an
 Happier distinguishes:
 
 - **adopted processes**, started by the user or another app, which Happier may observe but never stop or restart;
-- **owned processes**, started through Happier's managed-local-service path, which may be supervised according to that subsystem's lifecycle contract.
+- **owned processes**, started through the Provider managed-runtime service, which may be supervised according to that owner’s lifecycle contract.
 
-Installed-but-stopped detection and managed start are separate capabilities. Managed start additionally requires the `localServices.managed` feature; discovery alone never grants process ownership.
+Installed-but-stopped detection and managed start are separate capabilities. Provider managed start is authorized by the Provider feature and connection policy; it does not depend on the Local Services UI gate or daemon inventory snapshot. Discovery alone never grants process ownership.
 
 ### Managed subscription-backed gateways
 
@@ -188,7 +188,7 @@ Provider surfaces use the canonical feature system:
 - `providers` gates first-class provider settings, registry, and resolution;
 - `providers.localDiscovery` depends on `providers` and `localServices.inventory`;
 - `providers.localModelManagement` depends on `providers`;
-- starting or supervising a local model service also requires `localServices.managed`.
+- `localServices.managed` gates the daemon Local Services UI product (inventory launch actions, previews, and related controls), not Provider managed-runtime start or supervision.
 
 Dependencies are declared in `packages/protocol/src/features/catalog.ts` and applied centrally. Missing or malformed server bits fail closed before settings, secrets, network, or processes are touched. See [Feature gating](./feature-gating.md).
 
@@ -208,11 +208,12 @@ Migration descriptors are plugin-owned provider facts. New writes use provider c
 
 1. Create `packages/plugins/<providerId>/src/provider/contribution.ts` and a schema-validation test.
 2. Declare stable identity, endpoint templates, wire protocols, capability facts, credential transports, and catalog sources.
-3. For local providers, add only bounded declarative detection facts and a provider-specific availability probe.
-4. Add explicit compatibility overrides only for verified pair-specific quirks.
-5. Add a legacy-profile migration descriptor only when a deterministic built-in legacy profile exists.
-6. Export the contribution through the plugin's generated contribution descriptor path; never register it by filesystem scanning or host-core branching.
-7. Test schema invariants, endpoint safety, compatibility, catalog merging, connection identity, secret/grant refusal ordering, and any real external integration behind an opt-in lane.
+3. Keep an ordinary Provider descriptor-only. For a local descriptor-only Provider, add only bounded declarative detection facts and a provider-specific availability probe.
+4. When the Provider owns a supervised local runtime, declare its single cold `managedRuntime` facet and register exactly one matching runtime with `api.providers.register(localId, runtime)`.
+5. Add explicit compatibility overrides only for verified pair-specific quirks.
+6. Add a legacy-profile migration descriptor only when a deterministic built-in legacy profile exists.
+7. Export the contribution through the plugin's generated contribution descriptor path; never register it by filesystem scanning or host-core branching.
+8. Test schema invariants, registration correspondence where applicable, endpoint safety, compatibility, catalog merging, connection identity, secret/grant refusal ordering, and any real external integration behind an opt-in lane.
 
 Third-party plugins use the same `contributes.providers` family. Built-ins receive no privileged host path.
 

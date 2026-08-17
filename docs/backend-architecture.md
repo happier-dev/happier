@@ -83,7 +83,6 @@ Startup sequence:
 2. Init activity cache (presence) and Redis connection check (`redis.ping()`).
 3. Initialize crypto modules:
    - `initEncrypt()` derives a KeyTree from `HANDY_MASTER_SECRET`.
-   - `initGithub()` configures GitHub App/webhooks if env vars exist.
    - `loadFiles()` verifies S3 bucket access.
    - `auth.init()` prepares token generator/verifier.
 4. Start API server (`startApi()`), metrics server, database metrics updater, and presence timeout loop.
@@ -297,11 +296,14 @@ erDiagram
 ```
 
 - `Account`: public key identity, profile, settings, seq counters.
-- `Session` + `SessionMessage`: encrypted session metadata and message blobs.
-- `Machine`: encrypted machine metadata + daemon state.
-- `Artifact`: encrypted header/body + per-artifact key.
+- `Session` + `SessionMessage`: explicit plain or encrypted metadata/message content
+  selected by the persisted Session mode.
+- `Machine`: explicit plain or encrypted metadata and daemon state selected by the
+  persisted Machine representation.
+- `Artifact`: explicit plain or encrypted header/body plus its mode/key marker.
 - `AccessKey`: encrypted per-session-per-machine access keys.
-- `UserKVStore`: encrypted values with optimistic versions.
+- `UserKVStore`: domain-owned opaque bytes with optimistic versions; each domain,
+  such as Todo, owns its plain/encrypted envelope.
 - `UsageReport`: usage aggregation per session/key.
 - `UserRelationship` + `UserFeedItem`: social graph and feed.
 
@@ -342,7 +344,7 @@ A Redis client is initialized in `main.ts` and pinged at startup. It can be expa
 
 ```mermaid
 graph TB
-    subgraph "Client-side Encryption"
+    subgraph "Mode-aware persisted content"
         C1[Session metadata]
         C2[Agent state]
         C3[Daemon state]
@@ -351,15 +353,15 @@ graph TB
         C6[KV values]
     end
 
-    subgraph "Server-side Encryption"
+    subgraph "Server-readable values"
         S1[GitHub OAuth tokens]
-        S2[OpenAI tokens]
-        S3[Anthropic tokens]
-        S4[Gemini tokens]
+        S2[Connected-service credentials]
+        S3[Plain settings]
+        S4[Plain sensitive artifacts]
     end
 
-    C1 & C2 & C3 & C4 & C5 & C6 --> |opaque blobs| DB[(Postgres)]
-    S1 & S2 & S3 & S4 --> |KeyTree from HANDY_MASTER_SECRET| DB
+    C1 & C2 & C3 & C4 & C5 & C6 --> |plain envelopes or opaque E2EE| DB[(Postgres)]
+    S1 & S2 & S3 & S4 --> |optional at-rest KeyTree from HANDY_MASTER_SECRET| DB
 
     style C1 fill:#e1f5fe
     style C2 fill:#e1f5fe
@@ -373,9 +375,15 @@ graph TB
     style S4 fill:#fff3e0
 ```
 
-- Session metadata, agent state, daemon state, and message content are stored as opaque encrypted strings or blobs.
-- Artifacts and KV values are stored encrypted and encoded as base64 on the wire.
-- The server only encrypts/decrypts **service tokens** (GitHub OAuth tokens, vendor tokens) using the KeyTree derived from `HANDY_MASTER_SECRET`.
+- E2EE content remains opaque ciphertext to the server. Plain-account and
+  plain-Session content is intentionally server-readable and uses strict domain
+  envelopes, sometimes base64-encoded by byte-oriented routes.
+- Artifacts and domain-owned KV values may be plain or encrypted; base64 is transport
+  encoding and does not imply confidentiality.
+- The server encrypts service tokens and may seal selected plaintext Settings,
+  Connected Service credentials, and Artifact content using the KeyTree derived from
+  `HANDY_MASTER_SECRET`. This persistence-only sealing is not E2EE and never appears
+  on the public wire.
 
 ## Integrations
 - **GitHub**: OAuth connect + webhook verification, optional if env vars are set.

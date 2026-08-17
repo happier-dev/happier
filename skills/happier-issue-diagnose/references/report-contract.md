@@ -1,54 +1,56 @@
 # Issue diagnosis report contract
 
-Lead with the outcome, not the investigation chronology.
+`docs/agent-craft.md` and `skills/handoff-report` own voice, ordering, epistemic clarity, and handoff style. This reference protects issue-specific content from omission; it is not an outline or field list.
 
-## Required sections
+## Give the maintainer the answer
 
-### Disposition
+Open naturally with your judgment: what users experience, whether the report is valid, how firmly the cause is established, and the recommended response or next discriminator. Include the largest release, validation, or evidence caveat when it changes the action.
 
-State the three axes in compact prose:
+Do not lead with code paths, commits, internal status constants, capability names, or architecture vocabulary. Translate those facts into their consequence. Avoid separate `Problem`, `Status`, `Disposition`, `Can close?`, and `Decision needed` fields when one paragraph communicates the decision.
 
-- behavior evidence;
-- version/release status with named basis;
-- recommended response.
+For several issues, organize by maintainer decision rather than issue count. Issues sharing one correction or release operation may share one explanation with issue-specific closure conditions. Different evidence requests, owners, product choices, or actions need separate briefs even when they share a code area.
 
-### What is established
+## Tell the causal story
 
-Separate:
+Explain the shortest auditable chain from the user's action through the relevant input or state, owning decision, failure or divergence, and visible outcome. Make observed, derived, and unverified claims distinguishable without automatically turning them into three sections.
 
-- **Observed:** directly present in issue data, logs, diagnostics, source, artifacts, or reproduction.
-- **Derived:** follows from named observed facts and the verified code/contract path.
-- **Unverified:** reporter claims, plausible causes, version assumptions, or missing evidence.
+Name the originating failure layer, canonical owner, affected corridor, and why the correction belongs there. Discuss competing logic only when it caused the failure or would remain a reachable bypass. State whether each material competing path should be removed, migrated, consolidated, or intentionally retained. Do not mistake an intentional bounded context or provenance-backed compatibility adapter for a split-brain.
 
-### Root cause and owner
+If the cause is not established, say so and name the cheapest observation that would decide between the plausible owners. Do not design a complete fix for an unverified cause.
 
-When verified, name the originating failure layer, failure mechanism, canonical owner, affected corridor, and why the behavior belongs there. Name active duplicate decisions, bypasses, or compatibility paths and whether each should be removed, migrated, or intentionally retained.
+## Explain only the response that is justified
 
-If not verified, say `INCONCLUSIVE` or `LIKELY_NOT_VERIFIED` and identify the cheapest missing discriminator. Do not substitute a nearby error or suspicious function for a root cause.
+For a verified defect, cover the user-visible before and after, important unchanged failure or recovery behavior, the existing owner or logic to reuse, and why the response is the smallest coherent systemic correction. Name a tempting smaller workaround only when it would leave the failure or a competing path reachable. Say what broader machinery is unnecessary when that prevents overengineering.
 
-### Version and release basis
+Apply the deletion test internally to every proposed mechanism. Surface it only when it explains a design decision. Compare alternatives only when more than one is genuinely viable or a product choice remains open; do not manufacture an option matrix around an established owner-level correction. Distinguish mitigation from root correction when it affects the decision.
 
-Name the reported, source, loaded, fix, and released-artifact bases that were actually established. Explicitly distinguish fixed-in-source from shipped.
+When linked implementation work exists, state its consequence for the maintainer without turning the report into a PR inventory: whether it matches the independently verified correction as written, needs exact refinements, covers only part of the issue, follows the wrong owner, is obsolete/superseded, or remains unverified. Explain any remaining behavior or validation gap and the resulting merge, closing-keyword, issue-closure, and release action. Do not treat approval, green checks, merge, closure, or source presence as interchangeable proof.
 
-### Recommended response
+Let the disposition determine the emphasis:
 
-Describe concrete owner-level changes or the non-code response. Prefer reuse, refinement, extraction, consolidation, migration, or removal over a parallel implementation. Separate mitigation from root-cause correction.
+- **Confirmed defect:** causal mechanism, owner-level correction, and deciding validation.
+- **Needs evidence:** what is ruled in or out, the cheapest discriminator, and why implementation is premature.
+- **Fixed in source but not shipped:** first proven corrected artifact or remaining release operation.
+- **Release or artifact defect:** immutable provenance and the release authority, without private operational details.
+- **Product choice:** the real options and a recommended default when justified.
+- **Guidance, intended behavior, or no change:** the user-facing resolution and why code change is not justified.
 
-### Evidence and validation
+## Keep evidence subordinate and end once
 
-List the deciding issue fields, source/tests, private diagnostic categories, reproduction recipe/result, and artifact/release evidence. Redact sensitive data and state any checks that could not run.
+Include only evidence that proves or limits a load-bearing claim: deciding issue facts, source/tests, private diagnostic categories, reproduction results, linked-implementation assessment, and relevant artifact provenance. Name unavailable checks when they constrain confidence. Exact version vectors, PR metadata, and commit tables belong after the explanation and only when they change correctness, status, compatibility, release, or closure.
 
-### Approval boundary and residual risk
+End with one next human or project action and what could still invalidate the conclusion. Collapse implementation approval, GitHub disposition, closure condition, and release action when they are the same decision. For every affected open issue whose complete correction is integrated and verified on canonical `dev`, include `stage:source` in the exact proposed GitHub mutation unless the issue already has the same or a higher verified stage; otherwise state the evidence-backed reason no stage mutation applies. Separately propose the three-way handoff: `needs:reporter` when an explicit external evidence or confirmation request is the next human input, including after a pending named release prerequisite; `needs:maintainer` only when a concrete project-side review, diagnosis, decision, implementation, or correction remains; no `needs:*` when only release progression, release-owned certification, backlog scheduling, or eventual closure remains. Name any issue author or commenter whose material contribution should become a commit co-author, with the contribution that justifies it; do not infer co-authorship from authorship of the report alone. Ask for approval only when the next action requires it. Verify issue numbers, titles, links, and release claims before presenting.
 
-State whether the next action is implementation, GitHub write-back, release work, more evidence, guidance, or no change. Ask for approval only when the next action requires it. End with what could still invalidate the conclusion.
+Read [report-examples.md](report-examples.md) when the disposition is unfamiliar, the bundle contains more than one decision, or the draft is becoming form-like or repetitive.
 
-## GitHub-facing summary
+## GitHub-facing response
 
-If the user later authorizes a public comment, derive a short sanitized summary from the report:
+If the user later authorizes a public comment, derive a warm, detailed, focused developer-facing explanation. When the thread has not already received a project thank-you, thank the author naturally for taking the time to report the issue. If an author or commenter provided a useful reproduction detail, diagnostic insight, correction, or fix direction, thank them specifically and briefly explain how it helped; do not reserve appreciation only for contributions that qualify for commit co-authorship. Then include the user-visible behavior and version basis, causal mechanism, canonical owner, exact correction, meaningful design choices or rejected workarounds, important unchanged behavior, compatibility consequences, deciding validation, public commit/PR provenance, highest verified channel, and the exact channel-dependent next step or missing information. Acknowledge a reporter/commenter whose material contribution is embodied in the correction and was preserved in the commit trailer. Do not expose the investigation checklist as a form and do not repeat the same conclusion under several headings.
 
-- user-visible behavior and affected version basis;
-- verified or explicitly tentative cause;
-- next action or precise missing information;
-- public links to commits, releases, PRs, or canonical issues.
+Resolve the machine's ordinary authenticated `gh` login—not the bot identity exposed through `ghops`—and end every proposed public issue comment with a standalone `cc: @<resolved-login>` line. Treat the resolved handle as part of the exact comment payload shown for approval, not as metadata or a post-approval addition. Do not hardcode the handle or suppress it because the maintainer was mentioned earlier or may already be subscribed. If the local identity cannot be resolved, request authentication or an explicit mention target before previewing the mutation.
 
-Never include private diagnostics, raw logs, credentials, machine identities, personal paths, or unsupported confidence scores.
+Do not turn the thank-you into a fixed opener or customer-support formula. Read the existing thread, avoid repeating gratitude already expressed by the project, vary the wording, and let the appreciation flow into the technical explanation. Thanking someone for evidence or reasoning does not establish that their proposed cause or fix is correct; state the verified conclusion separately.
+
+Use the reporter's stated channel to decide when to request confirmation. If it is unknown, explain current availability and ask only for the relevant channel and component versions. If their same or newer corrected build still fails, explicitly treat that as new evidence and request the exact reproduction and smallest useful diagnostics. Never include private diagnostics, raw logs, credentials, machine identities, personal paths, or unsupported confidence scores.
+
+Keep the public comment and exact GitHub disposition separate. A decision-material evidence or confirmation request normally proposes `needs:reporter` plus removal of `needs:maintainer`, even when the retry is conditioned on a named release stage. A correction awaiting only release progression or release-owned certification has no handoff label. Retain `needs:maintainer` only for a named substantive project action. The workflow's hidden saved-reply directives are a manual maintainer convenience, not an agent mutation channel.

@@ -11,7 +11,7 @@
   Full Git client · File editor · Subagents · Session sharing<br />
   Entreprise-ready**
 
-  End-to-end encrypted. Self-hostable.<br />
+  Mode-aware privacy. Self-hostable.<br />
   Built by developers, for developers.
 
   <p><img src="/.github/illustration.png" title="Happier Dev" alt="Happier Dev" width="650" /></p>
@@ -36,7 +36,8 @@ Learn more about the best ways to contribute in [CONTRIBUTING.md](CONTRIBUTING.m
 
 ## What is Happier?
 
-**Happier** is an open-source, end-to-end encrypted companion app for AI coding agents.
+**Happier** is an open-source companion app for AI coding agents with explicit
+end-to-end encrypted and plaintext storage modes.
 
 It lets you run AI coding sessions **locally on your computer**, then **continue and control them remotely** — from your phone, web UI, or desktop app, without losing context.
 
@@ -84,7 +85,9 @@ happier auth login
 ```
 
 Recommended first run:
-- Prefer **mobile** when asked about it, so your account and secret key are then securely stored on your mobile device.
+- Prefer **mobile** when asked about it. E2EE accounts keep their real encryption
+  material on authorized devices; plaintext accounts use token-only credentials and
+  have no Account E2EE key.
 - If you already use Happier on another device, sign in with that same account.
 - If you open the terminal-connect link while logged out, Happier will send you through sign in/create account and then return you to terminal approval.
 
@@ -222,12 +225,15 @@ Happier is about exploring a faster-moving, more collaborative direction, while 
 
 Happier is designed with privacy as a foundation, not an afterthought.
 
-- **End-to-end encryption**  
+- **E2EE cryptography**
   Built using modern cryptography (TweetNaCl).
 
-- **Zero-knowledge architecture**  
-  Your code is encrypted on your devices before it ever hits the wire.  
-  Servers cannot read your data. Encryption keys never leave your devices.
+- **Explicit privacy modes**
+  In E2EE mode, content is encrypted on your devices and remains opaque to the
+  Happier server. In plaintext mode, content is intentionally server-readable and
+  may optionally be sealed with a server-owned key at rest. Device-local secrets do
+  not turn a plaintext account into an E2EE account and are never uploaded as
+  Account keys.
 
 - **Built with love from Switzerland**  
   Developed in Switzerland, with a strong focus on data protection and developer transparency.
@@ -297,7 +303,10 @@ alias happier='hdev'
 
 ## Self-Hosting the Server Relay
 
-Happier is 100% self-hostable. It's even the most recommended way to run it, even if we also offer an end-to-end encrypted cloud server (app.happier.dev / api.happier.dev).
+Happier is 100% self-hostable. It's even the most recommended way to run it, even if
+we also offer Happier Cloud (app.happier.dev / api.happier.dev). E2EE content remains
+opaque to either hosted or self-hosted servers; plaintext content is readable by the
+server operator in both deployment models.
 
 Think of the relay server as the long-running process which allows your mobile device/UI to connect to your machines. It stores all your sessions, messages and settings.
 
@@ -342,7 +351,7 @@ These scripts wrap `hstack` with repo-local defaults so you can run from source 
 Most-used commands:
 
 - `yarn dev`: local dev stack (server + UI + daemon)
-- `yarn tui`, `yarn tui:with-mobile`: dev stack in the integrated TUI (logs + controls)
+- `yarn tui`: dev stack in the integrated TUI with web + installed dev-client support (`yarn tui --no-mobile` for web only; `yarn tui:with-mobile` remains an alias)
 - `yarn build`, `yarn start`, `yarn stop`: prod-like build/start/stop flows
 - `yarn auth login`, `yarn daemon`, `yarn happier`: auth + daemon + CLI flows
 - `yarn env list|set|unset`: manage persisted env vars for your repo-local stack

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Controlled Stack QA"
+  short_description: "Run stable snapshot-backed QA stacks"
+  default_prompt: "Use $happier-controlled-stack-qa to create or reuse one dedicated controlled stack for this QA session."
+
+policy:
+  allow_implicit_invocation: false

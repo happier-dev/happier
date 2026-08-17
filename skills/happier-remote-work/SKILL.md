@@ -43,7 +43,8 @@ are native shell operations. `--script` starts Yarn only on the selected host. W
 locally for this POSIX-only routing feature.
 
 The repository command policy chooses the least-loaded healthy configured target from short-lived,
-coalesced cached probes. It excludes targets that cannot launch the requested top-level executable
+coalesced cached probes. It excludes targets whose repository filesystem reports no free space or
+that cannot launch the requested top-level executable
 and adjusts cached load for commands dispatched there but not yet reflected by the next probe. Pass
 the executable directly when practical; `sh -lc` hides inner tool requirements from this preflight.
 Local load participation and local fallback are independent settings. A running Stack is not

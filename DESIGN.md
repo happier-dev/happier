@@ -39,6 +39,12 @@ It should feel:
 
 Delight is not decoration added after the interface works. It is the result of purpose, clarity, continuity, agency, performance, accessibility, and craft working together.
 
+## The uncompromising quality bar
+
+We need to cook hard. Aim for top 1% human-design craft and Apple Design Award-level quality. Sweat every pixel, every meaningful state, and every transition frame by frame. Make it feel absurdly good, absolutely stellar, and truly DELIGHTFUL: super clean, minimalist, design-forward, premium, smooth, fluid, and unique, like something Alan Dye would genuinely want to use.
+
+Preserve clarity, accessibility, performance, state continuity, and repeated-use speed. Use Happier’s canonical components, tokens, and motion owners.
+
 ## Desired user feelings
 
 Important flows should help people feel:
@@ -112,7 +118,7 @@ Trust is part of the interface. Encryption, self-hosting, relay choice, permissi
 
 Mobile is as important as desktop and web. Equal importance does not require identical layouts.
 
-- Preserve capability, product identity, terminology, and state continuity across platforms.
+- Preserve promised capability, product identity, terminology, and state continuity on each platform the feature reaches. Equal importance requires deliberate treatment of affected platforms, not automatic feature parity or identical execution, persistence, availability, or consistency.
 - Adapt composition, information density, navigation, input, and reachability to the device and context.
 - Mobile is not miniature desktop. Recompose around touch, thumb reach, safe areas, software keyboards, narrow widths, rotation, and interrupted use.
 - Desktop is not enlarged mobile. Support precision, keyboard navigation, hover as enhancement, resizable windows, denser comparisons, and deep workflows.
@@ -196,6 +202,8 @@ Use visual intensity intentionally:
 - **Signature moments** may use atmosphere, richer illustration, staged reveals, spatial camera movement, or expressive transitions. Examples include first onboarding, major handoff, meaningful completion, and carefully chosen feature introductions.
 - **Routine workflows** should retain craft and tactile feedback but prioritize speed, repeatability, and low cognitive load.
 - **Urgent or recovery flows** prioritize clarity, preserved state, direct action, and calm reassurance.
+
+Interaction frequency determines expressive intensity. High-frequency actions should feel immediate, tactile, and nearly effortless. Occasional transitions may explain spatial change. Rare signature moments may use richer choreography. Repeated exposure must make the interface feel faster and more natural, not force people to watch the design perform.
 
 Do not spread a signature visual device across the entire product until it loses meaning. The onboarding planet, cinematic stage, word-by-word narration, and demo-world machinery are references for experience quality, not default app chrome.
 

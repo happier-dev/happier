@@ -69,6 +69,7 @@ Apply strict RED-GREEN-REFACTOR while following Happier-specific lane, fixture, 
 - Name the exact released/predecessor producer and consumer plus the direction the test proves. Prefer the real historical serializer/client/artifact or a provenance-pinned golden vector; do not reconstruct “old” behavior from current types or a new mock.
 - Add one discriminating contract/vector test per material reachable direction, then only the risk-selected end-to-end flows. Do not multiply UI × CLI × daemon × server permutations when the changed seam does not couple them.
 - Inventory and consolidate existing compatibility fixtures and harnesses before adding another family; a compatibility test must not create a second implementation of the protocol it is meant to verify.
+- For an edited local-only/development-exposed migration already applied to the current checkout's deterministic repo-local development stack, validation includes mandatory in-place reconciliation of that retained database. Never delete/reset/recreate/replace/clean it and never substitute a fresh database. No separate confirmation or backup/clone is required for this narrow repo-local target. Run the canonical deploy twice and verify current source checksums, ledger, provider integrity, and foreign keys; a later migration edit invalidates this evidence.
 
 ## Happier Lane Map
 
@@ -131,6 +132,10 @@ Host-test green alone is not shippable for user-visible behavior; this skill own
 - When a full-suite result is used as a release/ship gate, or shared-state leakage/order dependence is a material risk, run it twice back-to-back before calling it deterministic.
 - If a documented memory-heavy UI host suite OOMs at the default heap, rerun with `NODE_OPTIONS=--max-old-space-size=8192` instead of silently narrowing the lane.
 - Device QA must pin bundle identity when stale Metro state could invalidate the result: full Metro reload, Fast Refresh off, and a module probe.
+
+### Dedicated controlled-stack routing
+
+Do not create a dedicated QA stack merely because testing or QA is requested. When a human explicitly requests a dedicated, isolated, stable, controlled, snapshot-backed, or manual-restart QA stack, invoke `skills/happier-controlled-stack-qa` and let it own provisioning, reuse, runtime identity, reload boundaries, borrowed Expo, and teardown. That skill requires one remembered stack per agent session unless the human explicitly requests multiple stacks.
 
 Do not mark a validation step complete merely because wiring is registered, a command reached a compiler/test runner, or a background process remains running. Record the terminal exit/result and decisive product evidence. If the live recipe cannot run, mark it `BLOCKED` with the missing prerequisite and next action; do not substitute more host tests and call the behavior shipped.
 

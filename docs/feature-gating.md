@@ -52,7 +52,7 @@ The first-class model-provider program uses these canonical ids:
 - `providers.localDiscovery` — local process/listener candidate discovery; depends on `providers` and `localServices.inventory`;
 - `providers.localModelManagement` — local model load/unload management; depends on `providers`.
 
-Starting or supervising a local Provider process is a separate operation and also requires `localServices.managed`. Discovery never implies process ownership or permission to manage an adopted process.
+`localServices.managed` gates only the Local Services product and UI surfaces for managed launch, naming, health, and lifecycle. It is not a Provider gate and must not guard or alias the public managed-Provider runtime (`/managed-services`, SVC09), whose admission stays under the Provider feature boundary. Provider discovery never implies process ownership or permission to manage an adopted process.
 
 Provider gates are enforced before reading Provider settings, resolving Saved Secrets, probing the network, or starting processes. Missing gates and unmet dependencies fail closed; callers must not reconstruct these dependencies from capabilities or process state.
 

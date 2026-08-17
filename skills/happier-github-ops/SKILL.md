@@ -38,7 +38,24 @@ yarn ghops issue view -R happier-dev/happier <number> \
   --json number,title,body,url,state,labels,author,comments,createdAt,updatedAt
 ```
 
-Treat reporter diagnoses, proposed fixes, severity, and duplicate claims as assertions to verify. Private bug-report diagnostics are not a GitHub read concern; resolve them through the maintainer evidence capability described in `docs/issue-triage.md`.
+`issue view` does not include timeline cross-references. For every issue selected for deep diagnosis, retrieve a bounded first-order relationship inventory: explicit links in the body/comments, timeline cross-references and connected events, closing or referencing pull requests, referenced commits, and explicitly related issues.
+
+```bash
+yarn ghops api -H 'Accept: application/vnd.github+json' \
+  repos/happier-dev/happier/issues/<number>/timeline --paginate
+```
+
+Start with relationship identity and live state. For a pull request that could change the diagnosis or maintainer action, inspect compact metadata before its diff and discussion:
+
+```bash
+yarn ghops pr view -R happier-dev/happier <number> \
+  --json number,title,url,state,isDraft,author,baseRefName,headRefName,mergeStateStatus,reviewDecision,body,files,commits,comments,reviews,createdAt,updatedAt
+yarn ghops pr diff -R happier-dev/happier <number>
+```
+
+Do not recursively expand every mention or bot link. Follow another relationship only when it can change grouping, root cause, fix fitness, closure, release status, or the next maintainer decision. A missing cross-reference is not proof that no related work exists; use bounded signature search when the issue claims a PR, duplicate, regression, or prior fix that the timeline does not expose.
+
+Treat issue and PR descriptions, review comments, proposed patches, passing checks, approvals, reporter diagnoses, proposed fixes, severity, and duplicate claims as assertions to verify. Private bug-report diagnostics are not a GitHub read concern; resolve them through the maintainer evidence capability described in `docs/issue-triage.md`.
 
 ## Authority-gated issue write-back
 
@@ -51,6 +68,13 @@ Every GitHub mutation uses a mandatory two-phase protocol:
 
 Approval applies only to the previewed mutation set. Never infer approval from silence, a previous batch, general repository authority, or authorization to diagnose or implement code. Read-only retrieval does not require approval.
 
+There are only two pre-authorized exceptions, both repository-owned and documented in `docs/issue-triage.md`:
+
+- release automation may move a pre-release snapshot forward to the verified target `stage:*` after the owning release verifier succeeds, including a higher-channel release that bypasses a lower channel; this permits only the exact label add/remove operation performed by `scripts/pipeline/github/reconcile-issue-stage.mjs`;
+- issue handoff automation may set `needs:maintainer` for opened/reopened issues, move an open `needs:reporter` issue to `needs:maintainer` after an external human response, or execute exact allowlisted saved-reply directives posted by a project-side commenter; this permits only the incremental label operations performed by `scripts/pipeline/github/reconcile-issue-needs.mjs`.
+
+Neither exception authorizes comments, closure, assignment, issue edits, arbitrary labels, backward stage transitions, or any other mutation. Interactive agents remain subject to the exact preview-and-approval protocol; they do not gain implicit write authority from the saved-reply syntax.
+
 Before an authorized mutation:
 
 1. confirm every target belongs to the user-approved issue set;
@@ -60,7 +84,7 @@ Before an authorized mutation:
 5. apply only the bounded approved actions;
 6. re-read the affected issues and report every applied mutation with its URL and any failure or partial result.
 
-Use GitHub as the durable triage store; do not create a local status ledger. Keep public comments concise and evidence-based, and distinguish observed facts from hypotheses. Never paste private logs, diagnostic excerpts, secrets, machine identities, personal paths, or full session ids.
+Use GitHub as the durable triage store; do not create a local status ledger. Keep public comments focused and evidence-based, and distinguish observed facts from hypotheses. Never paste private logs, diagnostic excerpts, secrets, machine identities, personal paths, or full session ids.
 
 Hard safeguards:
 
@@ -95,21 +119,67 @@ yarn ghops auth clear
 
 On non-macOS platforms, continue providing `HAPPIER_GITHUB_BOT_TOKEN`; Keychain lifecycle commands fail closed until a native credential-store adapter exists.
 
-## What to write (LLM guidelines)
+## Public GitHub writing
 
-When creating/updating public issues, keep it **useful but minimal**:
+This skill owns the quality and safety of outgoing GitHub payloads. Triage, diagnosis, implementation, review, and release evidence establish the conclusions; polished prose does not become another source of product truth.
 
-- Prefer **user impact, repro steps, expected vs actual**, and **acceptance criteria**.
-- Link to PRs/commits by URL when available.
-- Avoid internal-only detail: no private logs, no secrets, no tokens, and no stack dumps from private environments.
-- If you need to share sensitive debugging context, summarize it and keep the raw detail local.
+Write public issues, pull-request text, and comments in Happier's voice: warm, direct, concrete, technically honest, and useful without sounding like customer-support automation. Be concise because the response is focused, not because evidence, consequences, or caveats were removed.
 
-Suggested comment format for progress updates:
+Before proposing an agent-authored public comment on a Happier GitHub issue, resolve the local maintainer from the machine's normal authenticated GitHub CLI account:
 
-- What changed (1–3 bullets)
-- Why (brief)
-- Next step / what’s blocked (one line)
-- Links (PR/commit/issues)
+```bash
+gh api user --jq .login
+```
+
+Use the returned login in a standalone final line of every comment: `cc: @<local-gh-login>`. Resolve this identity with ordinary `gh`, never `yarn ghops`: `ghops` is deliberately authenticated as the bot that transports issue reads and writes, not the local maintainer who should receive notifications. Do not substitute the bot login, repository owner, operating-system username, Git author, a hardcoded handle, or a previously observed account. If ordinary `gh` is unavailable, unauthenticated, or returns no login, stop before the mutation preview and ask the user to authenticate with `gh auth login` or explicitly supply the mention target.
+
+This direct mention keeps the local maintainer participating in the issue conversation. Apply it to initial responses, evidence requests, progress updates, release updates, and closure recommendations. Include the resolved line in the complete comment shown during the exact mutation preview; never add it after approval or omit it based on inferred subscription status, an earlier mention, or prior participation. After approval, post the exact approved handle even if the active local account changes; an identity change requires a revised preview. This rule applies to issue comments, not issue bodies or the release automation's label-only mutations. Use a different handle or omit the line only when the user explicitly approves that exact payload.
+
+### Voice and identity
+
+- Sound like a thoughtful project collaborator, not a corporate account, growth bot, legal notice, or generic AI assistant.
+- Treat a real issue report as a contribution to the project. In the first project response, thank the author naturally for taking the time to report it unless someone speaking for the project has already done so in the thread. This still applies when the behavior is not reproduced, turns out to be intended, or needs more evidence.
+- When the author or a commenter supplied a useful reproduction detail, diagnostic insight, correction, or fix direction, thank them for that specific contribution and say briefly how it helped. Prefer a human sentence such as `Thanks for tracking this down—the detail about reconnecting after resume pointed us to the lifecycle boundary` over a generic acknowledgment.
+- Do not make gratitude sound procedural. Place it where it fits naturally, vary the wording, and then continue into the substance. Do not repeat the same thank-you in every update when the thread has already acknowledged the contribution; a new material contribution can receive a new specific thanks.
+- Gratitude does not validate an unverified diagnosis. Thank the person for the evidence or reasoning they contributed, then distinguish what the project confirmed, what remains a hypothesis, and what changed.
+- Avoid canned support phrases such as `Thank you for bringing this to our attention` and unsupported promises such as `our team is actively investigating`.
+- Never invent personal experience, quotes, maintainer decisions, or feelings. Do not write `I built`, `I decided`, or `I've been working on` unless the exact user-approved payload deliberately speaks in that maintainer's voice.
+- Use `we` only for a project-level action or status established by evidence or supplied in the exact approved text. Otherwise prefer neutral factual constructions such as `This reproduces on...`, `The current implementation...`, and `The remaining gap is...`.
+- Preserve personality and earned enthusiasm, but avoid promotional fog, slogans, hype, artificial urgency, unsupported superlatives, and competitor comparisons.
+- Prefer plain ASCII punctuation in newly authored public copy.
+
+### Product truth and status
+
+- Lead with the useful outcome or current state: reported, reproduced, unable to reproduce, diagnosed, implemented, merged, released, blocked, awaiting information, or a duplicate candidate.
+- Distinguish those states exactly. A merged change is not released; a development-only behavior is not generally available; a proposed disposition is not a maintainer decision.
+- Separate observed facts from hypotheses and reporter assertions. Say what evidence supports the conclusion without exposing private evidence provenance.
+- Verify public claims against the implementing behavior and relevant release or channel. Never invent capabilities, product names, guarantees, dates, support levels, or availability.
+- Keep vendor attribution with vendor-owned behavior. Do not state a competitor's limitation as Happier's own conclusion.
+- Treat every correction as a new claim requiring the same evidence as the text it replaces.
+
+### Editing and structure
+
+- Patch existing titles, bodies, and comments narrowly unless the user explicitly approves a rewrite. Preserve accurate reporter language, repro steps, examples, caveats, links, and recognizable voice.
+- Prefer user impact, repro steps, expected versus actual behavior, and acceptance criteria where they help the issue become actionable.
+- Start with the consequence or status, include the minimum evidence needed to make it trustworthy, and end with the concrete next action or missing fact.
+- Ask only for specific missing evidence and briefly explain why it matters. Do not turn a needs-information response into an interrogation.
+- Use topic-specific headings and bullets only when they improve scanning. Do not force labeled sections onto a short natural comment or repeat `**Label:** description` formatting for every sentence.
+- Link PRs, commits, and related issues when they materially help; do not add a ceremonial links section.
+- Never include private logs, diagnostic excerpts, secrets, tokens, machine identities, personal paths, full session ids, or private stack dumps. Summarize the relevant technical fact and keep raw sensitive evidence local.
+
+For a progress update, usually cover the outcome or current status, the evidence or user impact, and the next step or blocker. This is a content checklist, not a mandatory heading template.
+
+For a confirmed correction, developers benefit from the reasoning. Include the causal mechanism, the canonical owner, the exact correction, important alternatives rejected because they would leave a workaround or split-brain, materially unchanged behavior, compatibility or migration effects, deciding tests or live validation, public commit/PR provenance, current channel availability, and the exact closure or follow-up condition. When the reporter or a commenter materially shaped the implemented correction, acknowledge that contribution and ensure the proposed commit contains their verified `Co-authored-by:` trailer. Omit an item only when it is genuinely irrelevant or unsupported; do not compress a diagnosis into `fixed in source` when the evidence can help reviewers or reporters catch a missed case.
+
+Make follow-up conditional on the reporter's actual channel:
+
+- dev reporter: request a retry after `stage:dev`;
+- preview reporter: say `will reach preview on the next preview release` and request a retry after `stage:preview`;
+- stable reporter: request a retry after `stage:stable`;
+- unknown channel: state the highest verified channel and request the relevant channel plus only the component versions needed for this flow;
+- same/newer corrected version still affected: acknowledge the contradiction and request the exact reproduction, relevant versions, platform, and smallest useful diagnostic evidence.
+
+Do not ask preview or stable users to validate a dev build unless they volunteer to test another channel. Do not say `next successful release`, discuss the absence of an artifact, or promise `soon` when `on the next preview release` or `on the next stable release` is the complete supported claim.
 
 ## Common commands
 
@@ -133,11 +203,24 @@ These labels are intended to keep the public roadmap curated and consistent:
 
 - `roadmap` (triage-owned): include this item on the public roadmap project
 - `priority:p0`, `priority:p1`, `priority:p2`, `priority:p3` (triage-owned)
-- `stage:not-shipped`, `stage:experimental`, `stage:beta`, `stage:ga` (optional; rollout state)
+- `needs:maintainer`, `needs:reporter` (optional, mutually exclusive conversational ownership; see `docs/issue-triage.md`)
+- `stage:source`, `stage:dev`, `stage:preview`, `stage:stable` (optional, mutually exclusive correction availability; see `docs/issue-triage.md`)
 - `type: bug`, `type: feature`, `type: task` (recommended)
 - `source: bug-report` (applied automatically by the bug-report service)
 
+For an open issue with a complete correction integrated and verified on canonical `dev`, the next exact mutation preview must add `stage:source` and remove any conflicting `stage:*` label. Omit this only when the issue is already at the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state the reason in the preview. Do not apply the label before integration, infer a later stage, or silently omit the proposal because approval has not yet been granted.
+
 Roadmap inclusion is opt-in. Do not add `roadmap`, add a project item, or change project fields unless the user explicitly approves that exact issue for roadmap inclusion.
+
+Use a GitHub milestone such as `v0.3` for planned release scope. Do not duplicate that fact with a version-specific label. A milestone does not imply implementation or release availability, so preserve any independent `needs:*` and `stage:*` state.
+
+### Handoff labels and saved replies
+
+Use `needs:maintainer` only when a named project-side review, diagnosis, product decision, implementation, or engineering correction is currently required. Use `needs:reporter` only after the project has explicitly asked an external participant for decision-material information, reproduction, logs, versions, or confirmation. If useful diagnosis, review, or implementation remains possible before that answer, keep the issue with the maintainer. If the only prerequisite is normal release progression and the requested reporter evidence remains the next human input, use `needs:reporter`; `stage:*` records the release prerequisite. Clear both handoff labels when only release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. Never use `needs:maintainer` as a generic open-issue or release-queue marker.
+
+For agent-authored GitHub updates, show the exact `needs:*` addition/removal beside the complete comment in the normal mutation preview. Do not hide an unpreviewed agent mutation inside comment text. Manual maintainers may use the exact saved-reply directives documented in `docs/issue-triage.md`; the workflow recognizes only standalone directives and initially allows `needs:*`, `type:*`, and `priority:*`. It rejects `stage:*`, `source:*`, `roadmap`, `ai-triage`, milestones, assignments, disposition labels, contradictory operations, and a result containing both handoff labels.
+
+An external human comment automatically changes `needs:reporter` to `needs:maintainer`, regardless of whether the commenter is the original issue author. Treat this only as a wake-up signal: read and evaluate the response before deciding whether the requested evidence is sufficient. Bots and Apps are ignored, and comments on issues not marked `needs:reporter` do not change handoff state.
 
 When asked to “create an issue and put it on the roadmap with P0”, do:
 
@@ -174,7 +257,9 @@ yarn ghops api repos/happier-dev/happier/issues \
 Comment on an issue:
 
 ```bash
-yarn ghops api repos/happier-dev/happier/issues/123/comments -f body="Update: ..."
+local_gh_login="$(gh api user --jq .login)"
+comment_body="$(printf 'Update: ...\n\ncc: @%s' "$local_gh_login")"
+yarn ghops api repos/happier-dev/happier/issues/123/comments -f "body=$comment_body"
 ```
 
 Apply labels (example):

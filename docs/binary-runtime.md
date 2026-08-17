@@ -47,6 +47,22 @@ The stack pack sandbox copies the shared workspace scripts, materializes the com
 
 `packages/support` is the library precedent for this pattern. `packages/plugin-sdk` follows the same doctrine: its packed tarball bundles the internal workspace closure needed by its public declarations and runtime helpers.
 
+## Source, managed-runtime, and release boundaries
+
+The same source tree serves four deliberately different policies:
+
+The live/artifact workspace publication modes described above concern package source outputs and
+their dependency closure; they are not managed runtime-snapshot publication.
+
+- Source validation reads authored source and checked-in/generated compiler inputs. Typechecks, ordinary tests, lint, and searches do not publish CLI, server, UI, daemon, plugin, runtime-snapshot, or runtime-support artifacts.
+- Source development starts from any valid last-green output when one exists, then refreshes changed source outputs in the background. For a checkout-derived repository producer, `dev.mjs` schedules successful server/daemon refreshes through the canonical runtime publisher; one publication runs at a time and later refreshes coalesce into one trailing identity recomputation. A full restart reconciliation compares web, server, and daemon identities. A failed publication leaves the current snapshot selected and source services unchanged, while its phase is written through existing runtime state.
+- Managed named-stack publication builds only the requested runtime component(s), reuses unchanged component artifacts and owner-specific support artifacts, and commits a complete runtime snapshot whose component paths reference canonical producer payloads. A consumer selects that snapshot; it does not build or copy a second payload, and selection does not restart a running process.
+- Release/self-host packaging remains the existing per-target direct boundary. Each target builder materializes its target's complete self-contained component/support payload from settled component inputs; it does not consume or flatten a host-target managed snapshot. The resulting package must not depend on the checkout's `node_modules` or a system package manager.
+
+Managed runtime support is component-owned, not a generic dependency-layer registry, and its references are a development/QA snapshot concern only. A server manifest may reference an immutable server-support artifact containing its generated Prisma/native closure; a daemon manifest may reference its immutable daemon-support artifact containing the CLI runtime dependencies, tools, and sidecars. The component builder computes and validates its own support identity. Snapshot validation follows those references, and retention follows the graph from retained snapshots through component artifacts to referenced support artifacts before deleting anything. Existing self-contained release/runtime artifacts remain readable until ordinary retention removes them. Release/self-host builders discover and embed their own complete target support closure directly.
+
+The managed server code artifact is independent of static web UI. Runtime launch supplies the selected web artifact through the existing `HAPPIER_SERVER_UI_DIR`/Stack UI-path owner. Borrowed Expo is a controlled-live development/QA UI provider; strict snapshot UI requires an explicit web artifact. Release and self-host builders may combine web and server into their own self-contained target payload, but managed server publication does not embed or regenerate web UI and release builders do not consume a managed snapshot.
+
 ## Dependency ownership
 
 Add dependencies to the package that imports them:

@@ -15,6 +15,30 @@ Name the observable contract and classify it as wire, semantic, persistence, ope
 
 If the change is internal-only and leaves external readers, writers, artifacts, and rollout behavior unchanged, stop the compatibility workflow. Do not create a matrix, shim, migration, or compatibility test merely because code moved.
 
+### SDK protocol-evolution checklist
+
+For a public SDK, feature-protocol, Host Event, or shared Protocol object/union,
+record this checklist before implementation:
+
+- name the wire epoch separately from the npm package version;
+- recursively classify every material object as `closed`, `additive-open/drop`,
+  or `additive-open/preserve`, including nested objects;
+- confirm that stable Host Events and every identity, authority, routing,
+  persistence/mutation, executable-declaration, and runtime-union envelope is
+  `closed`;
+- state whether each new optional input is safely ignorable or instead needs an
+  advertised capability/operation or a new epoch;
+- classify every changed union as explicitly skippable bounded presentation or
+  authority-bearing; only the former may add a member without an existing safe
+  `unknown` arm or a new epoch; and
+- record unknown-field normalization/round-trip behavior and its bounds. An
+  accepted unknown never receives identity, authority, routing, persistence,
+  credential-selection, or trusted-content meaning.
+
+Use [the canonical doctrine](../../docs/compatibility.md#sdk-protocol-evolution)
+for the normative rules. It also defines the direct-cut ruling: current `dev` →
+`remote-dev` rollback is not a supported SDK-author-contract direction.
+
 ## 2. Establish evidence-backed baselines
 
 - Resolve active stable and preview baselines independently for every affected component. Record immutable version tag, commit, and artifact/deploy evidence; do not use a rolling tag alone as the final basis.
@@ -42,7 +66,9 @@ For each old/new direction that can occur, record:
 - `required`, `unreachable`, or intentionally `unsupported`, with rationale;
 - deciding contract/vector test and any risk-selected end-to-end flow.
 
-Cover new-reader/old-writer by default. Cover old-reader/new-writer only when independent rollout, coexistence, or rollback makes it reachable. New-client/old-server behavior must negotiate capabilities or degrade safely; old-client/new-server behavior preserves released wire and semantics.
+Cover new-reader/old-writer by default. Cover old-reader/new-writer only when independent rollout, coexistence, or rollback makes it reachable. New-client/old-server behavior must negotiate capabilities or degrade safely. For routine compatible changes, old-client/new-server behavior preserves released wire and semantics; for a major incompatible change, do not assume that preserving every affected old-client operation is required.
+
+When old-client/new-server support would require dual writers, parallel persisted formats, rollout modes, operator flags, socket-drain protocols, or another substantial mechanism, pause before designing it. Present the concrete user-visible choices and obtain an explicit developer/product decision: preserve the operation with the heavier transition, degrade only the affected operation with a clear update requirement, or intentionally require a client update. Do not silently force all clients to update, and do not silently build the machinery. This decision point applies only to genuinely incompatible high-cost changes; never turn routine server evolution into a client-version bump.
 
 Do not expand unaffected roles into a Cartesian product. Broaden only when a shared protocol, persisted shape, installer/service state, or deployment order couples them.
 
@@ -56,7 +82,7 @@ Prefer additive compatible evolution. When that is insufficient, use prepare/exp
 4. migrate or backfill historical data when required;
 5. remove old support only after its explicit support/removal condition is proven.
 
-Keep feature/capability decisions fail-closed and canonical. Do not add dual writers, fallback domain logic, or multiple registries to simulate compatibility.
+Keep feature/capability decisions fail-closed and canonical. Prefer operation-scoped admission so unaffected behavior remains available. Do not add dual writers, fallback domain logic, or multiple registries to simulate compatibility.
 
 ### Migration authoring
 
@@ -66,13 +92,15 @@ Classify every affected migration before changing it:
 - `development-exposed`: the migration appeared on a shared development branch or `*-dev.*` artifact but still has no supported release obligation;
 - `released`: the migration shipped in an active stable/preview artifact.
 
-Local-only and development-exposed migrations may be consolidated in place before the next supported release. A development-exposed revision requires an explicit reconciliation path for retained development databases, not a permanent product adapter. Prefer one clear transition from the released schema to the intended final schema over retaining draft add/rename/contract/drop history. Multiple unreleased migrations remain justified only by a real rollout, backfill, transaction, provider, or mixed-version requirement.
+Local-only and development-exposed migrations may be consolidated in place before the next supported release. A development-exposed revision requires completed in-place reconciliation of the current checkout's retained repo-local development database when it applied that revision, not merely a documented path and not a permanent product adapter. Prefer one clear transition from the released schema to the intended final schema over retaining draft add/rename/contract/drop history. Multiple unreleased migrations remain justified only by a real rollout, backfill, transaction, provider, or mixed-version requirement.
 
 Published and released migrations are append-only: never modify their name or bytes. If a published migration is wrong, preserve it and design the smallest forward correction that works from the published state. If the published migration cannot run at all for a supported provider, stop and resolve the release/deployment contract explicitly instead of silently rewriting history.
 
-A local database that applied an unpublished draft does not justify product compatibility code. Reconcile that database explicitly, with backup, schema/ledger inspection, a reviewable provider-specific procedure, and approval before mutating retained data. Do not add checksum allowlists, migration aliases, duplicate identities, no-op bridge migrations, or automatic ledger rewriting solely for local development history.
+A local database that applied an unpublished draft does not justify product compatibility code. For the deterministic repo-local development stack bound to the current checkout, reconcile in place automatically as part of the migration edit: no separate confirmation and no backup/snapshot/clone. Its database is retained and non-disposable; never delete, reset, recreate, replace, truncate, clean, or discard it. Inspect actual data, schema, and ledger; apply the exact provider-specific delta or canonical backfill; then deploy and verify. Do not add checksum allowlists, migration aliases, duplicate identities, no-op bridge migrations, or automatic runtime ledger rewriting solely for local development history.
 
-Treat the migration edit and retained-development reconciliation as one work unit. After the final migration edit and before handoff, compare complete physical schema—including indexes, constraints, and foreign keys—and prove the procedure on a current backup or clone; any later migration edit invalidates earlier checksum/ledger reconciliation evidence.
+Treat the migration edit and repo-local reconciliation as one work unit owned by the last editor. After the final edit and before handoff, compare complete physical schema—including data backfills, indexes, constraints, and foreign keys—run the canonical deploy twice, and verify current source checksums, ledger, provider integrity, and foreign keys. Any later migration edit invalidates earlier evidence and transfers reconciliation responsibility to the later editor.
+
+If the repo-local stack has active stack-owned writers, quiesce only that stack through `hstack` and restore its prior state after reconciliation. Fail closed without mutation when current-checkout stack identity or database ownership is ambiguous. Backups and explicit approval remain required for `main`, shared, staging, production, external, another checkout's/named QA stack, or otherwise user-owned databases.
 
 Use the canonical integration remote and immutable release tags/artifacts to establish the frontier. Verify all affected providers and test a clean upgrade from the published baseline before handoff.
 

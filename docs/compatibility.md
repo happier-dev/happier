@@ -46,9 +46,107 @@ An existing same-concept split-brain in the touched corridor must be consolidate
 - New readers accept supported old shapes; new writes use the canonical current shape.
 - Old readers need to accept new writes only when coexistence, independent component rollout, or rollback makes that direction reachable.
 - New clients talking to old servers must capability-negotiate or degrade safely instead of assuming the new contract.
-- Old clients talking to new servers must retain their released wire and semantic expectations.
+- Old clients talking to new servers retain released behavior for ordinary compatible changes and for every operation the new server can still execute safely. A major incompatible server change may require a newer client for the affected operation, but that support boundary is an explicit developer/product decision—not an agent-selected default.
 - Persisted-state changes consider both old-writer → new-reader and, when rollback/coexistence is supported, new-writer → old-reader.
-- For an incompatible transition, prefer prepare/expand → activate/migrate → contract. Do not activate new writes until every supported old reader that can encounter them is ready.
+- Prefer operation-scoped graceful degradation over connection-wide rejection: admit the old client, keep unaffected reads and writes available, and return a typed upgrade requirement only when the requested operation cannot be performed safely. Reject the whole connection only when no authenticated operation can be made safe.
+- For an incompatible transition, prefer prepare/expand → activate/migrate → contract when mixed-version coexistence or rollback is an approved requirement. Do not assume that old clients must read new writes merely because the server is self-hosted.
+
+Before adding dual writers, parallel persisted formats, rollout modes, operator flags, socket-drain protocols, or a mandatory client floor, compare their lifetime cost with the actual user behavior required. If preserving old-client/new-server behavior for a major change would require substantial machinery, stop and obtain an explicit developer/product decision among: operation-scoped degradation, a documented client update requirement, or the heavier compatibility transition. An agent must not silently choose either forced upgrades or heavy compatibility machinery. This exception is for genuinely incompatible, high-cost transitions; routine server changes must remain compatible and must not manufacture client-update requirements.
+
+### Self-hosted relay release checks
+
+The public release profiles treat self-hosted relay upgrades as independent
+component upgrades, not as a fleet migration protocol. For a stable release,
+prioritize these directions:
+
+- candidate UI, CLI, and daemon core flows against a supported older
+  self-hosted relay;
+- bounded core flows from a supported older client or daemon to the candidate
+  relay, preserving unaffected operations and returning a typed update
+  requirement only for an unsafe operation;
+- persisted state written by the supported prior release read by candidate
+  readers; and
+- candidate-writer to supported old-reader only when rollback or coexistence
+  can actually make that direction reachable.
+
+The release agent derives the affected, reachable directions from the actual
+diff and supported released baselines while it performs the initial release
+inspection, before release-note/version materialization or a release commit.
+That single inspection also owns the public-note proposal and validation
+selection. After materialization, the agent only confirms that the final delta
+contains the approved release inputs and no unexpected runtime-reachable
+change; a full second analysis is required only when the source contract
+changed. Exact scripts can prove named behaviors
+against named artifacts—for example the published-server-v0.2.1 pending-queue
+regressions or a `docker-release-assets` published-channel → local-build
+upgrade—but none of them issues a general compatibility verdict. The Docker
+upgrade suite runs in a normal profile only when the diff affects relay
+storage/schema, startup/runtime dependencies, authentication persistence,
+encryption storage, or upgrade behavior, the exact release contains a server
+candidate, and a supported published relay predecessor exists. Candidate
+presence alone is insufficient. Broader installer, platform, and
+historical-version exploration remains risk-selected deep certification.
+Release orchestration does not wait for every
+self-hosted process, impose a mandatory client floor, orchestrate a database
+migration, or coordinate a global cutover.
+If a concrete migration has a writer-drain or maintenance-window requirement,
+its dedicated migration procedure owns that external operation.
+
+## SDK protocol evolution
+
+A wire epoch describes compatible semantics, not an exact property census. Every
+material object boundary, including nested objects, is classified explicitly as
+`closed`, `additive-open/drop`, or `additive-open/preserve`; a parent policy
+never silently classifies its children.
+
+- **`closed`** rejects unknown properties. It is mandatory for identities,
+  qualified references, Account or credential selection, permissions, routing,
+  mutation inputs/outcomes, authoritative lifecycle facts, executable
+  declarations, and runtime unions. Stable Host Events are always closed.
+- **`additive-open/drop`** may accept bounded optional unknown properties only
+  for transient, presentation, or read projections where an older consumer can
+  safely ignore them. Normalization removes those properties.
+- **`additive-open/preserve`** may retain bounded unknown properties only when
+  the component is an explicit round-trip custodian for a persisted document or
+  opaque provider configuration. Preserving data never grants identity,
+  authority, routing, credential selection, persistence-policy, or trusted
+  prompt/transcript/UI power.
+
+Known fields remain strict under every policy: required fields stay required;
+invalid values do not coerce; and owner-justified encoded-byte or semantic
+cardinality bounds still apply where the actual wire, storage, or operation
+contract requires them. Implementation safety guards such as serializer/parser
+recursion depth are private fail-safe details, not public semantic JSON quotas.
+An accepted unknown is data, not authority.
+
+An optional input is compatible only when an older implementation can ignore it
+without falsely reporting success. Otherwise advertise an optional
+operation/capability or introduce a new wire epoch. Likewise, a new union member
+is compatible only in an explicitly skippable, bounded presentation list.
+Identity, presence, permission, pagination, retry, and mutation-outcome unions
+need an existing safe `unknown` arm or a new epoch; they are not skippable by
+default.
+
+npm package versions and exported wire epochs evolve independently: a later npm
+major may still export V1, and a later npm minor may make only V1-compatible
+additions. A public cross-plugin business protocol is a separately publishable
+`@happier-dev/<feature>-protocol` package with explicit `/v1` and
+`/testing/v1` exports. It contains schemas, types, helpers, and conformance
+fixtures only—not host runtime, persistence, provider implementation,
+credential materialization, polling, or a private `@happier-dev/protocol`
+dependency—and it has no `latest`, `current`, or `default` aliases. Compatible
+package copies interoperate through serialized protocol identity/version and
+runtime validation, never JavaScript object identity.
+
+The package README and nearest `AGENTS.md` must name the feature's domain owner
+and link here rather than copy this doctrine. New feature-protocol code must use
+one synchronous executable validator/normalizer that derives its bounded public
+JSON Schema; independently handwritten parser/schema pairs are not allowed.
+
+The approved SDK r0.31 direct cut does not make current `dev` → `remote-dev`
+rollback a supported direction. Do not add predecessor readers, dual writers,
+aliases, writer-floor waits, or rollback-only gates for unpublished author
+contracts; forward migration and current-version integrity still apply.
 
 ## Proportionate matrix
 
@@ -86,16 +184,20 @@ Migration source has a stricter authoring boundary than ordinary internal code:
 
 Before publishing a feature, consolidate local-only migration churn into the smallest clear transition from the published schema to the intended final schema. Do not retain add-then-drop columns, temporary tables, renamed draft identities, checksum aliases, or corrective migrations solely because a developer database applied an earlier draft. Retain multiple migrations only when each step serves a real rollout, backfill, transaction, provider, or mixed-version requirement.
 
-If a persistent development database applied a local-only draft that is later rewritten:
+If the deterministic repo-local development stack bound to the current checkout applied a local-only or development-exposed draft that is later rewritten, the database must be reconciled in place as part of the same implementation task:
 
-1. back up or snapshot the database;
-2. compare its actual schema and migration ledger with the published baseline and intended final schema;
-3. prepare a database-specific, reviewable reconciliation procedure;
-4. obtain explicit approval before mutating a database that contains retained user or development data;
-5. verify the reconciled schema and ledger against the canonical migration set.
+1. resolve the current checkout's deterministic repo-local stack and verify its repository path and managed database ownership;
+2. treat its database as retained, non-disposable development data—never delete, reset, recreate, replace, truncate, clean, or discard it;
+3. do not ask for separate confirmation and do not create a backup, snapshot, or clone for this narrowly scoped repo-local reconciliation;
+4. compare its actual data, complete physical schema, and migration ledger with the intended final schema;
+5. quiesce only stack-owned writers when required, apply the exact provider-specific schema/data delta or canonical backfill transactionally, and update only the matching ledger record after the transition succeeds;
+6. run the canonical migration deploy twice, then verify current source checksums, the ledger, provider integrity, and foreign keys;
+7. restore the stack's prior running state when it was quiesced.
 
-The migration edit and its retained-development reconciliation are one work unit. Compare the complete physical schema—not only columns, but also indexes, constraints, and foreign keys—and test the procedure on a current backup or clone after the final migration edit. Any later edit to the migration invalidates earlier checksum/ledger reconciliation evidence and requires the procedure and proof to be refreshed before handoff.
+The migration edit and its repo-local reconciliation are one work unit owned by the last editor. Any later edit to the migration invalidates earlier checksum/ledger reconciliation evidence and requires the later editor to repeat reconciliation before handoff.
+
+For `main`, shared, staging, production, external, another checkout's/named QA stack, or otherwise user-owned databases, prepare the provider-specific procedure, back up or snapshot when required, and obtain explicit approval before mutation. If stack identity or database ownership is ambiguous, fail closed without mutating any candidate.
 
 That reconciliation is an operator/development action, not a shipped compatibility path. Do not add runtime checksum exceptions, migration-name aliases, duplicate no-op migrations, or automatic ledger repair merely to preserve unpublished development history.
 
-Keep PostgreSQL, SQLite, and MySQL migrations aligned by intent. Before publication, validate both a clean migration from the published baseline and the approved reconciliation path for any retained development database. After publication, preserve the exact migration history and test upgrades append-only.
+Keep PostgreSQL, SQLite, and MySQL migrations aligned by intent. Before publication, validate both a clean migration from the published baseline and the executed repo-local reconciliation path when affected; use the approved reconciliation path for other retained databases. After publication, preserve the exact migration history and test upgrades append-only.

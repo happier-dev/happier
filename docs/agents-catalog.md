@@ -143,11 +143,36 @@ Instead:
 - explicit “resume inactive session” is **fail-closed**: if `loadSession` fails, we surface the error instead of silently starting a fresh vendor session
 - any ACP capability probing (e.g. `includeAcpCapabilities`) is reserved for opt-in diagnostics / e2e probes, not day-to-day UX
 
-## External Sessions auxiliary (experimental)
+## External Sessions auxiliary
 
-External Sessions is an optional Agent auxiliary registered through the same manifest Agent identity and plugin generation as the primary runtime. The canonical public SDK owner is `@happier-dev/plugin-sdk/experimental/sessions`.
+External Sessions is an optional Agent auxiliary registered through the same manifest Agent identity and plugin generation as the primary runtime. The canonical public SDK owner is `@happier-dev/plugin-sdk/sessions/external`.
 
 `api.agents.registerExternalSessions(localId, contribution)` registers exactly six bounded source operations: `resolveSource`, `listCandidates`, `resolveLinkIdentity`, `resolveLinkedIdentity`, `pageTranscript`, and `readAfterTranscript`. It provides discovery, linking, and transcript source semantics; it does not own hosted runtime lifecycle, follow demand, materialization, or takeover admission.
+
+Each of those six callbacks receives the host's bounded invocation controls
+(`signal`, `deadlineAtMs`, and `maxSerializedBytes`) plus the existing
+`managedEndpointRead` and required `exec` (`ExecService`) services. `exec`
+remains governed by the Agent manifest's declared process/tool host access and
+the current plugin generation. Reuse its existing process and protocol-client
+facilities; External Sessions does not add a process subsystem, HTTP bridge,
+callback, registry, or Agent-id host branch. Codex uses this seam to reuse its
+existing app-server JSON-RPC `thread/list` client for native candidate
+discovery.
+
+`resolveSource`, `resolveLinkIdentity`, and `resolveLinkedIdentity` may return
+bounded `transcriptMediaReadRoots` as transient producer evidence. The host
+normalizes and validates these absolute roots, then uses them only to authorize
+concrete media files referenced by transcript items through the existing
+exact-file media allowance/adoption path. Roots are never copied into
+`linkData`, persisted or shared state, or transcript records; they grant no
+directory-enumeration or write authority.
+
+This is a development/preview authoring contract from the current source tree;
+it does not claim that loaded or packaged release artifacts expose the same
+surface. Bundled and externally loaded plugins use the same contribution,
+invocation, and host-access contract. The six callback methods and the six
+`services.sessions.external` operations remain unchanged; `exec` is an
+invocation input, not a seventh method or service operation.
 
 Three optional same-Agent siblings add narrower capabilities without creating another Agent or Provider catalog:
 

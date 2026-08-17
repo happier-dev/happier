@@ -14,6 +14,7 @@ Classify the requested work as a feature/change, bug fix, refactor/migration, me
 - For an approved plan, also use `skills/happier-implement-plan`; that skill supplies the authoritative contract, execution units, state, and amendment rules.
 - For an accepted review finding, preserve the review's adjudicated impact and authority, then choose the coherent implementation rather than copying the reviewer's proposed mechanism blindly.
 - For a runtime/session/provider/auth investigation without source changes, use `skills/happier-diagnose`.
+- For read-only GitHub issue grouping or diagnosis, use `skills/happier-issue-triage` and `skills/happier-issue-diagnose`. Enter this implementation workflow only after the user authorizes source changes, carrying forward the established issue evidence and version basis.
 - For a reported defect or regression, read [bug-fix-loop.md](references/bug-fix-loop.md) before editing production behavior.
 
 Do not create a repository plan on agent initiative. Use an internal checklist when useful, but keep it ephemeral unless an approved program already designates durable tracking.
@@ -84,6 +85,8 @@ Ask only when safe investigation cannot resolve a decision-material ambiguity, u
 - Mock only genuine system boundaries; keep internal domain behavior real.
 - Implement through the canonical/public owner boundary and a consumed path, not a dormant horizontal spine.
 - Use `skills/happier-compatibility` for released wire, semantic, persistence, migration, upgrade, coexistence, or rollback seams.
+- When editing the name or bytes of a local-only/development-exposed migration, resolve the deterministic repo-local development stack for the current checkout and inspect its ledger. If that migration is applied there, in-place reconciliation is automatically authorized and mandatory in the same task: preserve the database, never delete/reset/recreate/replace/clean it, do not ask for confirmation or create a backup/clone, and follow the repo-local procedure in `skills/happier-compatibility`.
+- The last migration editor owns a fresh repo-local reconciliation immediately before handoff. A source-level test or clean migration test does not replace this loaded persisted-state gate.
 - Use relevant UI/design/React/React Native skills for user-facing work under `DESIGN.md` and package instructions.
 - Preserve performance, continuity, accessibility, security, privacy, and Windows/Linux/macOS behavior wherever the changed corridor can materially differ.
 
@@ -106,6 +109,21 @@ Use `skills/happier-review` for an explicit review request, a substantial integr
 After a fix batch, recheck the accepted-finding delta and affected corridor. Repeat a full review only when the contract, architecture, scope, boundary, or risk materially changed.
 
 ## 10. Close from evidence
+
+For work linked to a GitHub issue, keep the source correction, commit relationship, public response, release availability, and issue closure as distinct facts:
+
+- preserve unrelated work and form one coherent correction per commit; one correction may resolve several issues, while one issue may legitimately require several commits;
+- select exact paths or hunks when committing in a dirty worktree, and keep the defining regression test with the behavior it proves;
+- use `Refs #N` for partial fixes, mitigations, release-gated corrections, or work that should leave the issue open;
+- use `Fixes #N` only when integration into the default branch satisfies the issue's actual closure gate; because `dev` is the default branch, a closing keyword can close an issue before preview or stable users receive the correction;
+- inspect the issue author and comments for material contributions embodied in the correction. A supplied causal insight, decisive reproduction, design, patch, or substantially adopted solution earns a verified `Co-authored-by: Name <email>` trailer on each commit that incorporates it; a routine report, requested log, confirmation, or generic suggestion does not automatically earn code co-authorship;
+- resolve the contributor's GitHub-associated email or GitHub-provided noreply identity before committing. Never put an `@handle` in the trailer, guess or expose a private email, silently drop an unresolved attribution candidate, or let attribution change the independently selected `Refs`/`Fixes` relationship;
+- after implementation, propose a Conventional Commit message and a detailed GitHub response grounded in the verified cause, owner-level correction, choices, tests, public provenance, current stage, and reporter-channel follow-up;
+- do not apply labels, post comments, or close the issue without the separate exact mutation preview and approval required by `skills/happier-github-ops`.
+
+When the complete correction is integrated and verified on canonical `dev`, include `stage:source` for every affected open issue in the next exact GitHub mutation preview. Omit it only when the issue already has the same or a higher verified stage, or the evidence-backed disposition establishes that no correction exists to release; state that reason explicitly. If mutation authority is absent, report the pending proposal instead of applying it or silently leaving the issue outside the release queue. Local work, `remote-dev`, an open pull request, or an unmerged commit does not qualify. Normal release workflows advance later labels; implementation agents do not predict or pre-advance channels.
+
+Keep human handoff separate from availability. After a source correction, choose among three states: retain `needs:maintainer` only when a named project-side review, diagnosis, implementation, or engineering correction remains; use `needs:reporter` when an approved public request makes external confirmation or diagnostics the next decision-material human input, even if the reporter must first wait for a named release stage; or clear both when only merge/release progression, promotion, publication, release-owned certification, backlog scheduling, or eventual closure remains. `stage:*` records the release prerequisite. Do not use `needs:maintainer` as a generic release-queue marker, and do not use hidden saved-reply directives in an agent-authored comment to bypass the exact mutation preview.
 
 Use these outcomes:
 
