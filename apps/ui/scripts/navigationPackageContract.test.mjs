@@ -196,6 +196,16 @@ test('apps/ui patched expo-router web modal keeps critical layout when Metro omi
     /criticalModalBodyStyle/,
     'route-modal screen content should remain a scrollable interactive body',
   );
+  assert.match(
+    modalRouteDrawerContents,
+    /const modalAccessibilityTitle = typeof options\.title === 'string'/,
+    'route-modal dialogs should derive their accessible title from the route options',
+  );
+  assert.match(
+    modalRouteDrawerContents,
+    /Drawer\.Title[^>]*>\{modalAccessibilityTitle\}<\/vaul_1\.Drawer\.Title>/,
+    'route-modal dialogs should expose the derived route title to the Drawer accessibility owner',
+  );
 });
 
 test('apps/ui patched expo-router linking rolls browser history back when route removal is prevented', async () => {
