@@ -94,6 +94,27 @@ async function writeYarnArgDumpStub({ binDir, outputPath }) {
   await writeFile(outputPath, '', 'utf-8');
 }
 
+async function writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath }) {
+  await mkdir(binDir, { recursive: true });
+  const yarnPath = join(binDir, 'yarn');
+  await writeFile(
+    yarnPath,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$*" >> "${OUTPUT_PATH:?}"',
+      'if [[ "${1:-}" == "install" ]]; then mkdir -p node_modules; fi',
+      'if [[ "$*" == "-s workspace @happier-dev/app postinstall:real" ]]; then',
+      `  mkdir -p ${JSON.stringify(dirname(requiredOutputPath))}`,
+      `  printf '%s\n' 'export const patched = true;' > ${JSON.stringify(requiredOutputPath)}`,
+      'fi',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(yarnPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
 async function writeSlowYarnArgDumpStub({ binDir, outputPath }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
@@ -822,6 +843,74 @@ test('ensureDepsInstalled regenerates server Prisma provider outputs when sqlite
     .split('\n')
     .filter((line) => /\bworkspace @happier-dev\/server generate:providers\b/.test(line));
   assert.equal(providerGenerations.length, 2, `expected each component preflight to preserve provider generation, got:\n${out}`);
+});
+
+test('ensureDepsInstalled repairs missing UI postinstall outputs on a warm dependency tree', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-ui-postinstall-readiness-'));
+  t.after(async () => rm(root, { recursive: true, force: true }));
+
+  for (const component of ['cli', 'server']) {
+    await mkdir(join(root, 'apps', component), { recursive: true });
+    await writeFile(join(root, 'apps', component, 'package.json'), `{ "name": "@happier-dev/${component}" }\n`, 'utf-8');
+  }
+  const componentDir = join(root, 'apps', 'ui');
+  await mkdir(componentDir, { recursive: true });
+  await writeFile(
+    join(componentDir, 'package.json'),
+    JSON.stringify({
+      name: '@happier-dev/app',
+      scripts: { 'postinstall:real': 'node ./tools/postinstall.mjs' },
+    }) + '\n',
+    'utf-8',
+  );
+  await writeFile(
+    join(root, 'package.json'),
+    JSON.stringify({
+      name: 'monorepo',
+      private: true,
+      workspaces: { packages: ['apps/ui', 'apps/cli', 'apps/server'] },
+    }) + '\n',
+    'utf-8',
+  );
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await mkdir(join(root, 'node_modules'), { recursive: true });
+  await writeFile(join(root, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  const requiredOutputPath = join(
+    componentDir,
+    'node_modules',
+    'react-native-enriched-markdown',
+    'lib',
+    'module',
+    'web',
+    'streamingReveal.js',
+  );
+  await mkdir(dirname(requiredOutputPath), { recursive: true });
+  await writeFile(requiredOutputPath, 'export const patched = true;\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnUiPostinstallStub({ binDir, outputPath, requiredOutputPath });
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_HOME_DIR: join(root, 'home'),
+    HAPPIER_STACK_ENV_FILE: '',
+  };
+
+  await ensureDepsInstalled(componentDir, 'happier-ui', { quiet: true, env });
+  await rm(requiredOutputPath);
+  await ensureDepsInstalled(componentDir, 'happier-ui', { quiet: true, env });
+  await ensureDepsInstalled(componentDir, 'happier-ui', { quiet: true, env });
+
+  assert.equal((await readFile(requiredOutputPath, 'utf-8')).trim(), 'export const patched = true;');
+  const commands = (await readFile(outputPath, 'utf-8')).split('\n').filter(Boolean);
+  assert.equal(commands.filter((line) => line.startsWith('install ')).length, 1);
+  assert.equal(
+    commands.filter((line) => line === '-s workspace @happier-dev/app postinstall:real').length,
+    1,
+  );
 });
 
 test('ensureDepsInstalled refreshes monorepo dependencies when root yarn.lock changes', async (t) => {

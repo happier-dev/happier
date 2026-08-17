@@ -415,8 +415,69 @@ async function ensureServerGeneratedProviderOutputs(componentDir, installDir, { 
   });
 }
 
-async function ensureComponentPrerequisites(componentDir, _label, { quiet = false, env = process.env } = {}) {
-  await ensureServerGeneratedProviderOutputs(componentDir, resolveDependencyInstallRoot(componentDir), { quiet, env });
+function findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir) {
+  return Array.from(new Set([
+    join(componentDir, 'node_modules', 'react-native-enriched-markdown'),
+    join(installDir, 'node_modules', 'react-native-enriched-markdown'),
+  ])).filter((packageDir) => existsSync(packageDir));
+}
+
+async function ensureUiPostinstallOutputs(componentDir, installDir, { quiet = false, env: envIn, pm: pmIn } = {}) {
+  const componentPkg = await readPackageJsonIfExists(join(componentDir, 'package.json'));
+  if (componentPkg?.name !== '@happier-dev/app') return;
+  if (typeof componentPkg?.scripts?.['postinstall:real'] !== 'string') return;
+
+  const requiredRelativePath = join('lib', 'module', 'web', 'streamingReveal.js');
+  const readMissingOutputs = () => {
+    const packageDirs = findInstalledEnrichedMarkdownPackageDirs(componentDir, installDir);
+    if (packageDirs.length === 0) {
+      return [join(componentDir, 'node_modules', 'react-native-enriched-markdown', requiredRelativePath)];
+    }
+    return packageDirs
+      .map((packageDir) => join(packageDir, requiredRelativePath))
+      .filter((outputPath) => !existsSync(outputPath));
+  };
+  if (readMissingOutputs().length === 0) return;
+
+  const env = pmIn
+    ? (envIn ?? process.env)
+    : await preparePmEnv(installDir, envIn ?? process.env);
+  const pm = pmIn ?? await getComponentPm(installDir, env);
+  const stdio = quiet ? 'ignore' : 'inherit';
+  if (!quiet) {
+    // eslint-disable-next-line no-console
+    console.log('[local] repairing happier-ui postinstall outputs...');
+  }
+
+  if (pm.name === 'yarn') {
+    await ensureYarnReady({ dir: installDir, env, quiet, pm });
+    await runPm(pm, ['-s', 'workspace', '@happier-dev/app', 'postinstall:real'], {
+      cwd: installDir,
+      stdio,
+      env,
+    });
+  } else {
+    await runPm(pm, ['run', '-s', 'postinstall:real'], {
+      cwd: componentDir,
+      stdio,
+      env,
+    });
+  }
+
+  const missingOutputs = readMissingOutputs();
+  if (missingOutputs.length > 0) {
+    throw new Error(
+      `[local] happier-ui postinstall completed without required patched outputs:\n${missingOutputs
+        .map((outputPath) => `- ${outputPath}`)
+        .join('\n')}`,
+    );
+  }
+}
+
+async function ensureComponentPrerequisites(componentDir, _label, { quiet = false, env = process.env, pm } = {}) {
+  const installDir = resolveDependencyInstallRoot(componentDir);
+  await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+  await ensureUiPostinstallOutputs(componentDir, installDir, { quiet, env, pm });
 }
 
 async function ensureYarnReady({ dir, env, quiet = false, pm }) {
@@ -592,7 +653,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       String(env?.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? '').trim() === '1' ||
       String(env?.HAPPIER_STACK_DISABLE_REFRESH_DEPS ?? '').trim() === '1';
     if (skipRefresh) {
-      await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+      await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
       return;
     }
 
@@ -603,7 +664,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       String(env?.HAPPIER_STACK_SERVICE_ALLOW_REFRESH_DEPS ?? '').trim() === '1' ||
       String(env?.HAPPIER_STACK_ALLOW_REFRESH_DEPS ?? '').trim() === '1';
     if (isServiceMode(env) && !allowRefresh) {
-      await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+      await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
       return;
     }
 
@@ -626,7 +687,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       });
     }
 
-    await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+    await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
     return;
   }
 
@@ -650,7 +711,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
   } else {
     await installFirstRun();
   }
-  await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
+  await ensureComponentPrerequisites(componentDir, label, { quiet, env, pm });
 }
 
 const stackWorkspaceBuildBoundary = {
