@@ -24,6 +24,7 @@ import { realpath } from 'node:fs/promises';
 import { createJsonlFollowController, type JsonlFollowController } from '@/agent/localControl/jsonlFollowController';
 import { normalizeJsonlFollowPolicy, type JsonlFollowPolicyInput, type JsonlFollowPolicyV1 } from '@/agent/localControl/jsonlFollowPolicy';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
+import { isClaudeAsyncAgentLaunchToolResult } from '@happier-dev/protocol';
 import { normalizeClaudeAgentSdkProviderTaskId } from '../../providerActivity/createClaudeProviderActivityLedger';
 
 type WatchFile = (file: string, onFileChange: (file: string) => void) => () => void;
@@ -605,6 +606,10 @@ function shouldMarkSidechainCompletedAfterToolResult(params: {
   toolName: string;
   toolUseResult: any;
 }): boolean {
+  // A launch acknowledgement is not a completion, whichever name the tool carries. `Task` used to be
+  // synchronous, so its result was its answer; closing the follower on an ASYNC launch abandons the
+  // live transcript for the agent's entire run.
+  if (isClaudeAsyncAgentLaunchToolResult(params.toolUseResult)) return false;
   if (params.toolName === 'Task') return true;
   const status = typeof params.toolUseResult?.status === 'string' ? String(params.toolUseResult.status).trim().toLowerCase() : '';
   return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled';

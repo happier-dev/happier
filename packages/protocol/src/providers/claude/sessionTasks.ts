@@ -144,6 +144,57 @@ export function isTerminalClaudeAgentSdkProviderTaskStatus(status: unknown): boo
   return signal === 'complete' || signal === 'failed' || signal === 'cancelled';
 }
 
+/**
+ * The statuses with which Claude acknowledges that a subagent was *launched*.
+ *
+ * These are not outcomes. Claude Code launches the generic subagent tool asynchronously: the tool
+ * result returns within milliseconds carrying `{ isAsync: true, status: 'async_launched', agentId,
+ * outputFile }`, the agent then runs for as long as its work takes, and the real outcome arrives
+ * separately as a `<task-notification>` routed by the same tool-use id.
+ */
+const CLAUDE_AGENT_LAUNCH_ACKNOWLEDGEMENT_STATUSES = new Set(['async_launched', 'remote_launched']);
+
+function readClaudeToolResultRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    const first = trimmed[0];
+    if (first !== '{' && first !== '[') return null;
+    try {
+      return readClaudeToolResultRecord(JSON.parse(trimmed) as unknown);
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Does this tool result merely acknowledge that a subagent was launched?
+ *
+ * The ONE reader for that question, because two packages must agree on it or the roster tells two
+ * stories: the CLI's workflow correlation must not terminalize an agent at launch, and the UI's
+ * transcript derivation must not draw a live agent as finished. Both see the same provider fact
+ * through different envelopes, so the unwrapping lives here too — the transcript normalizer
+ * JSON-encodes the raw `toolUseResult` into a string, while the SDK log converter nests the same
+ * object under `tool_use_result`.
+ *
+ * Tolerant by construction: this shape is undocumented provider internals, so anything unrecognised
+ * answers `false` (the pre-existing reading) rather than throwing or reclassifying a real result.
+ */
+export function isClaudeAsyncAgentLaunchToolResult(value: unknown): boolean {
+  const record = readClaudeToolResultRecord(value);
+  if (!record) return false;
+
+  const status = normalizeClaudeAgentSdkProviderTaskStatus(record.status);
+  if (status !== null && CLAUDE_AGENT_LAUNCH_ACKNOWLEDGEMENT_STATUSES.has(status)) return true;
+
+  return isClaudeAsyncAgentLaunchToolResult(record.tool_use_result)
+    || isClaudeAsyncAgentLaunchToolResult(record.toolUseResult);
+}
+
 function projectClaudeActivitySignalToWorkState(signal: ClaudeActivityStatusSignal): SessionWorkStateStatusV1 {
   // Work-state has no `failed` status; provider failures surface as `blocked`.
   return signal === 'failed' ? 'blocked' : signal;

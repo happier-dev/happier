@@ -1,3 +1,5 @@
+import { isClaudeAsyncAgentLaunchToolResult } from '@happier-dev/protocol';
+
 import type { ToolCall, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 
 /**
@@ -34,10 +36,16 @@ export function readToolCallStartedAtMs(toolMessage: ToolCallMessage): number | 
  *
  * A running call has not ended, and a call that ended without recording when is reported as
  * unknown rather than being given the start instant.
+ *
+ * An asynchronous agent launch is the third way a call has not ended: Claude completes the call
+ * within milliseconds with a launch acknowledgement and the agent runs on, so its recorded
+ * `completedAt` is the instant the work STARTED. Taking it as a finish stopped the row's clock at
+ * a few milliseconds for an agent that then worked for hours.
  */
 export function readToolCallFinishedAtMs(toolMessage: ToolCallMessage): number | null {
     const tool: ToolCall | undefined = toolMessage.tool;
     if (!tool || tool.state === 'running') return null;
+    if (tool.state === 'completed' && isClaudeAsyncAgentLaunchToolResult(tool.result)) return null;
     return readFiniteNumber(tool.completedAt);
 }
 

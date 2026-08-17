@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    isClaudeAsyncAgentLaunchToolResult,
     isTerminalClaudeAgentSdkProviderTaskStatus,
     normalizeClaudeActivityStatusSignal,
     normalizeClaudeAgentSdkProviderTaskId,
@@ -255,5 +256,54 @@ describe('Claude task and todo wire schemas', () => {
             ['task_a', 'complete', 'Check docs', undefined],
             ['task_b', 'pending', 'Fix parser', 'Fixing parser'],
         ]);
+    });
+});
+
+/**
+ * OBSERVED (live Claude session d85429b7, 2026-08-17): every generic subagent launch returns
+ * `{ isAsync: true, status: 'async_launched', agentId, outputFile }` within milliseconds while the
+ * agent runs on. Two packages read that same fact through different envelopes, so the unwrapping is
+ * part of the contract, not an implementation detail of either consumer.
+ */
+describe('isClaudeAsyncAgentLaunchToolResult', () => {
+    const ACKNOWLEDGEMENT = {
+        isAsync: true,
+        status: 'async_launched',
+        agentId: 'aec7336148831a599',
+        outputFile: '/tmp/tasks/aec7336148831a599.output',
+    };
+
+    it('recognises the acknowledgement as an object', () => {
+        expect(isClaudeAsyncAgentLaunchToolResult(ACKNOWLEDGEMENT)).toBe(true);
+    });
+
+    it('recognises it through the transcript envelope, which JSON-encodes the tool result', () => {
+        expect(isClaudeAsyncAgentLaunchToolResult(JSON.stringify(ACKNOWLEDGEMENT))).toBe(true);
+    });
+
+    it('recognises it through the SDK log-converter envelope, which nests the object', () => {
+        expect(isClaudeAsyncAgentLaunchToolResult({ tool_use_result: ACKNOWLEDGEMENT })).toBe(true);
+        expect(isClaudeAsyncAgentLaunchToolResult({ toolUseResult: ACKNOWLEDGEMENT })).toBe(true);
+        expect(isClaudeAsyncAgentLaunchToolResult(JSON.stringify({ toolUseResult: ACKNOWLEDGEMENT }))).toBe(true);
+    });
+
+    it('recognises a remote launch, which is the same claim about a different runner', () => {
+        expect(isClaudeAsyncAgentLaunchToolResult({ status: 'remote_launched', agentId: 'a1' })).toBe(true);
+    });
+
+    it('does not claim a launch for a real result, a terminal status, or unparseable prose', () => {
+        expect(isClaudeAsyncAgentLaunchToolResult('All six findings closed at one owner each.')).toBe(false);
+        expect(isClaudeAsyncAgentLaunchToolResult({ status: 'completed', agentId: 'a1' })).toBe(false);
+        expect(isClaudeAsyncAgentLaunchToolResult({ stdout: 'ok', exit_code: 0 })).toBe(false);
+        // A subagent may well REPORT the word in its own output; only the typed status counts.
+        expect(isClaudeAsyncAgentLaunchToolResult('status: async_launched')).toBe(false);
+    });
+
+    it('answers false rather than throwing for anything unrecognised', () => {
+        expect(isClaudeAsyncAgentLaunchToolResult(undefined)).toBe(false);
+        expect(isClaudeAsyncAgentLaunchToolResult(null)).toBe(false);
+        expect(isClaudeAsyncAgentLaunchToolResult(42)).toBe(false);
+        expect(isClaudeAsyncAgentLaunchToolResult([ACKNOWLEDGEMENT])).toBe(false);
+        expect(isClaudeAsyncAgentLaunchToolResult('{ not json')).toBe(false);
     });
 });

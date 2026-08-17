@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import { logger } from '@/ui/logger';
 
 import {
   WORKFLOW_AGENT_PROMPT_TITLE_MAX,
@@ -734,6 +736,37 @@ await parallel([
     });
   });
 
+  it('extracts an `Agent`-named subagent tool-use as an implicit workflow candidate', () => {
+    // OBSERVED (live session d85429b7, 2026-08-17): Claude Code names the generic subagent tool
+    // `Agent`, not `Task` — 69 launches in that transcript, none named `Task`. Recognising only the
+    // `Task` literal here made every plain subagent invisible to the activity tracker, so the roster
+    // had no authority that could say `running`.
+    const fact = parseClaudeWorkflowFact({
+      type: 'assistant',
+      session_id: 'claude-session-1',
+      uuid: 'event-agent',
+      message: {
+        content: [{
+          type: 'tool_use',
+          id: 'toolu_agent',
+          name: 'Agent',
+          input: {
+            description: 'Fix fork identity and UI gaps',
+            subagent_type: 'general-purpose',
+          },
+        }],
+      },
+    });
+
+    expect(fact).toEqual({
+      kind: 'subagent-start',
+      toolUseId: 'toolu_agent',
+      title: 'Fix fork identity and UI gaps',
+      sourceSessionId: 'claude-session-1',
+      uuid: 'event-agent',
+    });
+  });
+
   describe('subagent tool_result (the only terminal evidence a synchronous subagent emits)', () => {
     const successfulToolResult = (toolUseId: string) => ({
       type: 'user',
@@ -764,6 +797,35 @@ await parallel([
       });
     });
 
+    it('yields nothing for an async-launch acknowledgement, which reports a start and not a result', () => {
+      // OBSERVED (live session d85429b7): the `Agent` tool result returns ~3ms after the launch with
+      // `{ isAsync: true, status: 'async_launched', agentId, outputFile }` while the agent runs for
+      // hours. Reading it as a completion terminalises an agent that has only just started; the real
+      // outcome arrives later as a `<task-notification>`, which `parseTaskNotificationMessage` owns.
+      const asyncLaunchAcknowledgement = {
+        type: 'user',
+        session_id: 'claude-session-1',
+        uuid: 'event-async-launch',
+        message: {
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'toolu_agent',
+            is_error: false,
+            content: [{ type: 'text', text: 'Async agent launched successfully.\nagentId: aec7336148831a599' }],
+          }],
+        },
+        toolUseResult: {
+          isAsync: true,
+          status: 'async_launched',
+          agentId: 'aec7336148831a599',
+        },
+      };
+
+      expect(parseClaudeWorkflowFact(asyncLaunchAcknowledgement, {
+        isKnownSubagentToolUseId: (id) => id === 'toolu_agent',
+      })).toBeNull();
+    });
+
     it('yields nothing for an identical result belonging to any other tool', () => {
       // A successful Read/Bash result is byte-identical to a successful Task result, so shape can
       // never decide this — only correlation state can.
@@ -772,5 +834,77 @@ await parallel([
       })).toBeNull();
       expect(parseClaudeWorkflowFact(successfulToolResult('toolu_task'))).toBeNull();
     });
+  });
+});
+
+/**
+ * `workflow_progress` is the roster's only live source, and the SDK does not declare it.
+ *
+ * OBSERVED: `SDKTaskProgressMessage` in the pinned `@anthropic-ai/claude-agent-sdk@0.2.123`
+ * (`sdk.d.ts`) declares `type/subtype/task_id/tool_use_id/description/usage/last_tool_name/summary/
+ * uuid/session_id` and nothing else — no `workflow_progress` — and neither does `0.3.231`. So the
+ * field can be renamed or retyped with NO compile error, and every reader here is duck-typing a
+ * live stream.
+ *
+ * Two absences that must NOT be conflated, which is the whole point of these cases: a suppressed
+ * tick (normal, frequent) and the shape we depend on being gone (a permanently blank roster).
+ */
+describe('parseClaudeWorkflowFact — the undeclared workflow_progress shape', () => {
+  function progressTick(workflowProgress: unknown): Record<string, unknown> {
+    return {
+      type: 'system',
+      subtype: 'task_progress',
+      session_id: 'claude-session-1',
+      task_id: 'workflow-task',
+      tool_use_id: 'toolu_wf',
+      description: 'Ship feature',
+      uuid: 'event-drift',
+      ...(workflowProgress === undefined ? {} : { workflow_progress: workflowProgress }),
+    };
+  }
+
+  function readProgress(workflowProgress: unknown) {
+    const fact = parseClaudeWorkflowFact(progressTick(workflowProgress));
+    return fact?.kind === 'task-lifecycle' ? fact.workflowProgress : undefined;
+  }
+
+  it('reports an unreadable shape on a signal that is on by default, and only once per shape', () => {
+    // `logger.debug` is OFF in a session process (`resolveFileLogLevel` -> `info` unless
+    // `DEBUG`/`HAPPIER_LOG_LEVEL`), so a debug line here would be an unobservable fallback — which
+    // is the same class of silent degradation this whole corridor exists to remove.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    // The field is present but is no longer the array every reader below assumes.
+    expect(readProgress({ phases: [], agents: [] })).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('workflow_progress');
+
+    // A per-tick warning over a multi-thousand-record session would be its own defect, so the same
+    // drift is reported once and then stays quiet.
+    expect(readProgress({ phases: [], agents: [] })).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // A different failure is different evidence: an array whose entries no longer name a phase or
+    // an agent yields an EMPTY roster, which reads exactly like a run that has none.
+    warn.mockClear();
+    expect(readProgress([{ type: 'workflow_step', id: 'a' }, { type: 'workflow_step', id: 'b' }])).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
+  });
+
+  it('stays quiet for a suppressed tick and for a run that genuinely has no progress yet', () => {
+    // OBSERVED on claude 2.1.231: 2 of 7 `task_progress` ticks in one run shipped no
+    // `workflow_progress` key at all. Warning on those would drown the one case that matters.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    expect(readProgress(undefined)).toBeUndefined();
+    expect(readProgress([])).toEqual([]);
+    expect(readProgress([{ type: 'workflow_phase', index: 0, title: 'Research' }])).toEqual([
+      { kind: 'phase', index: 0, title: 'Research' },
+    ]);
+
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

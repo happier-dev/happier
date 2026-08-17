@@ -1,7 +1,10 @@
 import {
+  isClaudeAsyncAgentLaunchToolResult,
   normalizeClaudeActivityStatusSignal,
   type ClaudeActivityStatusSignal,
 } from '@happier-dev/protocol';
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
+import { logger } from '@/ui/logger';
 import { parseClaudeTaskNotificationXml } from '../taskNotifications/claudeTaskNotificationXml';
 
 import {
@@ -356,11 +359,55 @@ function readWorkflowJournalAgentSpecs(input: Record<string, unknown> | null): W
  */
 type WorkflowProgressAgentIdentity = 'provisionalIndex' | 'agentId';
 
+/**
+ * Drift signatures already reported by this process.
+ *
+ * `workflow_progress` is the roster's only live source and the SDK does NOT declare it:
+ * `SDKTaskProgressMessage` in the pinned `@anthropic-ai/claude-agent-sdk@0.2.123` (and in 0.3.231)
+ * declares `type/subtype/task_id/tool_use_id/description/usage/last_tool_name/summary/uuid/
+ * session_id` and nothing more. So a rename or a retype ships with NO compile error, every reader
+ * below quietly stops matching, and the roster goes blank while the run is fine — precisely the
+ * silent degradation this corridor exists to remove.
+ *
+ * Reported on `logger.warn` because that is on by default in both daemon and session processes
+ * (`resolveFileLogLevel` gives a session `info`, so `debug` would be an unobserved fallback), and
+ * reported once per distinct signature because a `task_progress` tick fires throughout a run and a
+ * per-tick warning would be its own defect. The set is bounded by the number of shapes, not by
+ * traffic.
+ */
+const reportedWorkflowProgressShapeDrift = new Set<string>();
+
+function reportWorkflowProgressShapeDrift(signature: string, detail: string): void {
+  if (reportedWorkflowProgressShapeDrift.has(signature)) return;
+  reportedWorkflowProgressShapeDrift.add(signature);
+  logger.warn(
+    `[CWF2] Claude workflow_progress is no longer readable (${detail}). `
+    + 'This field is undeclared by the Claude Agent SDK, so a provider-side shape change cannot fail '
+    + 'the build; workflow agent rosters will stay empty until the parser is updated.',
+  );
+}
+
+function describeUnreadableWorkflowProgress(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
 function parseWorkflowProgress(
   value: unknown,
   identity: WorkflowProgressAgentIdentity = 'provisionalIndex',
 ): WorkflowProgressEntryFact[] | undefined {
-  if (!Array.isArray(value)) return undefined;
+  // A tick that ships no `workflow_progress` key at all is NORMAL and frequent — the live stream
+  // throttles (OBSERVED on claude 2.1.231: 2 of 7 ticks in one run). It says nothing about the
+  // roster, and warning on it would drown the case that matters.
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    reportWorkflowProgressShapeDrift(
+      `not-an-array:${describeUnreadableWorkflowProgress(value)}`,
+      `expected an array, received ${describeUnreadableWorkflowProgress(value)}`,
+    );
+    return undefined;
+  }
   const facts: WorkflowProgressEntryFact[] = [];
   for (const entry of value) {
     const record = readRecord(entry);
@@ -406,6 +453,14 @@ function parseWorkflowProgress(
         ...(attempt !== undefined ? { attempt: Math.trunc(attempt) } : {}),
       });
     }
+  }
+  // An array that named nothing readable is indistinguishable, downstream, from a run with no
+  // agents — so the array being non-empty is the only place that difference is still visible.
+  if (facts.length === 0 && value.length > 0) {
+    reportWorkflowProgressShapeDrift(
+      'no-readable-entries',
+      `${value.length} entries carried no readable workflow_phase or workflow_agent`,
+    );
   }
   return facts;
 }
@@ -585,7 +640,11 @@ function parseSubagentToolUse(message: Record<string, unknown>): SubagentStartFa
   const uuid = readString(message.uuid) ?? undefined;
   for (const part of content) {
     const block = readRecord(part);
-    if (block?.type !== 'tool_use' || block.name !== 'Task') continue;
+    // Which tool names ARE a generic subagent launch is owned by the protocol
+    // (`Task`/`Agent`/`SubAgent`), not by this parser: Claude Code renamed the tool to `Agent`, and
+    // a private `'Task'` literal here made every plain subagent invisible to the tracker — no start
+    // fact, no implicit run, no roster entry that could say `running`.
+    if (block?.type !== 'tool_use' || typeof block.name !== 'string' || !isGenericSubAgentToolName(block.name)) continue;
     const id = readString(block.id);
     if (!id) continue;
     const input = readRecord(block.input);
@@ -605,13 +664,18 @@ function parseSubagentToolUse(message: Record<string, unknown>): SubagentStartFa
 /**
  * Parse a NON-error `tool_result` as a plain-subagent completion.
  *
- * A synchronous `Task` subagent emits no lifecycle system event at all — the tool result is its only
+ * A synchronous subagent emits no lifecycle system event at all — the tool result is its only
  * terminal evidence — while the error case is already covered upstream by
- * `parseFailedWorkflowToolResult`. A successful `Task` result is byte-indistinguishable from a
+ * `parseFailedWorkflowToolResult`. A successful subagent result is byte-indistinguishable from a
  * successful `Read`/`Bash` result, so identity comes from the caller's correlation state rather than
  * from the payload shape: without `isKnownSubagentToolUseId` this parser yields nothing, keeping the
  * module contract "null unless workflow-relevant" intact. Guessing at the result shape would drift
  * with the SDK; the id gate cannot.
+ *
+ * An ASYNCHRONOUS launch is the one result that is not one. Claude returns it within milliseconds
+ * (`status: 'async_launched'`) while the agent runs on, and the real outcome arrives later as the
+ * `<task-notification>` that `parseTaskNotificationMessage` routes by the same tool-use id. Reading
+ * the acknowledgement as a completion terminalized every plain subagent at launch.
  */
 function parseSubagentToolResult(
   message: Record<string, unknown>,
@@ -626,6 +690,7 @@ function parseSubagentToolResult(
   const sourceSessionId = readSourceSessionId(message);
   const uuid = readString(message.uuid) ?? undefined;
   const toolUseResult = readRecord(message.toolUseResult) ?? readRecord(message.tool_use_result);
+  if (isClaudeAsyncAgentLaunchToolResult(toolUseResult)) return null;
   const timeUsedSeconds = readDurationSecondsFromMs(
     toolUseResult?.totalDurationMs ?? toolUseResult?.total_duration_ms,
   );

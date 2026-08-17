@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import type { SessionWorkflowActivityHeadlineV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { CLAUDE_IMPLICIT_WORKFLOW_RUN_ID } from './claudeWorkflowActivityTypes';
 import { createClaudeWorkflowActivitySource as createProductionClaudeWorkflowActivitySource } from './claudeWorkflowActivitySource';
 function createClaudeWorkflowActivitySource(
   params: Parameters<typeof createProductionClaudeWorkflowActivitySource>[0],
@@ -147,6 +148,46 @@ function agentAsyncLaunchResult(toolUseId: string, sessionId = 'claude-session-1
     toolUseResult: {
       status: 'async_launched',
       agentId: 'a92c3cece749417e2',
+    },
+  };
+}
+
+function agentToolUse(id: string, description: string, sessionId = 'claude-session-1') {
+  return {
+    type: 'assistant',
+    session_id: sessionId,
+    uuid: `uuid-${id}`,
+    message: {
+      content: [{
+        type: 'tool_use',
+        id,
+        name: 'Agent',
+        input: { description, subagent_type: 'general-purpose', prompt: 'do the work' },
+      }],
+    },
+  };
+}
+
+function agentTaskNotification(params: Readonly<{
+  toolUseId: string;
+  taskId: string;
+  status: string;
+  sessionId?: string;
+}>) {
+  return {
+    type: 'user',
+    session_id: params.sessionId ?? 'claude-session-1',
+    uuid: `uuid-notification-${params.toolUseId}`,
+    message: {
+      content: [
+        '<task-notification>',
+        `<task-id>${params.taskId}</task-id>`,
+        `<tool-use-id>${params.toolUseId}</tool-use-id>`,
+        `<status>${params.status}</status>`,
+        '<summary>Agent "Fix fork identity" finished</summary>',
+        '<result>All findings closed at one owner each.</result>',
+        '</task-notification>',
+      ].join('\n'),
     },
   };
 }
@@ -371,6 +412,54 @@ describe('createClaudeWorkflowActivitySource', () => {
     }));
     expect(headlines.at(-1)?.activeRuns.map((run) => run.runId)).not.toContain('toolu_failed_wf');
     expect(headlines.at(-1)?.recentRuns?.map((run) => run.runId)).toContain('toolu_failed_wf');
+
+    source.dispose();
+  });
+
+  /**
+   * The roster's authority for a plain subagent.
+   *
+   * OBSERVED (live session d85429b7, 2026-08-17): Claude Code names the generic subagent tool
+   * `Agent` and launches it asynchronously — 69 launches, none named `Task`, each acknowledged in
+   * ~3ms with `status: 'async_launched'` while the agent ran for hours. Recognising only the `Task`
+   * literal produced no start fact, so no implicit run and no headline entry existed that could say
+   * a plain subagent was running; treating the acknowledgement as a result terminalized it at launch.
+   */
+  it('keeps async `Agent` subagents active until their task-notification arrives', async () => {
+    const committed: SessionWorkflowRunSnapshotV1[] = [];
+    const source = createClaudeWorkflowActivitySource({
+      backendId: 'claude',
+      agentId: 'claude',
+      getCurrentClaudeSessionId: () => 'claude-session-1',
+      commitRecord: async (snapshot) => { committed.push(snapshot); },
+      writeHeadlines: () => {},
+      debounceMs: 0,
+    });
+
+    source.observeTranscriptMessage(agentToolUse('toolu_agent_1', 'Fix fork identity'));
+    source.observeTranscriptMessage(agentToolUse('toolu_agent_2', 'Fix replay context'));
+    source.observeTranscriptMessage(agentAsyncLaunchResult('toolu_agent_1'));
+    source.observeTranscriptMessage(agentAsyncLaunchResult('toolu_agent_2'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    const launched = committed.at(-1);
+    expect(launched?.runId).toBe(CLAUDE_IMPLICIT_WORKFLOW_RUN_ID);
+    expect(launched?.agents.map((agent) => [agent.id, agent.status])).toEqual([
+      ['toolu_agent_1', 'active'],
+      ['toolu_agent_2', 'active'],
+    ]);
+
+    source.observeTranscriptMessage(agentTaskNotification({
+      toolUseId: 'toolu_agent_1',
+      taskId: 'a92c3cece749417e2',
+      status: 'completed',
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(committed.at(-1)?.agents.map((agent) => [agent.id, agent.status])).toEqual([
+      ['toolu_agent_1', 'complete'],
+      ['toolu_agent_2', 'active'],
+    ]);
 
     source.dispose();
   });

@@ -152,3 +152,96 @@ describe('deriveSubAgentSidechainSubagents — the row title reads the names pro
         expect(title.endsWith('…')).toBe(true);
     });
 });
+
+/**
+ * An asynchronously launched subagent is running, not finished.
+ *
+ * OBSERVED (live session d85429b7, 2026-08-17): Claude Code launches the generic subagent tool
+ * asynchronously. Its tool result returns ~3ms after the launch carrying
+ * `{ isAsync: true, status: 'async_launched', agentId, outputFile }` while the agent then runs for
+ * hours; the real outcome arrives much later as a `<task-notification>`. The transcript normalizer
+ * JSON-encodes the raw `toolUseResult` into `tool.result`, so that acknowledgement is exactly what
+ * this derivation sees — and reading the launching call's completion as the agent's completion drew
+ * every live subagent as `succeeded` seconds after it started.
+ */
+describe('deriveSubAgentSidechainSubagents — an async launch acknowledgement is not a result', () => {
+    function createAsyncLaunchedSubAgentMessage(result: unknown): ToolCallMessage {
+        return {
+            kind: 'tool-call',
+            id: 'message_async_subagent',
+            localId: null,
+            createdAt: REQUESTED_AT,
+            tool: {
+                id: 'tool_async_subagent',
+                name: 'Agent',
+                state: 'completed',
+                input: { description: 'Fix fork identity and UI gaps', subagent_type: 'general-purpose' },
+                createdAt: REQUESTED_AT,
+                startedAt: REQUESTED_AT,
+                completedAt: REQUESTED_AT + 3,
+                description: null,
+                result,
+            },
+            children: [],
+        } as ToolCallMessage;
+    }
+
+    const ASYNC_LAUNCH_ACKNOWLEDGEMENT = {
+        isAsync: true,
+        status: 'async_launched',
+        agentId: 'aec7336148831a599',
+        description: 'Fix fork identity and UI gaps',
+        outputFile: '/tmp/tasks/aec7336148831a599.output',
+    };
+
+    it('reports a JSON-encoded async launch acknowledgement as running', () => {
+        // The ordinary Claude transcript envelope: `tool.result` is the JSON-encoded `toolUseResult`.
+        const subagent = deriveSingle([
+            createAsyncLaunchedSubAgentMessage(JSON.stringify(ASYNC_LAUNCH_ACKNOWLEDGEMENT)),
+        ]);
+
+        expect(subagent.status).toBe('running');
+        // Nothing finished, so no finish instant may be claimed — the row must not run an elapsed
+        // clock backwards from a launch acknowledgement.
+        expect(subagent.timestamps.finishedAtMs).toBeUndefined();
+    });
+
+    it('reports an object-shaped async launch acknowledgement as running', () => {
+        const subagent = deriveSingle([
+            createAsyncLaunchedSubAgentMessage(ASYNC_LAUNCH_ACKNOWLEDGEMENT),
+        ]);
+
+        expect(subagent.status).toBe('running');
+    });
+
+    it('reports the agent as succeeded once a real result supersedes the acknowledgement', () => {
+        const subagent = deriveSingle([
+            createAsyncLaunchedSubAgentMessage('All six findings closed at one owner each.'),
+        ]);
+
+        expect(subagent.status).toBe('succeeded');
+        expect(subagent.timestamps.finishedAtMs).toBe(REQUESTED_AT + 3);
+    });
+
+    it('still reports a failed launch as failed', () => {
+        const message = createAsyncLaunchedSubAgentMessage(JSON.stringify(ASYNC_LAUNCH_ACKNOWLEDGEMENT));
+        message.tool.state = 'error';
+
+        expect(deriveSingle([message]).status).toBe('failed');
+    });
+
+    it('reports a subagent whose session process died as cancelled, not ambiguous', () => {
+        // RULING-14 (terminal state on process death) already answers this for a workflow agent —
+        // `terminalizeRunAgents` resolves it to `cancelled`, never `failed`: an agent that produced
+        // no result while its host went away was cut off, it did not fail. A plain subagent is the
+        // same agent seen without a run around it, so it must read the same. Answering `unknown`
+        // here made the roster say two different things about one event depending only on whether a
+        // second agent happened to exist (below two, no headline is published and this local answer
+        // is the only one), and `unknown` is reserved for a genuinely ambiguous source rather than
+        // used as the fallback for a mapped one.
+        const message = createAsyncLaunchedSubAgentMessage(JSON.stringify(ASYNC_LAUNCH_ACKNOWLEDGEMENT));
+        message.tool.state = 'unavailable';
+
+        expect(deriveSingle([message]).status).toBe('cancelled');
+    });
+});

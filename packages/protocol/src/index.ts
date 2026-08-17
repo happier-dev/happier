@@ -782,6 +782,7 @@ export {
   ClaudeTaskToolInputSchema,
   ClaudeTaskToolRecordSchema,
   ClaudeTodoWriteTodoSchema,
+  isClaudeAsyncAgentLaunchToolResult,
   isTerminalClaudeAgentSdkProviderTaskStatus,
   isClaudeSlashCommandSupported,
   normalizeClaudeActivityStatusSignal,

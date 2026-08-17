@@ -448,6 +448,80 @@ describe('ClaudeRemoteSubagentFileCollector', () => {
     }
   });
 
+  /**
+   * A `Task` result that only ACKNOWLEDGES an async launch must not close the follower.
+   *
+   * `Task` was historically synchronous, so its result was unconditionally treated as the agent's
+   * completion. Claude now launches subagents asynchronously (`status: 'async_launched'`), and
+   * stopping the follower at that point abandons the live transcript for the agent's whole run —
+   * the same "a launch is not a result" defect the workflow correlation carried under the other tool
+   * name. `Agent` already reads the status; this locks the sibling call site to the same rule.
+   */
+  it('keeps following a Task sidechain whose result only acknowledges an async launch', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-subagent-async-task-'));
+    const agentId = 'aec7336';
+    const jsonlPath = join(dir, `agent-${agentId}.jsonl`);
+
+    await writeFile(jsonlPath, makeJsonl([{
+      type: 'assistant',
+      uuid: 'a1',
+      isSidechain: true,
+      agentId,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'starting' }] },
+    }]), 'utf8');
+
+    const imported: Array<{ body: RawJSONLines; meta: Record<string, unknown> }> = [];
+    const sourceActivity = vi.fn();
+    const collector = new ClaudeRemoteSubagentFileCollector({
+      emitImported: (body: RawJSONLines, meta: Record<string, unknown>) => imported.push({ body, meta }),
+      onSourceActivity: sourceActivity,
+      watchFile: () => () => {},
+      followPolicy: { sidechainCompletionGraceMs: 1 },
+    });
+
+    try {
+      collector.observe(taskToolUseMessage());
+      collector.observe({
+        type: 'user',
+        tool_use_result: {
+          isAsync: true,
+          status: 'async_launched',
+          agentId,
+          outputFile: jsonlPath,
+        },
+        message: {
+          role: 'user',
+          content: [{
+            type: 'tool_result',
+            tool_use_id: 'tool_task_1',
+            content: `Async agent launched successfully.\nagentId: ${agentId}\n`,
+          }],
+        },
+        parent_tool_use_id: null,
+        session_id: 'sess_1',
+      } as any);
+
+      await collector.syncAll();
+      expect(imported).toHaveLength(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await appendFile(jsonlPath, `${JSON.stringify({
+        type: 'assistant',
+        uuid: 'a2',
+        isSidechain: true,
+        agentId,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'still working' }] },
+      })}\n`, 'utf8');
+      await collector.syncAll();
+
+      expect(imported.map((entry) => entry.body.uuid)).toEqual(['a1', 'a2']);
+      expect(sourceActivity).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'terminal' }));
+    } finally {
+      collector.cleanup();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not re-import historical sidechain rows when a followed JSONL file is replaced', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happy-subagent-sidechains-replaced-'));
     const agentId = 'aa5e728';

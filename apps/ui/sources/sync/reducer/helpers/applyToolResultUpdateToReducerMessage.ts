@@ -1,3 +1,5 @@
+import { isClaudeAsyncAgentLaunchToolResult } from '@happier-dev/protocol';
+
 import type { MessageMeta } from '../../domains/messages/messageMetaTypes';
 import type { ReducerMessage } from '../reducer';
 import {
@@ -61,14 +63,31 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     message.tool.permission?.status === 'approved';
   const isUnavailablePlaceholder = message.tool.state === 'unavailable';
   const isLegacyRequestInterrupted = isLegacyRequestInterruptedPlaceholder(message);
+  // A fourth provisional completion: Claude answers an ASYNCHRONOUS agent launch within
+  // milliseconds with an acknowledgement, then delivers the agent's real result — rewritten from
+  // its `<task-notification>` — against the same tool-use id hours later. Without this the second
+  // result was dropped and the card stayed frozen on "Async agent launched successfully" forever.
+  // A replay of the acknowledgement itself is not new evidence, so the incoming result must be a
+  // different kind of answer for the exception to apply.
+  const supersedesAsyncAgentLaunch =
+    message.tool.state === 'completed' &&
+    isClaudeAsyncAgentLaunchToolResult(message.tool.result) &&
+    !isClaudeAsyncAgentLaunchToolResult(toolResult.content);
 
   if (
     message.tool.state !== 'running' &&
     !isApprovedPlaceholder &&
     !isUnavailablePlaceholder &&
-    !isLegacyRequestInterrupted
+    !isLegacyRequestInterrupted &&
+    !supersedesAsyncAgentLaunch
   ) {
     return;
+  }
+
+  if (supersedesAsyncAgentLaunch) {
+    // The acknowledgement is not partial output to merge with — it is a different answer to a
+    // different question, so the agent's real result replaces it outright.
+    message.tool.result = undefined;
   }
 
   if (isApprovedPlaceholder || isUnavailablePlaceholder || isLegacyRequestInterrupted) {

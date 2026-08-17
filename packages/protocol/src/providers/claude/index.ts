@@ -3,6 +3,7 @@ export {
   ClaudeTaskToolInputSchema,
   ClaudeTaskToolRecordSchema,
   ClaudeTodoWriteTodoSchema,
+  isClaudeAsyncAgentLaunchToolResult,
   isTerminalClaudeAgentSdkProviderTaskStatus,
   normalizeClaudeActivityStatusSignal,
   normalizeClaudeAgentSdkProviderTaskId,
