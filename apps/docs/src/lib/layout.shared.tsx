@@ -1,19 +1,21 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 
 /**
- * The real wordmark, not the string "Happier Docs".
+ * NOTE: this is the CONTENT of the nav title, not a link.
  *
- * A docs site that spells its own name in the body font is the clearest signal
- * that it was generated rather than designed — and it is the first thing in the
- * reading order. guides.happier.dev already did this; docs was still on the
- * scaffold default.
+ * fumadocs wraps whatever `nav.title` returns in its own `<Link href={nav.url}>`.
+ * Wrapping it again in an `<a>` nests an anchor inside a Next `<Link>`, which
+ * Next 13+ rejects outright — "Invalid <Link> with <a> child". The production
+ * build does not catch it because the check runs at render time, so it only
+ * surfaces when someone opens the dev server.
  *
  * Both PNGs ship and CSS picks one, so the swap costs no JavaScript and cannot
- * flash the wrong mark during hydration. `Docs` sits beside the mark rather than
- * inside it: the wordmark is the product, this is one surface of it.
+ * flash the wrong mark during hydration. The hidden one is `display: none`, so
+ * only the visible mark's alt text reaches the accessibility tree — which is
+ * what names the wrapping link.
  */
 const navTitle = (
-  <a href="/" aria-label="Happier Docs" className="flex items-center gap-2">
+  <span className="flex items-center gap-2">
     <img
       src="/brand/logotype-dark.png"
       alt="Happier"
@@ -29,7 +31,7 @@ const navTitle = (
       className="hidden h-6 w-auto dark:block"
     />
     <span className="text-fd-muted-foreground text-sm font-medium">Docs</span>
-  </a>
+  </span>
 );
 
 export function baseOptions(): BaseLayoutProps {
