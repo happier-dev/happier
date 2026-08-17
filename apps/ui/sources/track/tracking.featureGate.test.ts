@@ -4,6 +4,10 @@ const posthogConstructorSpy = vi.hoisted(() => vi.fn<(apiKey: string, options?: 
 const posthogOptInSpy = vi.hoisted(() => vi.fn<() => Promise<void>>(async () => {}));
 const posthogOptOutSpy = vi.hoisted(() => vi.fn<() => Promise<void>>(async () => {}));
 const kvStore = vi.hoisted(() => new Map<string, string>());
+const posthogConfig = vi.hoisted(() => ({
+    postHogKey: 'ph_test_key',
+    postHogHost: 'https://example.posthog.test' as string | undefined,
+}));
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -40,7 +44,7 @@ vi.mock('posthog-react-native', () => ({
 }));
 
 vi.mock('@/config', () => ({
-    config: { postHogKey: 'ph_test_key', postHogHost: 'https://example.posthog.test' },
+    config: posthogConfig,
 }));
 
 describe('tracking (feature gate)', () => {
@@ -52,6 +56,7 @@ describe('tracking (feature gate)', () => {
         posthogOptInSpy.mockClear();
         posthogOptOutSpy.mockClear();
         kvStore.clear();
+        posthogConfig.postHogHost = 'https://example.posthog.test';
         process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = 'app.analytics';
     });
 
@@ -84,6 +89,19 @@ describe('tracking (feature gate)', () => {
         }));
         expect(posthogOptInSpy).toHaveBeenCalledTimes(1);
         expect(posthogOptOutSpy).not.toHaveBeenCalled();
+    });
+
+    it('defaults mobile analytics to the project PostHog region when no host is configured', async () => {
+        process.env.EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY = '';
+        posthogConfig.postHogHost = undefined;
+        vi.resetModules();
+
+        await import('./tracking');
+
+        expect(posthogConstructorSpy).toHaveBeenCalledTimes(1);
+        expect(posthogConstructorSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+            host: 'https://eu.i.posthog.com',
+        }));
     });
 
     it('applies persisted analytics opt-out before sync bootstrap runs', async () => {

@@ -3,13 +3,13 @@
  *
  * The ingest region is a COMPILE-TIME CONSTANT, not an environment variable.
  *
- * The mobile app reads its PostHog host from EXPO_PUBLIC_POSTHOG_HOST
- * (apps/ui/sources/sync/runtime/appConfig.ts:125) and falls back to
- * `https://us.i.posthog.com` (apps/ui/sources/track/tracking.ts:27) — while
- * project 129992 is on PostHog Cloud *EU*. A missing env var in that setup
- * silently ships events to the wrong continent and nothing fails. The web build
- * does not repeat that pattern: the region is part of the source, and the only
- * thing injected at build time is the (public, write-only) project key.
+ * The mobile app used to read its PostHog host from EXPO_PUBLIC_POSTHOG_HOST
+ * and fall back to `https://us.i.posthog.com`, while project 129992 is on
+ * PostHog Cloud *EU* — so a missing env var silently shipped events to the
+ * wrong continent and nothing failed. That fallback is now EU
+ * (apps/ui/sources/track/tracking.ts), matching this file. The rule both ends
+ * follow: the region is part of the source, and the only thing injected at
+ * build time is the (public, write-only) project key.
  *
  * `INGEST_ORIGIN` is a first-party path on this origin, reverse-proxied to
  * PostHog EU by worker/index.ts. Two reasons, both load-bearing:

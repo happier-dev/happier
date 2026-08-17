@@ -26,10 +26,10 @@ const SOURCES = walk(SRC).map((file) => {
 });
 
 describe('analytics taxonomy', () => {
-    // The mobile app reads its PostHog host from EXPO_PUBLIC_POSTHOG_HOST and
-    // falls back to us.i.posthog.com (apps/ui/sources/track/tracking.ts:27)
-    // while project 129992 is on EU cloud. That class of mistake is a one-line
-    // test away from being impossible on the web.
+    // The mobile app used to fall back to us.i.posthog.com while project 129992
+    // is on EU cloud, losing every event that shipped without
+    // EXPO_PUBLIC_POSTHOG_HOST set. Fixed in apps/ui/sources/track/tracking.ts;
+    // this is the assertion that keeps the same mistake off the web.
     it('never points ingest at a US or unspecified PostHog host', () => {
         expect(POSTHOG_EU_ORIGIN).toBe('https://eu.i.posthog.com');
         expect(UI_ORIGIN).toBe('https://eu.posthog.com');
