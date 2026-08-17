@@ -1,0 +1,44 @@
+{
+  "results": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "TypeError",
+      "description": "Cannot read properties of undefined (reading 'id')",
+      "status": "active",
+      "first_seen": "2026-07-30T09:14:02.113000Z",
+      "last_seen": "2026-08-14T06:41:55.902000Z",
+      "library": "posthog-js",
+      "source": "app/checkout/summary.tsx",
+      "assignee": { "id": 41, "type": "user" },
+      "aggregations": { "occurrences": 1842, "users": 311, "sessions": 402 }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "NetworkError",
+      "description": "Failed to fetch",
+      "status": "resolved",
+      "first_seen": "2026-07-31T18:02:44.000000Z",
+      "last_seen": "2026-08-02T11:20:00.000000Z",
+      "library": "posthog-js",
+      "source": null,
+      "assignee": null,
+      "aggregations": { "occurrences": 96, "users": 12, "sessions": 14 }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "name": null,
+      "description": "unhandled promise rejection",
+      "status": "pending_release",
+      "first_seen": "2026-08-01T00:00:00.000000Z",
+      "last_seen": "2026-08-13T23:59:59.000000Z",
+      "library": "posthog-python",
+      "source": "workers/dispatch.py",
+      "assignee": { "id": "00000000-0000-4000-8000-0000000000aa", "type": "role" },
+      "aggregations": { "occurrences": 7, "users": 3, "sessions": 3 }
+    }
+  ],
+  "hasMore": true,
+  "limit": 3,
+  "offset": 0,
+  "nextOffset": 3
+}

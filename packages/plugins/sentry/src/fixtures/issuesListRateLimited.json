@@ -1,0 +1,18 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/7701/issues/?query=&statsPeriod=90d&project=-1&sort=date&limit=100&collapse=stats&collapse=filtered&cursor=1754000000000%3A0%3A0"
+  },
+  "status": 429,
+  "headers": {
+    "content-type": "application/json",
+    "x-sentry-rate-limit-limit": "40",
+    "x-sentry-rate-limit-remaining": "0",
+    "x-sentry-rate-limit-reset": "1786000060",
+    "x-sentry-rate-limit-concurrentlimit": "25",
+    "x-sentry-rate-limit-concurrentremaining": "0"
+  },
+  "body": {
+    "detail": "You are attempting to use this endpoint too frequently. Limit is 40 requests in 1 seconds."
+  }
+}

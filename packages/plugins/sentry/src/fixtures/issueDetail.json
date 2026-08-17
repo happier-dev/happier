@@ -1,0 +1,84 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/7701/issues/5501001/?expand=owners&expand=integrationIssues"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "5501001",
+    "shareId": null,
+    "shortId": "EXAMPLE-PROJECT-3F",
+    "title": "ZeroDivisionError: division by zero",
+    "culprit": "example_service.tasks.send_digest",
+    "permalink": "https://example-org.sentry.io/issues/5501001/",
+    "logger": null,
+    "level": "error",
+    "status": "unresolved",
+    "statusDetails": {},
+    "substatus": "escalating",
+    "isPublic": false,
+    "platform": "python",
+    "project": {
+      "id": "9001",
+      "name": "Example Project",
+      "slug": "example-project",
+      "platform": "python"
+    },
+    "type": "error",
+    "issueType": "error",
+    "issueCategory": "error",
+    "metadata": {
+      "value": "division by zero",
+      "type": "ZeroDivisionError"
+    },
+    "numComments": 0,
+    "assignedTo": {
+      "type": "user",
+      "id": "301",
+      "name": "Assignee One",
+      "email": "assignee.one@example.invalid"
+    },
+    "isBookmarked": false,
+    "isSubscribed": false,
+    "subscriptionDetails": null,
+    "hasSeen": false,
+    "annotations": [],
+    "priority": "high",
+    "priorityLockedAt": null,
+    "isUnhandled": true,
+    "count": "4821",
+    "userCount": 112,
+    "firstSeen": "2026-05-30T11:02:41.000Z",
+    "lastSeen": "2026-08-14T07:55:10.000Z",
+    "firstRelease": { "version": "example-app@2026.5.1" },
+    "lastRelease": { "version": "example-app@2026.8.2" },
+    "participants": [
+      { "type": "user", "id": "301", "name": "Assignee One", "email": "assignee.one@example.invalid" }
+    ],
+    "seenBy": [],
+    "userReportCount": 3,
+    "activity": [
+      {
+        "id": "88001",
+        "type": "set_escalating",
+        "dateCreated": "2026-08-14T07:56:00.000Z",
+        "user": { "id": "301", "name": "Assignee One", "email": "assignee.one@example.invalid" },
+        "data": { "forecast": 220 }
+      },
+      {
+        "id": "88000",
+        "type": "first_seen",
+        "dateCreated": "2026-05-30T11:02:41.000Z",
+        "user": null,
+        "data": {}
+      }
+    ],
+    "tags": [
+      { "key": "environment", "name": "Environment", "totalValues": 3 },
+      { "key": "release", "name": "Release", "totalValues": 12 }
+    ]
+  }
+}

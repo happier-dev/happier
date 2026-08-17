@@ -1,0 +1,105 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/7701/issues/?query=&statsPeriod=90d&project=-1&sort=date&limit=100&collapse=stats&collapse=filtered&cursor=1754000000000%3A0%3A0"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "link": "<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=1754000000000%3A0%3A1>; rel=\"previous\"; results=\"true\"; cursor=\"1754000000000:0:1\", <https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=1753000000000%3A0%3A0>; rel=\"next\"; results=\"false\"; cursor=\"1753000000000:0:0\""
+  },
+  "body": [
+    {
+      "id": "5501001",
+      "shareId": null,
+      "shortId": "EXAMPLE-PROJECT-3F",
+      "title": "ZeroDivisionError: division by zero",
+      "culprit": "example_service.tasks.send_digest",
+      "permalink": "https://example-org.sentry.io/issues/5501001/",
+      "logger": null,
+      "level": "error",
+      "status": "unresolved",
+      "statusDetails": {},
+      "substatus": "regressed",
+      "isPublic": false,
+      "platform": "python",
+      "project": {
+        "id": "9001",
+        "name": "Example Project",
+        "slug": "example-project",
+        "platform": "python"
+      },
+      "type": "error",
+      "issueType": "error",
+      "issueCategory": "error",
+      "metadata": {
+        "value": "division by zero",
+        "type": "ZeroDivisionError"
+      },
+      "numComments": 0,
+      "assignedTo": null,
+      "isBookmarked": false,
+      "isSubscribed": false,
+      "subscriptionDetails": null,
+      "hasSeen": false,
+      "annotations": [],
+      "priority": "high",
+      "priorityLockedAt": null,
+      "isUnhandled": true,
+      "count": "4830",
+      "userCount": 113,
+      "firstSeen": "2026-05-30T11:02:41.000Z",
+      "lastSeen": "2026-08-14T08:01:00.000Z",
+      "lifetime": {
+        "count": "18329",
+        "userCount": 705,
+        "firstSeen": "2025-11-14T08:19:03.000Z",
+        "lastSeen": "2026-08-14T08:01:00.000Z"
+      }
+    },
+    {
+      "id": "5501003",
+      "shareId": null,
+      "shortId": "EXAMPLE-LEGACY-11",
+      "title": "TypeError: cannot read property of undefined",
+      "culprit": "app/checkout.js",
+      "permalink": "https://sentry.example.com/organizations/example-org/issues/5501003/",
+      "logger": null,
+      "level": "fatal",
+      "status": "pending_merge",
+      "statusDetails": {},
+      "substatus": null,
+      "isPublic": false,
+      "platform": "javascript",
+      "project": {
+        "id": "9003",
+        "name": "Example Legacy",
+        "slug": "example-legacy",
+        "platform": "javascript"
+      },
+      "type": "error",
+      "metadata": {
+        "value": "cannot read property of undefined",
+        "type": "TypeError"
+      },
+      "numComments": 0,
+      "assignedTo": {
+        "type": "team",
+        "id": "44",
+        "name": "#platform"
+      },
+      "isBookmarked": false,
+      "isSubscribed": false,
+      "subscriptionDetails": null,
+      "hasSeen": false,
+      "annotations": [],
+      "priority": null,
+      "priorityLockedAt": null,
+      "isUnhandled": false,
+      "count": "63",
+      "userCount": 7,
+      "firstSeen": "2026-06-01T02:00:00.000Z",
+      "lastSeen": "2026-08-12T19:44:00.000Z"
+    }
+  ]
+}

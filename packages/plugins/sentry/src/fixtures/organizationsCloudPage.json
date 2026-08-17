@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/?per_page=100"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "link": "<https://us.sentry.io/api/0/organizations/?&cursor=1420837590%3A0%3A1>; rel=\"previous\"; results=\"false\"; cursor=\"1420837590:0:1\", <https://us.sentry.io/api/0/organizations/?&cursor=1420837533%3A0%3A0>; rel=\"next\"; results=\"false\"; cursor=\"1420837533:0:0\"",
+    "x-sentry-rate-limit-limit": "40",
+    "x-sentry-rate-limit-remaining": "39",
+    "x-sentry-rate-limit-reset": "1786000000",
+    "x-sentry-rate-limit-concurrentlimit": "25",
+    "x-sentry-rate-limit-concurrentremaining": "24"
+  },
+  "body": [
+    {
+      "id": "7701",
+      "slug": "example-org",
+      "name": "Example Org",
+      "status": { "id": "active", "name": "active" },
+      "access": ["org:read", "event:read"],
+      "features": ["advanced-search", "custom-symbol-sources"],
+      "dateCreated": "2024-02-11T09:04:17.000Z",
+      "isEarlyAdopter": false,
+      "require2FA": false,
+      "links": {
+        "organizationUrl": "https://example-org.sentry.io",
+        "regionUrl": "https://us.sentry.io"
+      }
+    }
+  ]
+}

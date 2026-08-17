@@ -1,0 +1,67 @@
+{
+  "results": [
+    {
+      "id": "01994b1e-0000-4000-8000-0000000000a1",
+      "user": {
+        "id": 41,
+        "uuid": "00000000-0000-4000-8000-0000000000d1",
+        "distinct_id": "SENTINEL_DISTINCT_ID_MUST_NOT_LEAK",
+        "first_name": "Dana",
+        "last_name": "Okafor",
+        "email": "dana@example.invalid",
+        "is_email_verified": true,
+        "hedgehog_config": { "colour": "SENTINEL_HEDGEHOG_MUST_NOT_LEAK" }
+      },
+      "unread": false,
+      "is_system": false,
+      "activity": "updated",
+      "item_id": "00000000-0000-4000-8000-000000000001",
+      "scope": "ErrorTrackingIssue",
+      "detail": {
+        "name": "TypeError in checkout summary",
+        "short_id": null,
+        "trigger": null,
+        "type": null,
+        "changes": [
+          {
+            "type": "ErrorTrackingIssue",
+            "action": "changed",
+            "field": "status",
+            "before": "active",
+            "after": "resolved"
+          },
+          {
+            "type": "ErrorTrackingIssue",
+            "action": "changed",
+            "field": "assignee",
+            "before": null,
+            "after": "SENTINEL_ASSIGNEE_MUST_NOT_LEAK"
+          }
+        ]
+      },
+      "created_at": "2026-08-14T09:12:44.512000Z"
+    },
+    {
+      "id": "01994b1e-0000-4000-8000-0000000000a2",
+      "user": null,
+      "unread": false,
+      "is_system": true,
+      "activity": "created",
+      "item_id": "00000000-0000-4000-8000-000000000001",
+      "scope": "ErrorTrackingIssue",
+      "detail": { "name": null, "short_id": null, "trigger": null, "type": null, "changes": null },
+      "created_at": "2026-08-12T04:02:01.000000Z"
+    },
+    {
+      "id": null,
+      "user": null,
+      "is_system": false,
+      "activity": "updated",
+      "scope": "ErrorTrackingIssue",
+      "created_at": "2026-08-11T04:02:01.000000Z"
+    }
+  ],
+  "next": "https://eu.posthog.com/api/projects/4821/error_tracking/issues/00000000-0000-4000-8000-000000000001/activity/?limit=50&page=2",
+  "previous": null,
+  "total_count": 7
+}

@@ -1,0 +1,29 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "name": "TypeError",
+  "description": "Cannot read properties of undefined (reading 'id')",
+  "status": "active",
+  "first_seen": "2026-07-30T09:14:02.113000Z",
+  "last_seen": "2026-08-14T06:41:55.902000Z",
+  "library": "posthog-js",
+  "source": "app/checkout/summary.tsx",
+  "assignee": { "id": 41, "type": "user" },
+  "aggregations": { "occurrences": 1842, "users": 311, "sessions": 402 },
+  "function": "renderSummary",
+  "top_in_app_frame": {
+    "function": "renderSummary",
+    "source": "app/checkout/summary.tsx",
+    "line": 128,
+    "column": 17,
+    "in_app": true
+  },
+  "latest_release": {
+    "version": "2026.8.12",
+    "project": "storefront",
+    "timestamp": "2026-08-12T08:00:00.000000Z",
+    "commit_id": "0000000000000000000000000000000000000000",
+    "branch": "main",
+    "repo_name": "example/storefront"
+  },
+  "impact": { "occurrences": 1842, "users": 311, "sessions": 402 }
+}

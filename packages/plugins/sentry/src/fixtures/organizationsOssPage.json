@@ -1,0 +1,39 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://sentry.example.com/api/0/organizations/?per_page=100"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "link": "<https://sentry.example.com/api/0/organizations/?&cursor=1420837590%3A0%3A1>; rel=\"previous\"; results=\"false\"; cursor=\"1420837590:0:1\", <https://sentry.example.com/api/0/organizations/?&cursor=1420837533%3A0%3A0>; rel=\"next\"; results=\"false\"; cursor=\"1420837533:0:0\""
+  },
+  "body": [
+    {
+      "id": "4501",
+      "slug": "example-org",
+      "name": "Example Org",
+      "status": { "id": "active", "name": "active" },
+      "dateCreated": "2024-02-11T09:04:17.000Z",
+      "isEarlyAdopter": false,
+      "require2FA": false,
+      "links": {
+        "organizationUrl": "https://sentry.example.com/organizations/example-org",
+        "regionUrl": "https://sentry.example.com"
+      }
+    },
+    {
+      "id": "4502",
+      "slug": "second-org",
+      "name": "Second Org",
+      "status": { "id": "active", "name": "active" },
+      "dateCreated": "2024-05-02T18:41:02.000Z",
+      "isEarlyAdopter": false,
+      "require2FA": true,
+      "links": {
+        "organizationUrl": "https://sentry.example.com/organizations/second-org",
+        "regionUrl": "https://sentry.example.com"
+      }
+    }
+  ]
+}

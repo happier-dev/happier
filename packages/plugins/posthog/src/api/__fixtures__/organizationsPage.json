@@ -1,0 +1,14 @@
+{
+  "count": 2,
+  "next": "https://eu.posthog.com/api/organizations/?limit=1&offset=1",
+  "previous": null,
+  "results": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000b1",
+      "name": "Example Storefront",
+      "slug": "example-storefront",
+      "logo_media_id": null,
+      "membership_level": 8
+    }
+  ]
+}

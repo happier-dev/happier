@@ -1,0 +1,17 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "status": "active",
+  "severity": "high",
+  "name": "TypeError",
+  "description": "Cannot read properties of undefined (reading 'id')",
+  "first_seen": "2026-07-30T09:14:02.113000Z",
+  "assignee": { "id": 41, "type": "user" },
+  "external_issues": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000e1",
+      "integration": { "id": 7, "kind": "github", "display_name": "example" },
+      "external_url": "https://github.invalid/example/storefront/issues/1"
+    }
+  ],
+  "cohort": { "id": 12, "name": "Checkout regressions" }
+}

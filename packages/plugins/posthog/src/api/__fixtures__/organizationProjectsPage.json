@@ -1,0 +1,35 @@
+{
+  "count": 3,
+  "next": "https://eu.posthog.com/api/organizations/00000000-0000-4000-8000-0000000000b1/projects/?limit=2&offset=2",
+  "previous": null,
+  "results": [
+    {
+      "id": 4821,
+      "uuid": "00000000-0000-4000-8000-0000000000d1",
+      "organization": "00000000-0000-4000-8000-0000000000b1",
+      "project_id": 4820,
+      "api_token": "phc_0000000000000000000000000000000000000000000",
+      "name": "Storefront production",
+      "completed_snippet_onboarding": true,
+      "has_completed_onboarding_for": { "product_analytics": true },
+      "ingested_event": true,
+      "is_demo": false,
+      "timezone": "UTC",
+      "access_control": false
+    },
+    {
+      "id": 4822,
+      "uuid": "00000000-0000-4000-8000-0000000000d2",
+      "organization": "00000000-0000-4000-8000-0000000000b1",
+      "project_id": 4820,
+      "api_token": "phc_1111111111111111111111111111111111111111111",
+      "name": "Storefront staging",
+      "completed_snippet_onboarding": true,
+      "has_completed_onboarding_for": {},
+      "ingested_event": true,
+      "is_demo": false,
+      "timezone": "UTC",
+      "access_control": false
+    }
+  ]
+}

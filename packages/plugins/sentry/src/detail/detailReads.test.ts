@@ -1,0 +1,351 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import type { SentryApiClientV1, SentryApiOutcomeV1 } from '../api/sentryApiClient.js';
+import type { SentryInvokedInstanceV1 } from '../instances/sentryCollisionScope.js';
+
+import {
+  readSentryEventProjection,
+  readSentryIssueEventsPage,
+  readSentryIssueProjection,
+  readSentryTagValuesPage,
+} from './detailReads.js';
+
+const INSTANCE: SentryInvokedInstanceV1 = Object.freeze({
+  deploymentOrigin: 'https://us.sentry.io',
+  organizationId: '42',
+});
+
+const EVENTS_PATH = '/api/0/organizations/42/issues/1234/events/';
+
+function respond(
+  body: unknown,
+  headers: Readonly<Record<string, string>> = {},
+  status = 200,
+): SentryApiOutcomeV1 {
+  return {
+    kind: 'response',
+    response: { status, headers, bodyText: JSON.stringify(body) },
+  };
+}
+
+function client(...outcomes: readonly SentryApiOutcomeV1[]): Readonly<{
+  client: SentryApiClientV1;
+  request: ReturnType<typeof vi.fn>;
+}> {
+  const queue = [...outcomes];
+  const request = vi.fn(async () => queue.shift() ?? respond({}));
+  return { client: { request } as unknown as SentryApiClientV1, request };
+}
+
+function nextLink(cursor: string, results = 'true', path = EVENTS_PATH): string {
+  return `<https://us.sentry.io${path}?cursor=${cursor}>; rel="next"; results="${results}"; cursor="${cursor}"`;
+}
+
+describe('Sentry issue projections', () => {
+  it('reads the three projections from the one public issue request', async () => {
+    const body = {
+      id: '1234',
+      status: 'unresolved',
+      substatus: 'escalating',
+      count: '4021',
+      userCount: 12,
+      firstSeen: '2026-01-01T00:00:00.000Z',
+      lastSeen: '2026-01-02T00:00:00.000Z',
+      firstRelease: { version: '1.0.0' },
+      lastRelease: { version: '1.4.2', dateCreated: '2026-01-02T00:00:00.000Z' },
+      tags: [{ key: 'browser.name', topValues: [{ value: 'Chrome', count: 9 }] }],
+      activity: [{ id: '5', type: 'set_regressed', dateCreated: '2026-01-02T00:00:00.000Z' }],
+    };
+
+    for (const projection of ['overview', 'tags', 'activity'] as const) {
+      const harness = client(respond(body));
+      const result = await readSentryIssueProjection(harness.client, {
+        instance: INSTANCE,
+        entryId: '1234',
+        projection,
+        nowMs: 0,
+      });
+      expect(harness.request.mock.calls[0]?.[0]).toEqual({
+        url: 'https://us.sentry.io/api/0/organizations/42/issues/1234/',
+        operation: 'issue',
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.kind).toBe(projection);
+    }
+  });
+
+  it('keeps the overview arm free of every Tier-B collection', async () => {
+    const harness = client(respond({
+      id: '1234',
+      status: 'unresolved',
+      count: '9',
+      tags: [{ key: 'sentry:user', topValues: [{ value: 'id:1', email: 'a@b.c' }] }],
+      activity: [{ id: '5', type: 'note', user: { name: 'Ada' } }],
+      participants: [{ email: 'watcher@example.com' }],
+      seenBy: [{ email: 'seen@example.com' }],
+    }));
+    const result = await readSentryIssueProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      projection: 'overview',
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const serialized = JSON.stringify(result.value);
+    for (const withheld of ['a@b.c', 'Ada', 'watcher@example.com', 'seen@example.com']) {
+      expect(serialized).not.toContain(withheld);
+    }
+  });
+
+  it('reports an unreadable body rather than an empty projection', async () => {
+    const harness = client({
+      kind: 'response',
+      response: { status: 200, headers: {}, bodyText: 'not json' },
+    });
+    const result = await readSentryIssueProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      projection: 'activity',
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.code).toBe('sentry-response-unparseable');
+  });
+
+  it('classifies a permission refusal as its own visible outcome', async () => {
+    const harness = client(respond({ detail: 'no' }, {}, 403));
+    const result = await readSentryIssueProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      projection: 'tags',
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.class).toBe('permission');
+  });
+});
+
+describe('Sentry issue events page', () => {
+  it('reads one bounded page and verifies the provider’s own next cursor', async () => {
+    const harness = client(respond(
+      [{ eventID: 'e1', title: 'boom', dateCreated: '2026-01-02T00:00:00.000Z' }],
+      { Link: nextLink('0:100:0') },
+    ));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.rows).toHaveLength(1);
+    expect(result.value.nextCursor).toBe('0:100:0');
+  });
+
+  it('does not follow a next link that leaves this exact route', async () => {
+    const harness = client(respond([], {
+      Link: nextLink('0:100:0', 'true', '/api/0/organizations/42/issues/9999/events/'),
+    }));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.nextCursor).toBeNull();
+  });
+
+  it('ends the walk when the provider says the next page has no results', async () => {
+    const harness = client(respond([], { Link: nextLink('0:100:0', 'false') }));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.nextCursor).toBeNull();
+    // A provider-stated empty page is a real page, not a failure.
+    expect(result.value.rows).toEqual([]);
+  });
+
+  it('sends the cursor it was given and never a provider URL', async () => {
+    const harness = client(respond([], {}));
+    await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      limit: 50,
+      cursor: '100:1:0',
+      nowMs: 0,
+    });
+    const url = new URL(String(harness.request.mock.calls[0]?.[0]?.url));
+    expect(url.pathname).toBe(EVENTS_PATH);
+    expect(url.searchParams.get('cursor')).toBe('100:1:0');
+    expect(url.searchParams.get('per_page')).toBe('50');
+  });
+
+  it('rejects a request this source cannot address at all', async () => {
+    const harness = client(respond([], {}));
+    const result = await readSentryIssueEventsPage(harness.client, {
+      instance: INSTANCE,
+      entryId: 'not-numeric',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(false);
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sentry tag values page', () => {
+  it('reads one bounded page of a single tag key', async () => {
+    const harness = client(respond(
+      [{ value: 'Chrome', count: 12, lastSeen: '2026-01-02T00:00:00.000Z' }],
+      {
+        Link: nextLink(
+          '0:100:0',
+          'true',
+          '/api/0/organizations/42/issues/1234/tags/browser.name/values/',
+        ),
+      },
+    ));
+    const result = await readSentryTagValuesPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      tagKey: 'browser.name',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.rows[0]?.value).toBe('Chrome');
+    expect(result.value.nextCursor).toBe('0:100:0');
+  });
+
+  it('refuses a tag key it could not address as one path segment', async () => {
+    const harness = client(respond([], {}));
+    const result = await readSentryTagValuesPage(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      tagKey: '../../projects',
+      limit: 100,
+      cursor: null,
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(false);
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+});
+
+describe('Sentry selected-event read', () => {
+  it('asks for the representative occurrence and never for an LLM rendering', async () => {
+    const harness = client(respond({
+      eventID: 'b'.repeat(32),
+      title: 'ChargeDeclined',
+      entries: [{
+        type: 'exception',
+        data: {
+          values: [{
+            type: 'ChargeDeclined',
+            value: 'card was declined',
+            stacktrace: { frames: [{ filename: 'app/checkout.ts', inApp: true, lineNo: 7 }] },
+          }],
+        },
+      }],
+    }));
+
+    const result = await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'representative' },
+      nowMs: 0,
+    });
+
+    expect(harness.request.mock.calls[0]?.[0]).toEqual({
+      url: 'https://us.sentry.io/api/0/organizations/42/issues/1234/events/recommended/',
+      operation: 'event',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.eventId).toBe('b'.repeat(32));
+    expect(result.value.sections[0]?.kind).toBe('exception');
+  });
+
+  it('addresses the exact selected occurrence', async () => {
+    const harness = client(respond({ eventID: 'c'.repeat(32) }));
+    await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'event', eventId: 'c'.repeat(32) },
+      nowMs: 0,
+    });
+    expect(harness.request.mock.calls[0]?.[0]).toEqual({
+      url: `https://us.sentry.io/api/0/organizations/42/issues/1234/events/${'c'.repeat(32)}/`,
+      operation: 'event',
+    });
+  });
+
+  it('never lets a raw event body leave this call frame', async () => {
+    const harness = client(respond({
+      eventID: 'd'.repeat(32),
+      user: { email: 'ada@example.com', geo: { city: 'London' } },
+      contexts: { device: { name: 'Ada’s laptop' } },
+      entries: [{
+        type: 'request',
+        data: { headers: [['cookie', 'session=notatoken']] },
+      }],
+    }));
+
+    const result = await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'representative' },
+      nowMs: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const encoded = JSON.stringify(result.value);
+    expect(encoded).not.toContain('session=notatoken');
+    expect(encoded).not.toContain('London');
+    expect(encoded).not.toContain('Ada’s laptop');
+  });
+
+  it('refuses an event id it could not address, without sending a request', async () => {
+    const harness = client(respond({}));
+    const result = await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'event', eventId: '../../organizations' },
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(false);
+    expect(harness.request).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused read as a failure rather than an event with no trace', async () => {
+    const harness = client(respond({ detail: 'nope' }, {}, 403));
+    const result = await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'representative' },
+      nowMs: 0,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.class).toBe('permission');
+  });
+});

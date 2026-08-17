@@ -1,0 +1,79 @@
+{
+  "results": [
+    {
+      "uuid": "00000000-0000-4000-8000-0000000000f1",
+      "distinct_id": "person-distinct-id-must-not-survive",
+      "timestamp": "2026-08-14T06:41:55.902000Z",
+      "properties": {
+        "$exception_list": [
+          {
+            "type": "TypeError",
+            "value": "Cannot read properties of undefined (reading 'id')",
+            "stacktrace": {
+              "type": "resolved",
+              "frames": [
+                {
+                  "raw_id": "frame-1",
+                  "function": "renderSummary",
+                  "source": "app/checkout/summary.tsx",
+                  "line": 128,
+                  "column": 17,
+                  "in_app": true,
+                  "resolved": true
+                },
+                {
+                  "raw_id": "frame-2",
+                  "function": "commitWork",
+                  "source": "vendor/renderer.js",
+                  "line": 9042,
+                  "column": 3,
+                  "in_app": false,
+                  "resolved": true
+                }
+              ]
+            }
+          }
+        ],
+        "$current_url": "https://shop.example/checkout/summary",
+        "$session_id": "00000000-0000-4000-8000-0000000000c1",
+        "$exception_personURL": "https://eu.posthog.com/project/1/person/redacted",
+        "$ip": "203.0.113.7",
+        "$email": "buyer@example.invalid",
+        "$set": { "plan": "sentinel-must-not-survive" },
+        "$lib": "posthog-js",
+        "$lib_version": "1.203.4",
+        "$geoip_city_name": "sentinel-must-not-survive",
+        "internal_customer_note": "sentinel-must-not-survive"
+      }
+    },
+    {
+      "uuid": "00000000-0000-4000-8000-0000000000f2",
+      "distinct_id": "another-distinct-id-must-not-survive",
+      "timestamp": "2026-08-13T22:10:04.000000Z",
+      "properties": {
+        "$exception_list": [
+          {
+            "type": "TypeError",
+            "value": "Cannot read properties of undefined (reading 'id')",
+            "stacktrace": { "type": "raw", "frames": [] }
+          }
+        ],
+        "$current_url": "https://shop.example/checkout/summary?coupon=redacted",
+        "$session_id": "00000000-0000-4000-8000-0000000000c2",
+        "$exception_code_variables": { "order": "sentinel-must-not-survive" }
+      }
+    },
+    {
+      "uuid": "00000000-0000-4000-8000-0000000000f3",
+      "distinct_id": "third-distinct-id-must-not-survive",
+      "timestamp": "2026-08-13T05:00:00.000000Z",
+      "properties": {
+        "$exception_list": [{ "type": "TypeError", "value": "Cannot read properties of undefined (reading 'id')" }]
+      }
+    }
+  ],
+  "hasMore": true,
+  "limit": 3,
+  "offset": 0,
+  "nextOffset": 3
+}

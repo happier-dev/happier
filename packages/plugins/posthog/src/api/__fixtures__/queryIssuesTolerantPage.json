@@ -1,0 +1,54 @@
+{
+  "results": [
+    {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "name": "ReferenceError",
+      "description": "x is not defined",
+      "status": "active",
+      "first_seen": "2026-08-06T10:00:00.000000Z",
+      "last_seen": "2026-08-14T10:00:00.000000Z",
+      "library": "posthog-js",
+      "source": "app/a.tsx",
+      "assignee": null,
+      "aggregations": { "occurrences": 12, "users": 5, "sessions": 6 }
+    },
+    {
+      "id": "not-a-uuid",
+      "name": "MalformedIdentity",
+      "status": "active",
+      "first_seen": "2026-08-06T10:00:00.000000Z",
+      "last_seen": "2026-08-14T10:00:00.000000Z",
+      "library": "posthog-js",
+      "source": "app/b.tsx",
+      "assignee": null,
+      "aggregations": { "occurrences": 1, "users": 1, "sessions": 1 }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000012",
+      "name": "MissingState",
+      "description": "row without a status",
+      "first_seen": "2026-08-06T10:00:00.000000Z",
+      "last_seen": "2026-08-14T10:00:00.000000Z",
+      "library": "posthog-js",
+      "source": "app/c.tsx",
+      "assignee": null,
+      "aggregations": { "occurrences": 2, "users": 1, "sessions": 1 }
+    },
+    "not-an-object",
+    {
+      "id": "00000000-0000-4000-8000-000000000014",
+      "name": "SyntaxError",
+      "description": "unexpected token",
+      "status": "custom_future_state",
+      "first_seen": "not-a-timestamp",
+      "last_seen": "2026-08-14T11:00:00.000000Z",
+      "library": null,
+      "source": null,
+      "assignee": null,
+      "aggregations": null
+    }
+  ],
+  "hasMore": false,
+  "limit": 5,
+  "offset": 0
+}

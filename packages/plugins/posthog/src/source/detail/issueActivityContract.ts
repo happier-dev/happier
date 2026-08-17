@@ -1,0 +1,184 @@
+/**
+ * The source-native issue-activity Action contract.
+ *
+ * The Activity panel runs in a UI artifact that holds no credential and speaks no HTTP,
+ * while `src/api/client.ts` is this source's sole credential reader. The bridge between
+ * them is one source-owned Action, declared with the same public schema builders the
+ * shared Triage contract uses. It carries no Triage role: an activity record is
+ * PostHog-native content the detail body reads, not a Triage entry the aggregate can
+ * hold.
+ *
+ * Its continuation is a page position this source mints, exactly like the sampled read's
+ * frozen geometry. The provider's own `next` URL never crosses this boundary: it is
+ * verified and reduced to a page number by `issueActivity.ts`, so the panel can neither
+ * request a provider-chosen URL nor carry one in state. The token lives only inside one
+ * mounted Activity panel, is never persisted, and is never a watermark.
+ */
+
+import {
+    defineProtocolArray,
+    defineProtocolLiteral,
+    defineProtocolNumber,
+    defineProtocolObject,
+    defineProtocolUnion,
+    defineProtocolUtf8String,
+} from '@happier-dev/plugin-sdk/protocol';
+import {
+    TriageConfiguredSourceInstanceV1Schema,
+    TriageSourceEntryLocalRefV1Schema,
+    TriageSourceFailureV1Schema,
+} from '@happier-dev/triage-protocol/v1';
+
+import {
+    POSTHOG_ACTIVITY_BOUNDS_V1,
+    POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
+} from '../../ui/detail/activityProjection.js';
+
+/** The largest continuation this source will mint or accept, in UTF-8 bytes. */
+export const MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES = 256;
+
+const CONTINUATION_VERSION = 1;
+
+const PosthogActivityBooleanSchema = defineProtocolUnion([
+    defineProtocolLiteral(true),
+    defineProtocolLiteral(false),
+]);
+
+/**
+ * One published activity record.
+ *
+ * Every bound is the exact value the boundary projector applies, so a page the projector
+ * can produce always parses and a page it never could is rejected here rather than
+ * becoming a second, looser statement of what may leave this source.
+ */
+export const PosthogProjectedActivityRecordV1Schema = defineProtocolObject({
+    id: defineProtocolUtf8String({
+        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.identifierUtf8Bytes,
+        minLength: 1,
+    }),
+    activity: defineProtocolUtf8String({
+        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.activityUtf8Bytes,
+        minLength: 1,
+    }),
+    scope: defineProtocolUtf8String({
+        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.scopeUtf8Bytes,
+        minLength: 1,
+    }).optional(),
+    atMs: defineProtocolNumber({ integer: true }).optional(),
+    actor: defineProtocolUtf8String({
+        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.actorUtf8Bytes,
+        minLength: 1,
+    }).optional(),
+    isSystem: PosthogActivityBooleanSchema,
+    changedFields: defineProtocolArray(
+        defineProtocolUtf8String({
+            maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.changedFieldUtf8Bytes,
+            minLength: 1,
+        }),
+        { maxItems: POSTHOG_ACTIVITY_BOUNDS_V1.maxChangedFieldsPerRecord },
+    ),
+    truncated: defineProtocolLiteral(true).optional(),
+}, { policy: 'closed' });
+
+export const PosthogIssueActivityInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    instance: TriageConfiguredSourceInstanceV1Schema,
+    localRef: TriageSourceEntryLocalRefV1Schema,
+    limit: defineProtocolNumber({
+        integer: true,
+        minimum: 1,
+        maximum: POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
+    }),
+    /** Present only for a following page, and only as this source minted it. */
+    continuation: defineProtocolUtf8String({
+        maxUtf8Bytes: MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES,
+        minLength: 1,
+    }).optional(),
+}, { policy: 'closed' });
+export type PosthogIssueActivityInputV1 = ReturnType<
+    typeof PosthogIssueActivityInputV1Schema.parse
+>;
+
+export const PosthogIssueActivityResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        kind: defineProtocolLiteral('activity'),
+        records: defineProtocolArray(PosthogProjectedActivityRecordV1Schema, {
+            maxItems: POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
+        }),
+        /**
+         * Provider rows this page could not read. They consumed the same page budget an
+         * accepted row would have, so a reader can state what the page covered.
+         */
+        omittedRowCount: defineProtocolNumber({ integer: true, minimum: 0 }),
+        /** The provider's stated total, absent when it stated none. */
+        totalCount: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
+        /** Absent when this page ends the walk. */
+        continuation: defineProtocolUtf8String({
+            maxUtf8Bytes: MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES,
+            minLength: 1,
+        }).optional(),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        kind: defineProtocolLiteral('unavailable'),
+        failure: TriageSourceFailureV1Schema,
+    }, { policy: 'closed' }),
+]);
+export type PosthogIssueActivityResultV1 = ReturnType<
+    typeof PosthogIssueActivityResultV1Schema.parse
+>;
+
+/** The invocation-local paging position of one mounted Activity panel. */
+export type PosthogIssueActivityFrontier = Readonly<{
+    v: 1;
+    page: number;
+    limit: number;
+}>;
+
+export function encodePosthogIssueActivityContinuation(
+    frontier: PosthogIssueActivityFrontier,
+): string | null {
+    const token = JSON.stringify({
+        v: CONTINUATION_VERSION,
+        page: frontier.page,
+        limit: frontier.limit,
+    });
+    return new TextEncoder().encode(token).length
+        > MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES
+        ? null
+        : token;
+}
+
+/**
+ * Decodes a continuation this source minted. Anything else — another version, a page
+ * before the first, a page size the source will not request — is rejected, and the
+ * caller starts the walk again from page one rather than guessing a position.
+ */
+export function decodePosthogIssueActivityContinuation(
+    token: string,
+): PosthogIssueActivityFrontier | null {
+    let decoded: unknown;
+    try {
+        decoded = JSON.parse(token);
+    } catch {
+        return null;
+    }
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+        return null;
+    }
+    const raw = decoded as Readonly<Record<string, unknown>>;
+    const page = raw['page'];
+    const limit = raw['limit'];
+    if (
+        raw['v'] !== CONTINUATION_VERSION
+        || typeof page !== 'number'
+        || !Number.isSafeInteger(page)
+        || page < 1
+        || typeof limit !== 'number'
+        || !Number.isSafeInteger(limit)
+        || limit <= 0
+        || limit > POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT
+    ) {
+        return null;
+    }
+    return { v: 1, page, limit };
+}

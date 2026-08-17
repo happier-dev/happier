@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/7701/issues/5501001/?expand=owners&expand=integrationIssues"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "id": "5509999",
+    "shareId": null,
+    "shortId": "EXAMPLE-PROJECT-ZZ",
+    "title": "ZeroDivisionError: division by zero",
+    "culprit": "example_service.tasks.send_digest",
+    "permalink": "https://example-org.sentry.io/issues/5509999/",
+    "logger": null,
+    "level": "error",
+    "status": "unresolved",
+    "statusDetails": {},
+    "substatus": "ongoing",
+    "isPublic": false,
+    "platform": "python",
+    "project": {
+      "id": "9004",
+      "name": "Other Project",
+      "slug": "other-project",
+      "platform": "python"
+    },
+    "type": "error",
+    "issueType": "error",
+    "issueCategory": "error",
+    "metadata": { "value": "division by zero", "type": "ZeroDivisionError" },
+    "numComments": 0,
+    "assignedTo": null,
+    "isBookmarked": false,
+    "isSubscribed": false,
+    "subscriptionDetails": null,
+    "hasSeen": false,
+    "annotations": [],
+    "priority": "high",
+    "priorityLockedAt": null,
+    "isUnhandled": true,
+    "count": "23151",
+    "userCount": 816,
+    "firstSeen": "2025-11-14T08:19:03.000Z",
+    "lastSeen": "2026-08-14T08:12:00.000Z"
+  }
+}

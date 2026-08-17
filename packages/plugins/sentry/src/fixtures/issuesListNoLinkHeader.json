@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/7701/issues/?query=&statsPeriod=90d&project=-1&sort=date&limit=100&collapse=stats&collapse=filtered"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": [
+    {
+      "id": "5501020",
+      "shortId": "EXAMPLE-PROJECT-B7",
+      "title": "ConnectionResetError: connection reset by peer",
+      "culprit": "example_service.http.pool",
+      "permalink": "https://example-org.sentry.io/issues/5501020/",
+      "level": "error",
+      "status": "unresolved",
+      "substatus": "ongoing",
+      "project": { "id": "9001", "name": "Example Project", "slug": "example-project" },
+      "issueType": "error",
+      "issueCategory": "error",
+      "metadata": {},
+      "assignedTo": null,
+      "priority": "medium",
+      "isUnhandled": false,
+      "count": "31",
+      "userCount": 4,
+      "firstSeen": "2026-08-02T00:00:00.000Z",
+      "lastSeen": "2026-08-14T06:00:00.000Z"
+    }
+  ]
+}

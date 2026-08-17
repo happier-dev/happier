@@ -1,0 +1,67 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://us.sentry.io/api/0/organizations/7701/issues/?query=&statsPeriod=90d&project=-1&sort=date&limit=100&collapse=stats&collapse=filtered"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "link": "<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=1755000000000%3A0%3A1>; rel=\"previous\"; results=\"false\"; cursor=\"1755000000000:0:1\", <https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=1754000000000%3A0%3A0>; rel=\"next\"; results=\"false\"; cursor=\"1754000000000:0:0\""
+  },
+  "body": [
+    {
+      "id": "5501010",
+      "shortId": "EXAMPLE-PROJECT-9Z",
+      "title": "ValueError: invalid literal",
+      "culprit": "example_service.parse",
+      "permalink": "https://example-org.sentry.io/issues/5501010/",
+      "level": "error",
+      "status": "unresolved",
+      "substatus": "ongoing",
+      "project": { "id": "9001", "name": "Example Project", "slug": "example-project" },
+      "issueType": "error",
+      "issueCategory": "error",
+      "metadata": {},
+      "assignedTo": null,
+      "priority": "low",
+      "isUnhandled": false,
+      "count": "12",
+      "userCount": 3,
+      "firstSeen": "2026-08-01T00:00:00.000Z",
+      "lastSeen": "2026-08-14T00:00:00.000Z"
+    },
+    {
+      "id": 5501011,
+      "title": "Row whose id is a number rather than the documented string",
+      "status": "unresolved"
+    },
+    {
+      "shortId": "EXAMPLE-PROJECT-NO-ID",
+      "title": "Row with no id at all",
+      "status": "unresolved",
+      "lastSeen": "2026-08-14T00:00:00.000Z"
+    },
+    "a bare string where an object is documented",
+    {
+      "id": "5501012",
+      "shortId": "EXAMPLE-PROJECT-A1",
+      "title": "KeyError: 'account'",
+      "culprit": "example_service.accounts.load",
+      "permalink": "https://example-org.sentry.io/issues/5501012/",
+      "level": "warning",
+      "status": "resolved",
+      "substatus": null,
+      "project": { "id": "9001", "name": "Example Project", "slug": "example-project" },
+      "issueType": "error",
+      "issueCategory": "error",
+      "metadata": {},
+      "assignedTo": null,
+      "priority": "medium",
+      "isUnhandled": false,
+      "count": "5",
+      "userCount": 1,
+      "firstSeen": "2026-07-01T00:00:00.000Z",
+      "lastSeen": "2026-08-10T00:00:00.000Z"
+    }
+  ]
+}
