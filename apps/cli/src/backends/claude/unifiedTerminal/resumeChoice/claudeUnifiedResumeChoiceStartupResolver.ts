@@ -207,6 +207,11 @@ export function createClaudeUnifiedResumeChoiceStartupResolver(params: Readonly<
 
     if (!screenState.resumeChoiceDialogVisible) {
       if (params.broker.hasPendingChoice('resume_choice')) {
+        await params.wait(params.settleMs);
+        const recaptured = await captureScreenState(params.port);
+        if (recaptured.kind !== 'state' || recaptured.state.resumeChoiceDialogVisible) {
+          return { status: 'waiting_for_user' };
+        }
         await params.broker.noteDialogResolvedInTerminal('resume_dialog_resolved_in_terminal');
         return { status: 'handled' };
       }

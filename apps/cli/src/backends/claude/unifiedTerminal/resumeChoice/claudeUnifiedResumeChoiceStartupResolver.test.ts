@@ -380,8 +380,9 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
       resolverSettled = true;
     });
 
-    await Promise.resolve();
-    expect(noteDialogResolved).toHaveBeenCalledWith('resume_dialog_resolved_in_terminal');
+    await vi.waitFor(() => {
+      expect(noteDialogResolved).toHaveBeenCalledWith('resume_dialog_resolved_in_terminal');
+    });
     expect(resolverSettled).toBe(false);
 
     releaseCancellation();
@@ -392,6 +393,42 @@ describe('createClaudeUnifiedResumeChoiceStartupResolver', () => {
       status: 'canceled',
       reason: 'resume_dialog_resolved_in_terminal',
     });
+  });
+
+  it('keeps the pending user action when a transient no-dialog observation recaptures the resume chooser', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('resume-choice-session');
+    const broker = new ClaudeUnifiedDialogChoiceBroker(session, { createRequestId: () => 'claude_resume_choice_1' });
+    broker.activate();
+    const port = createFakeControlPort({ captures: [RESUME_DIALOG] });
+    const resolver = createClaudeUnifiedResumeChoiceStartupResolver({
+      choice: 'ask_every_time',
+      broker,
+      port,
+      wait: async () => undefined,
+      settleMs: 1,
+    });
+
+    await expect(resolver({
+      screenState: parseClaudeScreenState(RESUME_DIALOG),
+      observedAtMs: 1,
+      abortSignal: new AbortController().signal,
+    })).resolves.toEqual({ status: 'waiting_for_user' });
+    await vi.waitFor(() => {
+      expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_resume_choice_1']);
+    });
+
+    await expect(resolver({
+      screenState: parseClaudeScreenState(IDLE),
+      observedAtMs: 2,
+      abortSignal: new AbortController().signal,
+    })).resolves.toEqual({ status: 'waiting_for_user' });
+
+    expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_resume_choice_1']);
+    expect(client.getAgentStateSnapshot().completedRequests.claude_resume_choice_1).toBeUndefined();
+    expect(port.sentLiteral).toEqual([]);
+    expect(port.sentKeys).toEqual([]);
+
+    await broker.dispose();
   });
 
   it('answers an orphan effort-change dialog with switch when its target matches the configured startup effort', async () => {
