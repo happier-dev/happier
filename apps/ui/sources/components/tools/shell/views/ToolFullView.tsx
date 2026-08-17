@@ -24,6 +24,7 @@ import { ToolError } from '@/components/tools/shell/presentation/ToolError';
 import { resolveToolPermissionTerminalErrorMessage } from '../permissions/resolveToolPermissionTerminalErrorMessage';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 
 interface ToolFullViewProps {
@@ -39,6 +40,9 @@ interface ToolFullViewProps {
 
 export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, interaction }: ToolFullViewProps) {
     const { theme } = useUnistyles();
+    // This view opens one historical row on its own screen, so the row's own
+    // Agent — published by the opener — outranks the Session's current one.
+    const historicalAgentId = useHistoricalTranscriptAgentId();
     const toolForRendering = React.useMemo<ToolCall>(() => {
         return resolveInactiveSessionToolCallFailure({
             tool: normalizeToolCallForRendering(tool),
@@ -51,8 +55,9 @@ export function ToolFullView({ tool, owningMessageId, sessionId, metadata, messa
             tool: toolForRendering,
             metadata: metadata ?? null,
             permissionDisabledReason: interaction?.permissionDisabledReason,
+            historicalAgentId,
         });
-    }, [interaction?.permissionDisabledReason, metadata, toolForRendering]);
+    }, [historicalAgentId, interaction?.permissionDisabledReason, metadata, toolForRendering]);
 
     const permissionTerminalError = permissionTerminalErrorMessage ? (
         <TextSelectabilityScope selectable>

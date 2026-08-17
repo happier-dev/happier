@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
+import type { AgentId } from '@/agents/registry/registryCore';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { knownTools } from '@/components/tools/catalog';
@@ -32,6 +33,14 @@ export function buildToolHeaderModel(input: {
     iconSize: number;
     iconColorPrimary: string;
     iconColorSecondary: string;
+    /**
+     * The Agent that produced this row, when the transcript has divider
+     * evidence for it. A Session that switched Agent keeps every earlier row on
+     * screen, and each Agent has its own unknown-tool policy, so the history
+     * must not be re-judged by whoever is running now. `null`/absent keeps the
+     * live-metadata answer.
+     */
+    historicalAgentId?: AgentId | null;
 }): ToolHeaderModel {
     const toolForRendering = normalizeToolCallForRendering(input.tool);
     const headerText = resolveToolHeaderTextPresentation({ tool: toolForRendering, metadata: input.metadata });
@@ -48,7 +57,7 @@ export function buildToolHeaderModel(input: {
         toolForRendering.permission?.status === 'pending' &&
         toolForRendering.state === 'running';
 
-    const agentId = resolveAgentIdFromFlavor(input.metadata?.flavor);
+    const agentId = input.historicalAgentId ?? resolveAgentIdFromFlavor(input.metadata?.flavor);
     const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
 
     const shouldHideBodyPermanently = hideUnknownToolsByDefault && isUnknownTool;

@@ -46,6 +46,10 @@ import { buildApprovalToolCallLocation, doesApprovalMatchToolCall } from './tool
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { isAskUserQuestionToolName } from '@happier-dev/protocol';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    TranscriptRowSeqProvider,
+    useHistoricalTranscriptAgentId,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 const TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS = 10;
 
@@ -64,6 +68,13 @@ export const ToolTimelineRow = React.memo((props: {
 }) => {
     const { theme } = useUnistyles();
     const router = useRouter();
+    // The canonical transcript row sequence. It already reaches this component
+    // for jump targeting; historical Agent attribution is its second reader, and
+    // it is published to the whole tool subtree so the body, the permission
+    // footer and the full view resolve the same Agent without six layers of
+    // prop drilling.
+    const transcriptSeq = props.jumpHighlightSeq ?? null;
+    const historicalAgentId = useHistoricalTranscriptAgentId(transcriptSeq);
 
     const toolForSession = React.useMemo(() => {
         return resolveInactiveSessionToolCallFailure({
@@ -79,8 +90,9 @@ export const ToolTimelineRow = React.memo((props: {
             iconSize: 18,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         });
-    }, [props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
     const toolForRendering = headerModel.toolForRendering;
 
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
@@ -212,8 +224,9 @@ export const ToolTimelineRow = React.memo((props: {
             iconSize,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [headerModel.icon, historicalAgentId, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const [headerActions, setHeaderActions] = React.useState<React.ReactNode | null>(null);
     const showTaskRunningIndicator = isSubAgentTranscriptToolName(normalizedToolName);
@@ -312,10 +325,11 @@ export const ToolTimelineRow = React.memo((props: {
     );
 
     return (
+        <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
             sessionId={props.sessionId ?? ''}
             routeMessageId={routeMessageId}
-            seq={props.jumpHighlightSeq ?? null}
+            seq={transcriptSeq}
             radius={TOOL_TIMELINE_ROW_HIGHLIGHT_RADIUS}
             style={styles.container}
         >
@@ -375,6 +389,7 @@ export const ToolTimelineRow = React.memo((props: {
                 />
             ))}
         </TranscriptJumpAttention>
+        </TranscriptRowSeqProvider>
     );
 });
 

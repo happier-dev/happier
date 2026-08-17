@@ -12,6 +12,8 @@ import { useSessionScreenIsFocused } from '@/components/sessions/shell/useSessio
 import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useTranscriptMotionConfig } from '@/components/sessions/transcript/motion/useTranscriptMotionConfig';
+import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
+import { SessionTranscriptAgentAttributionProvider } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { TranscriptMotionProvider } from '@/components/sessions/transcript/motion/TranscriptMotionProvider';
 import {
     type TranscriptViewportTelemetryEvent,
@@ -288,6 +290,15 @@ const TRANSCRIPT_SCROLL_AUTO_REPIN_THROTTLE_MS = 200;
 const TRANSCRIPT_SCROLL_USER_INTENT_AUTO_PIN_DELAY_MS = 250;
 const TRANSCRIPT_SCROLL_USER_INTENT_RECENT_MS = 500;
 export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
+    // Historical Agent attribution, resolved once for the whole transcript.
+    // A Session can change Agent without changing identity, and every tool row
+    // below this point needs to know which Agent produced it. Rows look the
+    // answer up; they never rebuild the index.
+    const agentAttributionIndex = React.useMemo(
+        () => buildSessionTranscriptAgentAttributionIndex(Object.values(props.messagesById)),
+        [props.messagesById],
+    );
+
     const transcriptMessageSelection = useOptionalTranscriptSelectionState();
     const transcriptContentMaxWidth = useLayoutMaxWidth();
     const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
@@ -2493,6 +2504,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         ? scrollObservationHost.platformInteractionProps as Partial<React.ComponentProps<typeof View>>
         : undefined;
     return (
+        <SessionTranscriptAgentAttributionProvider value={agentAttributionIndex}>
         <TranscriptMotionProvider sessionKey={props.sessionId} config={motionConfig}>
               <View
                 style={{ flex: 1 }}
@@ -2565,5 +2577,6 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                 ) : null}
               </View>
         </TranscriptMotionProvider>
+        </SessionTranscriptAgentAttributionProvider>
     );
 });

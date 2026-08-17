@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { readSessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
+import { AgentTransitionDividerRow } from '@/components/sessions/transcript/agentTransition/AgentTransitionDividerRow';
 
 import { Text } from '@/components/ui/text/Text';
 import type { AgentEvent } from '@/sync/typesRaw';
@@ -292,6 +294,18 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     const eventColor = deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
     const isTerminalComposerDraftBlocked = isTerminalComposerDraftBlockedEvent(props.event);
     const terminalComposerDraftBlockedStateAtMs = readTerminalComposerDraftBlockedStateAtMs(props.event);
+
+    // The Agent-transition divider rides the generic `type:'message'` arm so old
+    // readers still render its prose. This reader understands the sidecar, and a
+    // change of Agent is a boundary in the conversation, not an informational
+    // aside — so it leaves the generic arm entirely rather than restyling it.
+    // Recognition goes through the protocol's single divider reader; the shape
+    // check is not repeated here.
+    const agentTransitionDivider = readSessionAgentTransitionDividerV1(props.event);
+    if (agentTransitionDivider) {
+        return <AgentTransitionDividerRow divider={agentTransitionDivider} />;
+    }
+
     let iconName: IconName = 'info';
     let text = formatUnknownEventDetails(props.event);
     let detailText: string | undefined;

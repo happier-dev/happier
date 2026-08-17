@@ -47,6 +47,10 @@ import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/se
 import { shouldShowTranscriptRowPinAction } from '@/components/sessions/transcript/messageCopyVisibility';
 import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import { Icon } from '@/components/ui/icons/Icon';
+import {
+    TranscriptRowSeqProvider,
+    useHistoricalTranscriptAgentId,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
 
@@ -81,6 +85,14 @@ interface ToolViewProps {
 
 export const ToolView = React.memo<ToolViewProps>((props) => {
     const { tool, onPress, sessionId, messageId } = props;
+    // The canonical transcript row sequence. It already reaches this component
+    // for jump targeting; historical Agent attribution is its second reader, and
+    // it is published to the whole tool subtree so the body, the permission
+    // footer and the full view resolve the same Agent without six layers of
+    // prop drilling.
+    const transcriptSeq = props.jumpHighlightSeq ?? null;
+    const historicalAgentId = useHistoricalTranscriptAgentId(transcriptSeq);
+
     const headerActionHost = useRowActionHoverHost();
     const router = useRouter();
     const { theme } = useUnistyles();
@@ -129,8 +141,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             iconSize: 18,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         });
-    }, [props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
+    }, [historicalAgentId, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, toolForSession]);
 
     const toolForRendering = headerModel.toolForRendering;
     const isWaitingForPermission = headerModel.isWaitingForPermission;
@@ -235,8 +248,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             iconSize,
             iconColorPrimary: theme.colors.text.primary,
             iconColorSecondary: theme.colors.text.secondary,
+            historicalAgentId,
         }).icon;
-    }, [headerModel.icon, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, tool]);
+    }, [headerModel.icon, historicalAgentId, iconSize, props.metadata, theme.colors.text.primary, theme.colors.text.secondary, tool]);
 
     // Apply the per-tool detail level preference for the timeline card.
     // - title: hide the tool body
@@ -355,10 +369,11 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         statusKind === 'error' ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
 
     return (
+        <TranscriptRowSeqProvider value={transcriptSeq}>
         <TranscriptJumpAttention
             sessionId={sessionId ?? ''}
             routeMessageId={messageId ?? null}
-            seq={props.jumpHighlightSeq ?? null}
+            seq={transcriptSeq}
             radius={TOOL_VIEW_HIGHLIGHT_RADIUS}
             viewProps={{ testID: 'tool-view-container', ...headerActionHost.hoverProps }}
             style={[styles.container, props.embedded ? styles.containerEmbedded : null]}
@@ -501,6 +516,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 />
             ))}
         </TranscriptJumpAttention>
+        </TranscriptRowSeqProvider>
     );
 });
 

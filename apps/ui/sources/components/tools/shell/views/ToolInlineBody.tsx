@@ -21,6 +21,7 @@ import { resolveToolPermissionTerminalErrorMessage } from '@/components/tools/sh
 import { useSetting } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 type ToolInlineBodyMode = 'card' | 'timeline';
 type ToolPayloadKind = 'input' | 'output';
@@ -183,6 +184,9 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
     setHeaderActions: (node: React.ReactNode | null) => void;
 }) {
     const { tool, normalizedToolName } = props;
+    // A Session can change Agent without changing identity, so the row's own
+    // Agent — not the Session's current one — owns how this body renders.
+    const historicalAgentId = useHistoricalTranscriptAgentId();
     const sectionSpacing = props.sectionSpacing ?? 'default';
     const toolPayloadDisplayMaxBytes = normalizePayloadDisplayBudget(useSetting('filesDiffTokenizationMaxBytes'));
 
@@ -218,7 +222,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         hideDefaultError = true;
     }
 
-    const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
+    const agentId = historicalAgentId ?? resolveAgentIdFromFlavor(props.metadata?.flavor);
     const hideUnknownToolsByDefault = agentId ? getAgentCore(agentId).toolRendering.hideUnknownToolsByDefault : false;
     if (!knownTool && hideUnknownToolsByDefault) {
         minimal = true;
@@ -241,6 +245,7 @@ export const ToolInlineBody = React.memo(function ToolInlineBody(props: {
         tool,
         metadata: props.metadata ?? null,
         permissionDisabledReason: props.interaction?.permissionDisabledReason,
+        historicalAgentId,
     });
     if (permissionTerminalErrorMessage) {
         // When a permission is denied/canceled, the tool body often has no result payload.

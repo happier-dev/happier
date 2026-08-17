@@ -13,6 +13,7 @@ import { formatPermissionRequestSummary } from '@/components/tools/normalization
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { createPermissionActionDispatchGuard } from './permissionActionDispatchGuard';
+import { useHistoricalTranscriptAgentId } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 
 interface PermissionFooterProps {
@@ -165,6 +166,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 }) => {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const historicalAgentId = useHistoricalTranscriptAgentId();
     const alignedButtonStyle = alignFirstButtonToStart ? styles.buttonAlignedToStart : null;
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
     const [loadingAllEdits, setLoadingAllEdits] = useState(false);
@@ -189,7 +191,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         actionDispatchGuard.dispatch(requestKey, action)
     );
     
-    const agentId = resolveAgentIdForPermissionUi({ flavor: metadata?.flavor, toolName });
+    // A terminal outcome was decided by whoever was running at the time, so a
+    // Session that later switched Agent must not re-label its history. A
+    // pending request is the opposite case: it is live, and only the current
+    // Agent can answer it, so live authority is kept there deliberately.
+    const liveAgentId = resolveAgentIdForPermissionUi({ flavor: metadata?.flavor, toolName });
+    const agentId = permission.status === 'pending'
+        ? liveAgentId
+        : (historicalAgentId ?? liveAgentId);
     const copy = getPermissionFooterCopy(agentId);
     const permissionFooterBehavior = getAgentBehavior(agentId).permissions?.footer;
     const isCodexDecision = copy.protocol === 'codexDecision';

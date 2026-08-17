@@ -22,6 +22,11 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import { shouldEnableExecutionRunPolling } from '@/sync/domains/session/participants/shouldEnableExecutionRunPolling';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useSessionMessages } from '@/sync/store/hooks';
+import { buildSessionTranscriptAgentAttributionIndex } from '@/components/sessions/transcript/attribution/sessionTranscriptAgentAttribution';
+import {
+    SessionTranscriptAgentAttributionProvider,
+    TranscriptRowSeqProvider,
+} from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 import { t } from '@/text';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { Typography } from '@/constants/Typography';
@@ -147,6 +152,13 @@ function ToolCallDetailsView(props: Readonly<{
     const { theme } = useUnistyles();
     const styles = React.useMemo(() => createSessionMessageDetailsStyles(theme), [theme]);
     const { messages: committedMessages } = useSessionMessages(props.sessionId);
+    // This screen shows one row from the transcript in isolation. Without the
+    // transcript's divider index it would fall back to the Session's current
+    // Agent, which is exactly the row a switched Session gets wrong.
+    const agentAttributionIndex = React.useMemo(
+        () => buildSessionTranscriptAgentAttributionIndex(committedMessages),
+        [committedMessages],
+    );
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const executionRunPollingEnabled = React.useMemo(() => {
         return shouldEnableExecutionRunPolling({
@@ -229,6 +241,8 @@ function ToolCallDetailsView(props: Readonly<{
     const forcePermissionFooterInTranscript = !shouldShowComposer;
 
     return (
+        <SessionTranscriptAgentAttributionProvider value={agentAttributionIndex}>
+        <TranscriptRowSeqProvider value={props.message.seq ?? null}>
         <View style={styles.toolCallFullViewContainer}>
             <ToolFullView
                 tool={props.message.tool}
@@ -252,6 +266,8 @@ function ToolCallDetailsView(props: Readonly<{
                 />
             ) : null}
         </View>
+        </TranscriptRowSeqProvider>
+        </SessionTranscriptAgentAttributionProvider>
     );
 }
 

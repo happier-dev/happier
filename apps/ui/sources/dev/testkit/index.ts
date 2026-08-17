@@ -4,6 +4,7 @@ export * from './fixtures/featureFixtures';
 export * from './fixtures/releasedServerV021Compatibility';
 export * from './fixtures/machineFixtures';
 export * from './fixtures/permissionFixtures';
+export * from './fixtures/sessionAgentTransitionFixtures';
 export * from './fixtures/sessionFixtures';
 export * from './fixtures/sessionWorkflowActivityFixtures';
 export * from './fixtures/themeFixtures';
