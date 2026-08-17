@@ -171,6 +171,7 @@ describe('enriched Markdown runtime readiness join', () => {
                     profile="transcript"
                     selectable
                     streamingAnimated={false}
+                    agentTexMath={false}
                 />
             );
         }
@@ -222,6 +223,7 @@ describe('enriched Markdown runtime readiness join', () => {
                     profile="transcript"
                     selectable
                     streamingAnimated={false}
+                    agentTexMath={false}
                 />,
             );
             await Promise.resolve();

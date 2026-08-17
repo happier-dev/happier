@@ -55,6 +55,17 @@ function readFontStyle(style: TextStyle): 'normal' | 'italic' | undefined {
     return style.fontStyle === 'normal' || style.fontStyle === 'italic' ? style.fontStyle : undefined;
 }
 
+function readTextAlign(style: TextStyle): NonNullable<TextStyle['textAlign']> | undefined {
+    const textAlign = style.textAlign;
+    return textAlign === 'auto'
+        || textAlign === 'left'
+        || textAlign === 'right'
+        || textAlign === 'center'
+        || textAlign === 'justify'
+        ? textAlign
+        : undefined;
+}
+
 function flattenTextStyle(style: unknown): TextStyle {
     if (!style) {
         return {};
@@ -101,6 +112,10 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
     const baseLineHeight = readNumber(flattenedTextStyle.lineHeight, roundTo2(24 * uiFontScale));
     const inlineCodeFontSize = roundTo2(baseFontSize * 0.88);
     const baseColor = readString(flattenedTextStyle.color, params.colors.text.primary);
+    const textAlign = readTextAlign(flattenedTextStyle);
+    const mathTextAlign = textAlign === 'left' || textAlign === 'right' || textAlign === 'center'
+        ? textAlign
+        : 'center';
     const h1FontSize = scaledMetric(baseFontSize, 1.5);
     const h2FontSize = scaledMetric(baseFontSize, 1.25);
     const h3FontSize = scaledMetric(baseFontSize, 1.125);
@@ -127,6 +142,7 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
             fontSize: baseFontSize,
             lineHeight: baseLineHeight,
             color: baseColor,
+            textAlign,
             marginTop: 0,
             marginBottom: 8,
         },
@@ -237,7 +253,7 @@ export function buildEnrichedMarkdownStyle(params: Readonly<{
             color: baseColor,
             backgroundColor: 'transparent',
             padding: 0,
-            textAlign: 'center' as const,
+            textAlign: mathTextAlign,
             marginTop: 8,
             marginBottom: 8,
         },

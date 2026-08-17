@@ -1310,6 +1310,7 @@ function AgentTextBlock(props: {
                   <MarkdownView
                     testID="transcript-thinking-body-markdown"
                     markdown={thinkingRenderMarkdown}
+                    agentTexMath
                     onOptionPress={handleOptionPress}
                     onOptionLongPress={handleOptionLongPress}
                     onLinkPress={handleMarkdownLinkPress}
@@ -1330,6 +1331,7 @@ function AgentTextBlock(props: {
               shouldRenderStreamingMarkdown ? (
                 <MarkdownView
                   markdown={streamingMarkdownText}
+                  agentTexMath
                   onOptionPress={handleOptionPress}
                   onOptionLongPress={handleOptionLongPress}
                   onLinkPress={handleMarkdownLinkPress}
@@ -1352,6 +1354,7 @@ function AgentTextBlock(props: {
               ) : (
                 <MarkdownView
                   markdown={markdown}
+                  agentTexMath
                   onOptionPress={handleOptionPress}
                   onOptionLongPress={handleOptionLongPress}
                   onLinkPress={handleMarkdownLinkPress}

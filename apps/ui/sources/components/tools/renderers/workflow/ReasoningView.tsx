@@ -28,7 +28,7 @@ export const ReasoningView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
     return (
         <ToolSectionView fullWidth={detailLevel === 'full'}>
             <View style={{ width: '100%' }}>
-                <MarkdownView markdown={detailLevel === 'full' ? markdown : truncate(markdown, 900)} />
+                <MarkdownView markdown={detailLevel === 'full' ? markdown : truncate(markdown, 900)} agentTexMath />
             </View>
         </ToolSectionView>
     );

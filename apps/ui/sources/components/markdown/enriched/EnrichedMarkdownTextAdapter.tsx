@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 import { EnrichedMarkdownText, type EnrichedMarkdownTextProps } from 'react-native-enriched-markdown';
 
-import { ENRICHED_MARKDOWN_MD4C_FLAGS } from './enrichedMarkdownConstants';
+import { resolveEnrichedMarkdownMd4cFlags } from './enrichedMarkdownConstants';
 import { normalizeMarkdownLinkUrl, openMarkdownLinkUrl, sanitizeEnrichedMarkdownLinkTargets } from './enrichedMarkdownLinkHandling';
 import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
@@ -82,6 +82,8 @@ type EnrichedMarkdownTextAdapterProps = Readonly<{
     streamingRevealPreset?: StreamingTextRevealPreset;
     testID?: string;
     suppressLeadingTopMargin?: boolean;
+    fillContainer?: boolean;
+    agentTexMath: boolean;
 }>;
 
 export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTextAdapterProps) => {
@@ -94,6 +96,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         () => sanitizeEnrichedMarkdownLinkTargets(props.markdown),
         [props.markdown],
     );
+    const md4cFlags = resolveEnrichedMarkdownMd4cFlags(props.agentTexMath);
 
     const handleLinkPress = React.useCallback((event: { url: string }) => {
         const normalizedUrl = normalizeMarkdownLinkUrl(event.url);
@@ -147,17 +150,20 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
     }, [flavor, props.streamingAnimated, props.suppressLeadingTopMargin, props.testID, runtimeStatus]);
 
     const containerStyle = React.useMemo(() => {
+        const baseContainerStyle = props.fillContainer === false
+            ? { ...styleBundle.containerStyle, width: undefined }
+            : styleBundle.containerStyle;
         if (Platform.OS !== 'web' || revealConfig == null) {
-            return styleBundle.containerStyle;
+            return baseContainerStyle;
         }
 
         return ({
-            ...styleBundle.containerStyle,
+            ...baseContainerStyle,
             [ENRICHED_REVEAL_DURATION_VAR]: `${revealConfig.durationMs}ms`,
             [ENRICHED_REVEAL_EASING_VAR]: revealConfig.easing,
             [ENRICHED_REVEAL_TRANSLATE_Y_VAR]: `${revealConfig.translateYPx}px`,
         } as unknown) as EnrichedMarkdownTextProps['containerStyle'];
-    }, [revealConfig, styleBundle.containerStyle]);
+    }, [props.fillContainer, revealConfig, styleBundle.containerStyle]);
 
     return (
         <EnrichedMarkdownText
@@ -166,7 +172,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
             markdown={sanitizedMarkdown}
             markdownStyle={styleBundle.markdownStyle}
             containerStyle={containerStyle}
-            md4cFlags={ENRICHED_MARKDOWN_MD4C_FLAGS}
+            md4cFlags={md4cFlags}
             onLinkPress={handleLinkPress}
             selectable={props.selectable}
             allowTrailingMargin={false}
