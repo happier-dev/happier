@@ -1016,6 +1016,26 @@ export async function createSessionMessage(
         const existingHasObservationProvenance = existing.transcriptObservationProvenance != null;
         const incomingHasObservationProvenance = params.trustedTranscriptObservationProvenance !== undefined;
         if (existingHasObservationProvenance !== incomingHasObservationProvenance) {
+            // A current runner can rediscover a deterministic transcript row that a
+            // pre-provenance writer already committed without observation metadata.
+            // The local id remains the idempotency authority. Treat only recovered
+            // history as the already-committed legacy effect; do not rewrite its
+            // randomized encrypted content or let live observations cross this seam.
+            if (
+                !existingHasObservationProvenance
+                && isRecoveredHistoryTranscriptObservationProvenance(
+                    params.trustedTranscriptObservationProvenance,
+                )
+            ) {
+                return {
+                    ok: true,
+                    didWrite: false,
+                    didUpdate: false,
+                    badgeAttentionChanged: false,
+                    message: toSessionMessageWriteRow(existing),
+                    participantCursors: [],
+                };
+            }
             return { ok: false, error: "invalid-params" };
         }
         if (

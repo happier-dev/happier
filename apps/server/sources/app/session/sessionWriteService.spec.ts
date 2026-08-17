@@ -268,6 +268,84 @@ describe("sessionWriteService", () => {
             expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
+        it("accepts recovered history for an already-committed legacy localId without rewriting the legacy row", async () => {
+            const legacyRow = {
+                id: "m1",
+                seq: 4,
+                localId: "claude-jsonl:main:user:legacy-uuid",
+                sidechainId: null,
+                messageRole: "event",
+                content: { t: "encrypted", c: "legacy-ciphertext" },
+                transcriptObservationProvenance: null,
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            };
+            currentTx.sessionMessage.findUnique.mockResolvedValue(legacyRow);
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "fresh-randomized-ciphertext-for-the-same-message",
+                localId: "claude-jsonl:main:user:legacy-uuid",
+                messageRole: "event",
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 100 },
+                trustedTranscriptObservationProvenance: {
+                    kind: "non_dependent",
+                    source: "history",
+                },
+            });
+
+            const { transcriptObservationProvenance: _legacyProvenance, ...expectedLegacyMessage } = legacyRow;
+            expect(res).toEqual({
+                ok: true,
+                didWrite: false,
+                didUpdate: false,
+                badgeAttentionChanged: false,
+                message: expectedLegacyMessage,
+                participantCursors: [],
+            });
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+            expect(markAccountChanged).not.toHaveBeenCalled();
+        });
+
+        it("still rejects non-history provenance over an already-committed legacy localId", async () => {
+            currentTx.sessionMessage.findUnique.mockResolvedValue({
+                id: "m1",
+                seq: 4,
+                localId: "provider-local-id",
+                sidechainId: null,
+                messageRole: "agent",
+                content: { t: "encrypted", c: "legacy-ciphertext" },
+                transcriptObservationProvenance: null,
+                sourceCreatedAt: null,
+                sourceUpdatedAt: null,
+                createdAt: new Date(1),
+                updatedAt: new Date(2),
+            });
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
+            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+
+            const res = await createSessionMessage({
+                actorUserId: "u1",
+                sessionId: "s1",
+                ciphertext: "incoming-ciphertext",
+                localId: "provider-local-id",
+                messageRole: "agent",
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 100 },
+                trustedTranscriptObservationProvenance: {
+                    kind: "non_dependent",
+                    source: "external",
+                },
+            });
+
+            expect(res).toEqual({ ok: false, error: "invalid-params" });
+            expect(currentTx.sessionMessage.update).not.toHaveBeenCalled();
+        });
+
         it("persists a newer trusted source watermark for identical content and rejects a later stale overwrite", async () => {
             let stored = {
                 id: "m1",
