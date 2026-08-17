@@ -3,12 +3,17 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
   withWorkspaceBundleLockSync,
 } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
-export { withWorkspaceBundleLock, withWorkspaceBundleLockSync } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+export {
+  DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS,
+  withWorkspaceBundleLock,
+  withWorkspaceBundleLockSync,
+} from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 export function findRepoRoot(startDir) {
   let dir = resolve(String(startDir ?? process.cwd()));
@@ -50,13 +55,14 @@ export async function withOptionalCliSharedDepsBuildLock(fn, options = {}) {
   const explicitLockPath = String(options.lockPath ?? '').trim();
   const lockModulePath = String(options.lockModulePath ?? resolveWorkspaceBundleLockModulePath(repoRoot) ?? '').trim();
   if (explicitLockPath && (!lockModulePath || !existsSync(lockModulePath))) {
-    const lockTimeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? 240_000;
+    const lockTimeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
     return await withWorkspaceBundleLock(fn, {
       lockPath: explicitLockPath,
       heldLockValue: resolveInheritedWorkspaceBundleLockValue(options),
       timeoutMs: lockTimeoutMs,
       pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
       staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? lockTimeoutMs,
+      tryResolveWaiter: options.tryResolveWaiter,
     });
   }
   if (!lockModulePath || !existsSync(lockModulePath)) {
@@ -68,13 +74,14 @@ export async function withOptionalCliSharedDepsBuildLock(fn, options = {}) {
     return await fn();
   }
 
-  const lockTimeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? 240_000;
+  const lockTimeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
   return await mod.withWorkspaceBundleLock(fn, {
     lockPath: String(options.lockPath ?? resolveCliSharedDepsBuildLockPath(repoRoot)),
     heldLockValue: resolveInheritedWorkspaceBundleLockValue(options),
     timeoutMs: lockTimeoutMs,
     pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
     staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? lockTimeoutMs,
+    tryResolveWaiter: options.tryResolveWaiter,
   });
 }
 
@@ -90,7 +97,7 @@ export function withOptionalCliSharedDepsBuildLockSync(fn, options = {}) {
   }
 
   const lockPath = explicitLockPath || resolveCliSharedDepsBuildLockPath(repoRoot);
-  const timeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? 240_000;
+  const timeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? DEFAULT_WORKSPACE_BUNDLE_LOCK_TIMEOUT_MS;
   return withWorkspaceBundleLockSync(fn, {
     lockPath,
     heldLockValue: resolveInheritedWorkspaceBundleLockValue(options),

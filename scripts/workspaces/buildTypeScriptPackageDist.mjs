@@ -1,8 +1,20 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { chmod, mkdir, rename, rm, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import {
+  chmod,
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  stat,
+} from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
@@ -19,6 +31,8 @@ import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLoc
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STAGED_OUTPUT_SCRIPT_FLAG = '--happier-staged-output-script';
+const PERSISTENT_COMPILER_WORK_DIR_NAME = '.happier';
+const PERSISTENT_COMPILER_WORK_SUBDIR = 'typescript-package-build';
 
 function rand() {
   return Math.random().toString(16).slice(2);
@@ -205,6 +219,172 @@ function withOutputCompilerArgs(args, outputDir, tsBuildInfoFile) {
   ];
 }
 
+function resolveCompilerProjectPath(args, packageDir) {
+  const values = Array.isArray(args) ? args : [];
+  for (let index = 0; index < values.length; index += 1) {
+    const value = String(values[index] ?? '');
+    if (value === '-p' || value === '--project') {
+      const rawProjectPath = String(values[index + 1] ?? '').trim();
+      if (rawProjectPath) return resolve(packageDir, rawProjectPath);
+    }
+    if (value.startsWith('--project=')) {
+      const rawProjectPath = value.slice('--project='.length).trim();
+      if (rawProjectPath) return resolve(packageDir, rawProjectPath);
+    }
+  }
+  return join(packageDir, 'tsconfig.json');
+}
+
+function resolvePersistentCompilerWorkTree({ packageDir, compilerArgs, outputMode }) {
+  const projectPath = resolveCompilerProjectPath(compilerArgs, packageDir);
+  const cacheKey = createHash('sha256')
+    .update(JSON.stringify({
+      project: relative(packageDir, projectPath).replaceAll('\\', '/'),
+      compilerArgs: compilerArgs.map((arg) => String(arg)),
+      outputMode,
+    }))
+    .digest('hex')
+    .slice(0, 20);
+  const workDir = join(
+    packageDir,
+    PERSISTENT_COMPILER_WORK_DIR_NAME,
+    PERSISTENT_COMPILER_WORK_SUBDIR,
+    cacheKey,
+  );
+  return {
+    workDir,
+    outputDir: join(workDir, 'dist'),
+    tsBuildInfoFile: join(workDir, '.tsbuildinfo'),
+    projectPath,
+  };
+}
+
+function isDescendantPath(parentPath, candidatePath) {
+  const relation = relative(parentPath, candidatePath);
+  return relation === '' || (
+    relation !== '..'
+    && !relation.startsWith(`..${sep}`)
+    && !isAbsolute(relation)
+  );
+}
+
+function isTypeScriptSourcePath(path) {
+  return /\.(?:cts|mts|tsx?|json)$/u.test(path);
+}
+
+function compilerCacheNeedsReset({ packageDir, projectPath, compilerOutputDir, tsBuildInfoFile }) {
+  if (!existsSync(tsBuildInfoFile)) {
+    return existsSync(compilerOutputDir);
+  }
+  if (!existsSync(compilerOutputDir)) return true;
+
+  try {
+    const projectStat = statSync(projectPath, { bigint: true });
+    const cacheStat = statSync(tsBuildInfoFile, { bigint: true });
+    const projectChangedAt = projectStat.ctimeNs > projectStat.mtimeNs
+      ? projectStat.ctimeNs
+      : projectStat.mtimeNs;
+    const cacheChangedAt = cacheStat.ctimeNs > cacheStat.mtimeNs
+      ? cacheStat.ctimeNs
+      : cacheStat.mtimeNs;
+    if (projectChangedAt > cacheChangedAt) return true;
+  } catch {
+    return true;
+  }
+
+  let buildInfo;
+  try {
+    buildInfo = JSON.parse(readFileSync(tsBuildInfoFile, 'utf8'));
+  } catch {
+    return true;
+  }
+  if (!Array.isArray(buildInfo?.fileNames)) return true;
+
+  const sourcePathBases = [
+    dirname(tsBuildInfoFile),
+    dirname(projectPath),
+    packageDir,
+  ];
+  for (const fileName of buildInfo.fileNames) {
+    if (typeof fileName !== 'string' || !isTypeScriptSourcePath(fileName)) continue;
+    const localCandidates = [...new Set(sourcePathBases
+      .map((basePath) => resolve(basePath, fileName))
+      .filter((candidatePath) => isDescendantPath(packageDir, candidatePath)))];
+    if (localCandidates.length > 0 && localCandidates.every((candidatePath) => !existsSync(candidatePath))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function preparePersistentCompilerWorkTree(compilerWorkTree, { packageDir }) {
+  if (compilerCacheNeedsReset({
+    packageDir,
+    projectPath: compilerWorkTree.projectPath,
+    compilerOutputDir: compilerWorkTree.outputDir,
+    tsBuildInfoFile: compilerWorkTree.tsBuildInfoFile,
+  })) {
+    await rm(compilerWorkTree.workDir, { recursive: true, force: true });
+  }
+  await mkdir(compilerWorkTree.outputDir, { recursive: true });
+}
+
+async function copyDirectoryContents(sourceDir, destinationDir) {
+  for (const entry of await readdir(sourceDir, { withFileTypes: true })) {
+    await cp(join(sourceDir, entry.name), join(destinationDir, entry.name), {
+      recursive: entry.isDirectory(),
+      force: true,
+    });
+  }
+}
+
+async function directoryTreesMatch(leftDir, rightDir) {
+  let leftEntries;
+  let rightEntries;
+  try {
+    [leftEntries, rightEntries] = await Promise.all([
+      readdir(leftDir, { withFileTypes: true }),
+      readdir(rightDir, { withFileTypes: true }),
+    ]);
+  } catch {
+    return false;
+  }
+
+  leftEntries.sort((left, right) => left.name.localeCompare(right.name));
+  rightEntries.sort((left, right) => left.name.localeCompare(right.name));
+  if (leftEntries.length !== rightEntries.length) return false;
+
+  for (let index = 0; index < leftEntries.length; index += 1) {
+    const leftEntry = leftEntries[index];
+    const rightEntry = rightEntries[index];
+    if (leftEntry.name !== rightEntry.name) return false;
+
+    const leftPath = join(leftDir, leftEntry.name);
+    const rightPath = join(rightDir, rightEntry.name);
+    const [leftInfo, rightInfo] = await Promise.all([lstat(leftPath), lstat(rightPath)]);
+    if ((leftInfo.mode & 0o777) !== (rightInfo.mode & 0o777)) return false;
+
+    if (leftInfo.isDirectory() && rightInfo.isDirectory()) {
+      if (!await directoryTreesMatch(leftPath, rightPath)) return false;
+      continue;
+    }
+    if (leftInfo.isFile() && rightInfo.isFile()) {
+      if (leftInfo.size !== rightInfo.size) return false;
+      const [leftContents, rightContents] = await Promise.all([readFile(leftPath), readFile(rightPath)]);
+      if (!leftContents.equals(rightContents)) return false;
+      continue;
+    }
+    if (leftInfo.isSymbolicLink() && rightInfo.isSymbolicLink()) {
+      const [leftTarget, rightTarget] = await Promise.all([readlink(leftPath), readlink(rightPath)]);
+      if (leftTarget !== rightTarget) return false;
+      continue;
+    }
+    return false;
+  }
+
+  return true;
+}
+
 export async function buildTypeScriptPackageDist({
   packageDir = process.cwd(),
   args = process.argv.slice(2),
@@ -228,7 +408,11 @@ export async function buildTypeScriptPackageDist({
   const buildId = `${Date.now()}.${process.pid}.${rand()}`;
   const stagedDistDir = resolve(explicitOutputDir || join(resolvedPackageDir, `.dist.build.${buildId}`));
   const backupDir = join(resolvedPackageDir, `.dist.backup.${buildId}`);
-  const tsBuildInfoFile = join(resolvedPackageDir, `.tsbuildinfo.build.${buildId}`);
+  const compilerWorkTree = resolvePersistentCompilerWorkTree({
+    packageDir: resolvedPackageDir,
+    compilerArgs: parsedArgs.compilerArgs,
+    outputMode: explicitOutputDir ? 'staged' : 'promoted',
+  });
   const commandEnv = { ...process.env, ...env };
 
   const runBuild = async (buildEnv) => {
@@ -236,33 +420,46 @@ export async function buildTypeScriptPackageDist({
     await mkdir(stagedDistDir, { recursive: true });
     await rm(backupDir, { recursive: true, force: true });
     try {
+      await preparePersistentCompilerWorkTree(compilerWorkTree, {
+        packageDir: resolvedPackageDir,
+      });
       const stagedBuildEnv = {
         ...buildEnv,
         HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: stagedDistDir,
       };
       const compilerArgs = withOutputCompilerArgs(
         parsedArgs.compilerArgs,
-        stagedDistDir,
-        tsBuildInfoFile,
+        compilerWorkTree.outputDir,
+        compilerWorkTree.tsBuildInfoFile,
       );
       const invocation = resolveTypeScriptCliInvocationImpl({
         repoRoot,
         workspaceDir: resolvedPackageDir,
         processExecPath: process.execPath,
       });
-      runChecked(
-        invocation.command,
-        [...(invocation.argsPrefix ?? []), ...compilerArgs],
-        {
-          cwd: resolvedPackageDir,
-          env: stagedBuildEnv,
-          stdio,
-          ...(invocation.windowsVerbatimArguments
-            ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
-            : {}),
-        },
-        runCommandImpl,
-      );
+      try {
+        runChecked(
+          invocation.command,
+          [...(invocation.argsPrefix ?? []), ...compilerArgs],
+          {
+            cwd: resolvedPackageDir,
+            env: stagedBuildEnv,
+            stdio,
+            ...(invocation.windowsVerbatimArguments
+              ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
+              : {}),
+          },
+          runCommandImpl,
+        );
+      } catch (error) {
+        // A failed compiler can leave a syntactically valid but incomplete
+        // incremental tree. It is ignored state, so discard it without ever
+        // touching the published last-green dist.
+        await rm(compilerWorkTree.workDir, { recursive: true, force: true });
+        throw error;
+      }
+
+      await copyDirectoryContents(compilerWorkTree.outputDir, stagedDistDir);
 
       runStagedOutputScripts({
         packageDir: resolvedPackageDir,
@@ -275,17 +472,19 @@ export async function buildTypeScriptPackageDist({
 
       verifyStagedExportTargets({ packageDir: resolvedPackageDir, outputDir: stagedDistDir, packageJson });
       await verifyStagedRuntimeImportClosure({ packageDir: resolvedPackageDir, outputDir: stagedDistDir, packageJson });
+      await markBinTargetsExecutable({ packageDir: resolvedPackageDir, outputDir: stagedDistDir, packageJson });
 
       if (explicitOutputDir) {
-        await markBinTargetsExecutable({ packageDir: resolvedPackageDir, outputDir: stagedDistDir, packageJson });
         return { outputDir: stagedDistDir, promoted: false };
       }
 
+      if (await directoryTreesMatch(stagedDistDir, distDir)) {
+        return { outputDir: distDir, promoted: false };
+      }
+
       await replaceDistWithStagedBuild({ distDir, stagedDistDir, backupDir });
-      await markBinTargetsExecutable({ packageDir: resolvedPackageDir, outputDir: distDir, packageJson });
       return { outputDir: distDir, promoted: true };
     } finally {
-      await rm(tsBuildInfoFile, { force: true }).catch(() => {});
       if (!explicitOutputDir) {
         await rm(stagedDistDir, { recursive: true, force: true }).catch(() => {});
       }

@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -5,8 +6,17 @@ import {
   ensureWorkspacePackagesBuiltByName,
 } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import {
+  collectPackageBuildOutputTargets,
+  isPackageBuildDistOutputTarget,
+  resolvePackageBuildOutputTargetPath,
+  resolvePackageBuildOutputTargetMatches,
+} from '../../../scripts/workspaces/packageBuildOutputTargets.mjs';
+import {
   loadCliCommonWorkspacesModule,
 } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
+import {
+  resolveSourceDevSharedDepsStampPath,
+} from '../../../scripts/workspaces/sourceDevReadiness.mjs';
 import {
   syncBundledWorkspacePackages,
   vendorBundledPackageRuntimeDependenciesFallback,
@@ -26,7 +36,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI_BUNDLED_HOST_APPS = ['cli'];
 const PLUGINS_WORKSPACE_PREFIX = 'plugins-';
-const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 4;
+const SOURCE_DEV_SHARED_DEPS_STAMP_VERSION = 5;
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_PROGRESS';
 const SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_MS';
 const SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_MS';
@@ -34,6 +44,8 @@ const SOURCE_DEV_SHARED_DEPS_WORKSPACES_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WO
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_VALUE = 'json-v1';
 const SOURCE_DEV_SHARED_DEPS_PROGRESS_PREFIX = '[happier-source-dev-shared-deps-progress] ';
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH = 'dist/happier-plugin-ui/ui-artifacts.json';
+const BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH = '.happier-plugin/plugin.json';
+const BUNDLED_PLUGIN_GENERATOR_RELATIVE_PATH = 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts';
 
 function resolveRepoRootOption(repoRootArg) {
   return typeof repoRootArg === 'string' && repoRootArg.trim() ? repoRootArg : findRepoRoot(__dirname);
@@ -126,6 +138,122 @@ export async function resolveCliCommonWorkspacesHelpersAfterBuild(options = {}) 
     },
   );
   return loadedModule?.helpers ?? loadedModule;
+}
+
+export async function runCanonicalBundledPluginArtifactPublisher({
+  repoRoot,
+  workspaceNames = [],
+  env = process.env,
+  quiet = false,
+}) {
+  const generatorPath = resolve(repoRoot, BUNDLED_PLUGIN_GENERATOR_RELATIVE_PATH);
+  if (!existsSync(generatorPath)) {
+    throw new Error(`Canonical bundled plugin artifact publisher is missing: ${generatorPath}`);
+  }
+
+  const command = process.execPath;
+  const args = [
+    resolve(repoRoot, 'apps', 'cli', 'scripts', 'withNodeHeapLimit.mjs'),
+    process.execPath,
+    '--experimental-strip-types',
+    generatorPath,
+    '--root',
+    repoRoot,
+    '--mode',
+    'write',
+    ...workspaceNames.flatMap((workspaceName) => ['--workspace', workspaceName]),
+  ];
+  await new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      env,
+      stdio: quiet ? 'ignore' : 'inherit',
+    });
+    child.once('error', reject);
+    child.once('close', (status, signal) => {
+      if (status === 0 && signal === null) {
+        resolvePromise();
+        return;
+      }
+
+      const error = new Error(`Command failed: ${command} ${args.join(' ')}`);
+      error.status = status;
+      error.signal = signal;
+      error.output = [null, null, null];
+      error.pid = child.pid;
+      error.stdout = null;
+      error.stderr = null;
+      reject(error);
+    });
+  });
+  return true;
+}
+
+function resolveSelectedBundledPluginWorkspaceNames({ repoRoot, workspaceNames }) {
+  const bundledPluginWorkspaceNames = new Set(resolveCliBundledWorkspacePackageNames({
+    repoRoot: resolveRepoRootOption(repoRoot),
+  }).filter((workspaceName) => workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX)));
+  return normalizeSourceDevSharedDepsWorkspaceNames(workspaceNames).filter(
+    (workspaceName) => bundledPluginWorkspaceNames.has(workspaceName),
+  );
+}
+
+async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}) {
+  const pluginWorkspaceNames = resolveSelectedBundledPluginWorkspaceNames({
+    repoRoot: opts.repoRoot,
+    workspaceNames: opts.pluginWorkspaceNames ?? opts.workspaceNames,
+  });
+  if (pluginWorkspaceNames.length === 0) return false;
+
+  const repoRoot = resolveRepoRootOption(opts.repoRoot);
+  const publish = opts.publishBundledPluginArtifactsImpl ?? runCanonicalBundledPluginArtifactPublisher;
+  const published = await publish({
+    repoRoot,
+    workspaceNames: pluginWorkspaceNames,
+    env: opts.env ?? process.env,
+    quiet: opts.quiet === true,
+  });
+  if (published === false) {
+    throw new Error('Canonical bundled plugin artifact publisher did not complete');
+  }
+  return true;
+}
+
+async function rebuildWorkspacesInvalidatedByBundledPluginPublication(opts = {}) {
+  const workspaceNames = normalizeSourceDevSharedDepsWorkspaceNames(opts.workspaceNames);
+  const staleBuilds = collectStaleSourceDevWorkspaceBuilds({
+    repoRoot: resolveRepoRootOption(opts.repoRoot),
+    workspaceNames,
+    includeUiArtifacts: opts.includeUiArtifacts !== false,
+  });
+  if (staleBuilds.length === 0) return [];
+
+  // Generated Protocol/Agents source can affect every later host workspace in
+  // the dependency order. Rebuild that bounded host closure, but never run the
+  // ordinary workspace compiler over plugin runtimes after their canonical
+  // staged artifacts have been published.
+  const workspacesToRebuild = workspaceNames.filter(
+    (workspaceName) => !workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX),
+  );
+  if (workspacesToRebuild.length === 0) return [];
+
+  const ensureWorkspacePackagesBuilt =
+    opts.ensureWorkspacePackagesBuiltByNameImpl ?? ensureWorkspacePackagesBuiltByName;
+  const resolvedRepoRoot = resolveRepoRootOption(opts.repoRoot);
+  const buildResult = await ensureWorkspacePackagesBuilt(
+    resolvedRepoRoot,
+    workspacesToRebuild.map((workspaceName) => `@happier-dev/${workspaceName}`),
+    {
+      quiet: opts.quiet === true,
+      env: opts.env ?? process.env,
+      // Re-check under each package lock so a concurrent canonical publisher can satisfy this
+      // generated-source repair without a duplicate compilation.
+      force: false,
+      includeDevDependencies: opts.includeDevDependencies === true,
+      timeoutMs: opts.timeoutMs,
+    },
+  );
+  return normalizeSourceDevSharedDepsWorkspaceNames(buildResult?.built);
 }
 
 export function resolveBundledWorkspacePackageDir({ repoRoot, workspaceName }) {
@@ -304,6 +432,9 @@ export function syncBundledWorkspaceDist(opts = {}) {
     hostApps: Array.isArray(opts.bundledHostApps) && opts.bundledHostApps.length > 0 ? opts.bundledHostApps : CLI_BUNDLED_HOST_APPS,
     ...(workspaceNames.length > 0 ? { packages: workspaceNames } : {}),
     replaceExisting: opts.replaceExisting,
+    // This path publishes the current workspace build into CLI node_modules. Reconcile the
+    // mounted package exactly once its complete staged tree is available.
+    pruneStale: true,
     syncId: opts.syncId,
     staleSwapDirAgeMs: opts.staleSwapDirAgeMs,
     nowMs: opts.nowMs,
@@ -315,25 +446,6 @@ export function syncBundledWorkspaceDist(opts = {}) {
     readFileSync: opts.readFileSync,
     writeFileSync: opts.writeFileSync,
     cliCommonWorkspacesModule: opts.cliCommonWorkspacesModule,
-  });
-}
-
-export function syncWorkspaceBundledDependenciesForBuild(opts = {}) {
-  const repoRoot = resolveRepoRootOption(opts.repoRoot);
-  const workspaceName = normalizeSourceDevSharedDepsWorkspaceName(opts.workspaceName);
-  if (!workspaceName) return;
-  const hostPackageDir = resolveBundledWorkspacePackageDir({ repoRoot, workspaceName });
-  syncBundledWorkspacePackages({
-    repoRoot,
-    hostPackageDirs: [hostPackageDir],
-    replaceExisting: true,
-    syncId: opts.syncId,
-    existsSync: opts.existsSync,
-    cpSync: opts.cpSync,
-    mkdirSync: opts.mkdirSync,
-    rmSync: opts.rmSync,
-    readFileSync: opts.readFileSync,
-    writeFileSync: opts.writeFileSync,
   });
 }
 
@@ -456,7 +568,7 @@ export function readSourceDevSharedDepsWorkspaceNamesFromArgv(argv = process.arg
 function resolveSourceDevWorkspaceNames({
   repoRoot,
   workspaceNames,
-  includeDevDependencies = true,
+  includeDevDependencies = false,
   exists = existsSync,
   readFile = readFileSync,
 } = {}) {
@@ -488,6 +600,15 @@ function readStatsSignature(path, { exists = existsSync, stat = statSync } = {})
       size: Number(stats.size ?? 0),
       mtimeMs: Number(stats.mtimeMs ?? 0),
     };
+  } catch {
+    return { exists: false };
+  }
+}
+
+function readSmallFileSignature(path, { exists = existsSync, readFile = readFileSync } = {}) {
+  if (!exists(path)) return { exists: false };
+  try {
+    return { exists: true, contents: String(readFile(path, 'utf8')) };
   } catch {
     return { exists: false };
   }
@@ -601,21 +722,6 @@ function readOldestExistingPathMtimeMs(paths, { exists = existsSync, stat = stat
   return Number.isFinite(oldestMtimeMs) ? oldestMtimeMs : 0;
 }
 
-function collectPackageJsonDistTargets(value, result) {
-  if (typeof value === 'string') {
-    if (value.startsWith('./dist/')) {
-      result.add(value.slice(2));
-    }
-    return;
-  }
-  if (!value || typeof value !== 'object') return;
-  if (Array.isArray(value)) {
-    for (const item of value) collectPackageJsonDistTargets(item, result);
-    return;
-  }
-  for (const nested of Object.values(value)) collectPackageJsonDistTargets(nested, result);
-}
-
 function resolveWorkspaceExpectedOutputPaths({
   packageDir,
   includeUiArtifacts = true,
@@ -624,10 +730,23 @@ function resolveWorkspaceExpectedOutputPaths({
   const outputPaths = new Set();
   try {
     const raw = readJsonFile(resolve(packageDir, 'package.json'), readFile);
-    collectPackageJsonDistTargets(raw?.main, outputPaths);
-    collectPackageJsonDistTargets(raw?.module, outputPaths);
-    collectPackageJsonDistTargets(raw?.types, outputPaths);
-    collectPackageJsonDistTargets(raw?.exports, outputPaths);
+    for (const target of collectPackageBuildOutputTargets(raw).filter(isPackageBuildDistOutputTarget)) {
+      const matches = resolvePackageBuildOutputTargetMatches({
+        packageDir,
+        outputDir: resolve(packageDir, 'dist'),
+        target,
+      });
+      for (const match of matches) {
+        outputPaths.add(match);
+      }
+      if (matches.length === 0) {
+        outputPaths.add(resolvePackageBuildOutputTargetPath({
+          packageDir,
+          outputDir: resolve(packageDir, 'dist'),
+          target,
+        }));
+      }
+    }
     if (
       includeUiArtifacts
       && typeof raw?.scripts?.['build:ui'] === 'string'
@@ -717,7 +836,7 @@ export function computeSourceDevSharedDepsSignature(opts = {}) {
   const workspaceNames = resolveSourceDevWorkspaceNames({
     repoRoot,
     workspaceNames: opts.workspaceNames,
-    includeDevDependencies: opts.includeDevDependencies !== false,
+    includeDevDependencies: opts.includeDevDependencies === true,
     exists,
     readFile,
   });
@@ -732,14 +851,32 @@ export function computeSourceDevSharedDepsSignature(opts = {}) {
         source: readRuntimeSourceTreeSignature(resolve(packageDir, 'src'), { exists, readDir, stat }),
         tsconfig: readStatsSignature(resolve(packageDir, 'tsconfig.json'), { exists, stat }),
         packageJson: readStatsSignature(resolve(packageDir, 'package.json'), { exists, stat }),
+        pluginManifest: readSmallFileSignature(
+          resolve(packageDir, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH),
+          { exists, readFile },
+        ),
         dist: readRuntimeDistTreeSignature(resolve(packageDir, 'dist'), { exists, readDir, stat }),
       };
     }),
   };
 }
 
-function resolveSourceDevSharedDepsStampPath(repoRoot) {
-  return resolve(repoRoot, '.project', 'tmp', 'cli-source-dev-shared-deps-sync.json');
+function createSourceDevBuildInputSignature(signature) {
+  return {
+    version: signature?.version,
+    workspaceNames: signature?.workspaceNames,
+    packages: (signature?.packages ?? []).map((pkg) => ({
+      workspaceName: pkg.workspaceName,
+      source: pkg.source,
+      tsconfig: pkg.tsconfig,
+      packageJson: pkg.packageJson,
+    })),
+  };
+}
+
+function sourceDevBuildInputsEqual(left, right) {
+  return JSON.stringify(createSourceDevBuildInputSignature(left))
+    === JSON.stringify(createSourceDevBuildInputSignature(right));
 }
 
 function readSourceDevSharedDepsStamp(stampPath, readFile = readFileSync) {
@@ -887,48 +1024,62 @@ function treeEntryShapesEqual(leftTree, rightTree) {
   return JSON.stringify(collectTreeEntryShape(leftTree)) === JSON.stringify(collectTreeEntryShape(rightTree));
 }
 
-function pruneTreeEntriesMissingFromSource({ srcDir, destDir, exists, readDir, rm }) {
-  if (!exists(srcDir) || !exists(destDir)) return;
+function treeContainsRecordedShape(recordedTree, currentTree) {
+  if (recordedTree?.exists !== true) return true;
+  if (currentTree?.exists !== true) return false;
 
-  let destEntries;
-  try {
-    destEntries = readDir(destDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const destEntry of destEntries) {
-    const srcPath = resolve(srcDir, destEntry.name);
-    const destPath = resolve(destDir, destEntry.name);
-    if (!exists(srcPath)) {
-      rm(destPath, { recursive: true, force: true });
-      continue;
-    }
-    if (destEntry.isDirectory()) {
-      pruneTreeEntriesMissingFromSource({ srcDir: srcPath, destDir: destPath, exists, readDir, rm });
-    }
-  }
+  const currentEntries = new Map(
+    collectTreeEntryShape(currentTree).map((entry) => [String(entry[0]), entry]),
+  );
+  return collectTreeEntryShape(recordedTree).every((recordedEntry) => {
+    const currentEntry = currentEntries.get(String(recordedEntry[0]));
+    if (!currentEntry || currentEntry[1] !== recordedEntry[1]) return false;
+    if (recordedEntry[1] !== 'file' && recordedEntry[1] !== 'other') return true;
+    const recordedSize = Number(recordedEntry[2]);
+    const currentSize = Number(currentEntry[2]);
+    return recordedSize > 0 ? currentSize > 0 : currentSize === 0;
+  });
 }
 
-function pruneSourceDevBundledDistExtras({
+function sourceDevWorkspacePackageOutputExists({
+  repoRoot,
+  pkg,
+  exists = existsSync,
+  readFile = readFileSync,
+  readDir = readdirSync,
+  stat = statSync,
+}) {
+  const workspaceName = String(pkg?.workspaceName ?? '').trim();
+  if (!workspaceName) return false;
+  const packageDir = resolveBundledWorkspacePackageDir({ repoRoot, workspaceName });
+  if (!packageDir || !exists(resolve(packageDir, 'package.json'))) return false;
+
+  const declaredOutputPaths = resolveWorkspaceExpectedOutputPaths({ packageDir, readFile });
+  if (!declaredOutputPaths.every((candidatePath) => exists(candidatePath))) return false;
+  if (pkg.dist?.exists !== true) return true;
+
+  return treeContainsRecordedShape(
+    pkg.dist,
+    readRuntimeDistTreeSignature(resolve(packageDir, 'dist'), { exists, readDir, stat }),
+  );
+}
+
+function sourceDevWorkspaceOutputsContainRecordedPublication({
   repoRoot,
   signature,
-  workspaceNames,
   exists = existsSync,
+  readFile = readFileSync,
   readDir = readdirSync,
-  rm = rmSync,
+  stat = statSync,
 }) {
-  const selectedWorkspaceNames = workspaceNames ? new Set(workspaceNames) : null;
-  for (const pkg of signature.packages ?? []) {
-    if (pkg.dist?.exists !== true) continue;
-    const workspaceName = String(pkg.workspaceName ?? '').trim();
-    if (!workspaceName) continue;
-    if (selectedWorkspaceNames && !selectedWorkspaceNames.has(workspaceName)) continue;
-    const packageDir = resolveBundledWorkspacePackageDir({ repoRoot, workspaceName });
-    const srcDist = resolve(packageDir, 'dist');
-    const destDist = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', workspaceName, 'dist');
-    pruneTreeEntriesMissingFromSource({ srcDir: srcDist, destDir: destDist, exists, readDir, rm });
-  }
+  return (signature?.packages ?? []).every((pkg) => sourceDevWorkspacePackageOutputExists({
+    repoRoot,
+    pkg,
+    exists,
+    readFile,
+    readDir,
+    stat,
+  }));
 }
 
 function sourceDevSharedDepsPackageOutputExists({
@@ -948,6 +1099,18 @@ function sourceDevSharedDepsPackageOutputExists({
     readFile,
   });
   if (!declaredOutputPaths.every((candidatePath) => exists(candidatePath))) return false;
+  if (pkg.pluginManifest?.exists === true) {
+    const destPluginManifestPath = resolve(
+      destPackageDir,
+      BUNDLED_PLUGIN_MANIFEST_ARTIFACT_RELATIVE_PATH,
+    );
+    if (!exists(destPluginManifestPath)) return false;
+    try {
+      if (String(readFile(destPluginManifestPath, 'utf8')) !== pkg.pluginManifest.contents) return false;
+    } catch {
+      return false;
+    }
+  }
   if (pkg.dist?.exists === true) {
     const destDist = resolve(destPackageDir, 'dist');
     if (!exists(destDist)) return false;
@@ -1128,9 +1291,13 @@ export function inspectSourceDevSharedDepsForSourceDev(opts = {}) {
   const readDir = opts.readdirSync ?? readdirSync;
   const stat = opts.statSync ?? statSync;
   const includeRuntimeDependencies = opts.includeRuntimeDependencies !== false;
-  const workspaceNames = resolveSourceDevWorkspaceNames({
+  let workspaceNames = resolveSourceDevWorkspaceNames({
     repoRoot,
     workspaceNames: opts.workspaceNames,
+    // Source-dev readiness tracks the runtime closure. A plugin's test-only
+    // workspace dependencies are neither inputs to its shipped artifact nor
+    // inputs to coherent artifact publication.
+    includeDevDependencies: false,
     exists,
     readFile,
   });
@@ -1158,6 +1325,65 @@ export function inspectSourceDevSharedDepsForSourceDev(opts = {}) {
     : { current: false, reason: 'not-current' };
 }
 
+export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
+  const repoRoot = resolveRepoRootOption(opts.repoRoot);
+  const exists = opts.existsSync ?? existsSync;
+  const readFile = opts.readFileSync ?? readFileSync;
+  const readDir = opts.readdirSync ?? readdirSync;
+  const stat = opts.statSync ?? statSync;
+  let workspaceNames = resolveSourceDevWorkspaceNames({
+    repoRoot,
+    workspaceNames: opts.workspaceNames,
+    // Targeted source-dev work must not widen into a plugin's test-only
+    // workspace graph before the canonical package build owner sees it.
+    includeDevDependencies: false,
+    exists,
+    readFile,
+  });
+
+  const stampPath = opts.stampPath ?? resolveSourceDevSharedDepsStampPath(repoRoot);
+  const stamp = readSourceDevSharedDepsStamp(stampPath, readFile);
+  if (
+    stamp?.version !== SOURCE_DEV_SHARED_DEPS_STAMP_VERSION
+    || !stamp.entries
+    || typeof stamp.entries !== 'object'
+    || Array.isArray(stamp.entries)
+  ) {
+    return { usable: false, reason: 'readiness-unavailable' };
+  }
+
+  const requiredWorkspaceNames = new Set(workspaceNames.map((workspaceName) => String(workspaceName)));
+  const candidates = Object.values(stamp.entries)
+    .filter((entry) => {
+      const signatureWorkspaceNames = new Set(
+        (entry?.signature?.workspaceNames ?? []).map((workspaceName) => String(workspaceName)),
+      );
+      return [...requiredWorkspaceNames].every((workspaceName) => signatureWorkspaceNames.has(workspaceName));
+    })
+    .sort((left, right) => Number(right?.syncedAtMs ?? 0) - Number(left?.syncedAtMs ?? 0));
+
+  for (const entry of candidates) {
+    if (!sourceDevWorkspaceOutputsContainRecordedPublication({
+      repoRoot,
+      signature: entry.signature,
+      exists,
+      readFile,
+      readDir,
+      stat,
+    })) continue;
+    return {
+      usable: true,
+      reason: 'recorded-outputs-complete',
+      syncedAtMs: Number(entry.syncedAtMs ?? 0),
+    };
+  }
+
+  return {
+    usable: false,
+    reason: candidates.length > 0 ? 'recorded-outputs-incomplete' : 'readiness-unavailable',
+  };
+}
+
 export async function syncSharedDepsForSourceDev(opts = {}) {
   const repoRoot = resolveRepoRootOption(opts.repoRoot);
   const exists = opts.existsSync ?? existsSync;
@@ -1165,10 +1391,15 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const readFile = opts.readFileSync ?? readFileSync;
   const readDir = opts.readdirSync ?? readdirSync;
   const stat = opts.statSync ?? statSync;
-  const rm = opts.rmSync ?? rmSync;
   const writeFile = opts.writeFileSync ?? writeFileSync;
   const includeRuntimeDependencies = opts.includeRuntimeDependencies !== false;
-  const workspaceNames = resolveSourceDevWorkspaceNames({
+  // The canonical bundled-plugin generator is itself the sole publisher for
+  // one invocation. It still needs this owner to build and materialize the
+  // source runtime closure before loading authoring modules, but it must not
+  // recursively invoke its own publisher while holding that invocation's
+  // workspace lock.
+  const shouldPublishBundledPluginArtifacts = opts.publishBundledPluginArtifacts !== false;
+  let workspaceNames = resolveSourceDevWorkspaceNames({
     repoRoot,
     workspaceNames: opts.workspaceNames,
     exists,
@@ -1183,8 +1414,9 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const computeSignature = () => computeSourceDevSharedDepsSignature({
     repoRoot,
     workspaceNames,
-    // This is already the complete closure selected above, not a fresh set of
-    // targeted source-dev seeds.
+    // This is the actual package dependency closure of the requested source
+    // target. It intentionally does not expand one plugin into every bundled
+    // plugin; global projection coherence is validated from final artifacts.
     includeDevDependencies: false,
     existsSync: exists,
     readFileSync: readFile,
@@ -1200,6 +1432,30 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     readDir,
     stat,
   });
+  resolvedLockOptions.tryResolveWaiter = async () => {
+    const waitSignature = computeSignature();
+    if (!isSourceDevSharedDepsCurrent({
+      repoRoot,
+      stampPath,
+      signature: waitSignature,
+      exists,
+      readFile,
+      readDir,
+      stat,
+      includeRuntimeDependencies,
+    })) {
+      return { resolved: false };
+    }
+    reportSourceDevSharedDepsProgress(reportProgress, {
+      stage: 'complete',
+      event: 'done',
+      reason: 'current-after-wait',
+    });
+    return {
+      resolved: true,
+      value: { synced: false, reason: 'current-after-wait' },
+    };
+  };
 
   reportSourceDevSharedDepsProgress(reportProgress, {
     stage: 'signature',
@@ -1227,7 +1483,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     event: 'waiting',
     lockTimeoutMs: resolvedLockOptions.timeoutMs,
   });
-  return await withLock(async () => {
+  return await withLock(async ({ heldLockValue } = {}) => {
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'workspace-lock',
       event: 'acquired',
@@ -1258,19 +1514,30 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       workspaceCount: workspaceNames.length,
     });
     const staleBuilds = collectStaleBuilds();
+    const workspaceBuildCandidates = staleBuilds;
+    // Generator check mode is an artifact verifier. It may refresh stale host
+    // dependencies, but rebuilding a plugin here would erase the immutable
+    // daemon bundle that the check is about to compare.
+    const workspaceBuilds = opts.preserveBundledPluginArtifacts === true
+      ? workspaceBuildCandidates.filter(({ workspaceName }) => !workspaceName.startsWith('plugins-'))
+      : workspaceBuildCandidates;
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'stale-scan',
       event: 'done-after-lock',
       staleWorkspaceCount: staleBuilds.length,
     });
+    const buildInputSignature = signature;
     const ensureWorkspacePackagesBuilt =
       opts.ensureWorkspacePackagesBuiltByNameImpl ?? ensureWorkspacePackagesBuiltByName;
-    const syncWorkspaceBuildDependencies =
-      opts.syncWorkspaceBundledDependenciesForBuildImpl ?? syncWorkspaceBundledDependenciesForBuild;
     const staleBuildByWorkspaceName = new Map(
       staleBuilds.map((staleBuild) => [staleBuild.workspaceName, staleBuild]),
     );
-    if (staleBuilds.length > 0) {
+    const syncBundledDist = opts.syncBundledWorkspaceDistImpl ?? syncBundledWorkspaceDist;
+    const syncBundledRuntimeDependencies =
+      opts.syncBundledWorkspaceRuntimeDependenciesImpl ?? syncBundledWorkspaceRuntimeDependencies;
+    const incrementallySyncedWorkspaceNames = new Set();
+    let rebuiltWorkspaceNames = [];
+    if (workspaceBuilds.length > 0) {
       let activeBuild = null;
       const describePackageBuild = ({ packageDir, packageName }) => {
         const workspaceName = packageName.replace(/^@happier-dev\//, '');
@@ -1280,34 +1547,20 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
         };
       };
       try {
-        await ensureWorkspacePackagesBuilt(
+        const buildResult = await ensureWorkspacePackagesBuilt(
           repoRoot,
-          staleBuilds.map((staleBuild) => `@happier-dev/${staleBuild.workspaceName}`),
+          workspaceBuilds.map((workspaceBuild) => `@happier-dev/${workspaceBuild.workspaceName}`),
           {
             quiet: opts.quiet !== false,
             env: opts.env ?? process.env,
-            force: true,
-            includeDevDependencies:
-              normalizeSourceDevSharedDepsWorkspaceNames(opts.workspaceNames).length > 0,
+            // This source-dev pass already selected the closure from a stale-output scan. Let
+            // the canonical package owner re-check after its per-package lock: if another
+            // publisher made the output current while we waited, reuse it instead of compiling
+            // the same generation again. Final packaged CLI publication retains its separate
+            // forced, fingerprint-bound build below.
+            force: false,
+            includeDevDependencies: false,
             timeoutMs: workspaceBuildTimeoutMs,
-            beforePackageBuild: ({ packageName }) => {
-              const dependencyWorkspaceName = packageName.replace(/^@happier-dev\//, '');
-              reportSourceDevSharedDepsProgress(reportProgress, {
-                stage: 'workspace-build-dependencies',
-                event: 'start',
-                workspaceName: dependencyWorkspaceName,
-              });
-              syncWorkspaceBuildDependencies({
-                repoRoot,
-                workspaceName: dependencyWorkspaceName,
-                syncId: `source-dev-build.${process.pid}`,
-              });
-              reportSourceDevSharedDepsProgress(reportProgress, {
-                stage: 'workspace-build-dependencies',
-                event: 'done',
-                workspaceName: dependencyWorkspaceName,
-              });
-            },
             onPackageBuildStart: (context) => {
               activeBuild = describePackageBuild(context);
               reportSourceDevSharedDepsProgress(reportProgress, {
@@ -1317,8 +1570,29 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
                 tsconfigPath: activeBuild.tsconfigPath,
               });
             },
-            onPackageBuildDone: (context) => {
+            onPackageBuildDone: async (context) => {
               const completedBuild = describePackageBuild(context);
+              // Non-plugin package outputs are independently coherent once the
+              // canonical package owner has published them. Make that progress
+              // available to the live CLI immediately instead of withholding it
+              // behind every later workspace in this source-dev batch. Bundled
+              // plugins remain grouped with their generated projections below.
+              if (!completedBuild.workspaceName.startsWith('plugins-')) {
+                const completedWorkspaceNames = [completedBuild.workspaceName];
+                syncBundledDist({
+                  repoRoot,
+                  replaceExisting: false,
+                  syncId: `source-dev-completed.${process.pid}.${completedBuild.workspaceName}`,
+                  workspaceNames: completedWorkspaceNames,
+                });
+                if (includeRuntimeDependencies) {
+                  syncBundledRuntimeDependencies({
+                    repoRoot,
+                    workspaceNames: completedWorkspaceNames,
+                  });
+                }
+                incrementallySyncedWorkspaceNames.add(completedBuild.workspaceName);
+              }
               reportSourceDevSharedDepsProgress(reportProgress, {
                 stage: 'workspace-build',
                 event: 'done',
@@ -1329,8 +1603,9 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
             },
           },
         );
+        rebuiltWorkspaceNames = normalizeSourceDevSharedDepsWorkspaceNames(buildResult?.built);
       } catch (error) {
-        const failedBuild = activeBuild ?? staleBuilds[0];
+        const failedBuild = activeBuild ?? workspaceBuilds[0];
         reportSourceDevSharedDepsProgress(reportProgress, {
           stage: 'workspace-build',
           event: 'failed',
@@ -1340,7 +1615,75 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
         throw error;
       }
     }
-    if (staleBuilds.length > 0) {
+
+    if (workspaceBuilds.length > 0) {
+      const signatureAfterWorkspaceBuild = computeSignature();
+      if (!sourceDevBuildInputsEqual(buildInputSignature, signatureAfterWorkspaceBuild)) {
+        reportSourceDevSharedDepsProgress(reportProgress, {
+          stage: 'complete',
+          event: 'done',
+          stamped: false,
+          reason: 'source-changed-during-build',
+        });
+        return {
+          synced: true,
+          stamped: false,
+          reason: 'source-changed-during-build',
+        };
+      }
+    }
+    const rebuiltPluginWorkspaceNames = resolveSelectedBundledPluginWorkspaceNames({
+      repoRoot,
+      workspaceNames: rebuiltWorkspaceNames,
+    });
+    let publishedBundledPluginArtifacts = false;
+    let rebuiltGeneratedSourceWorkspaces = [];
+    if (includeRuntimeDependencies && shouldPublishBundledPluginArtifacts) {
+      reportSourceDevSharedDepsProgress(reportProgress, {
+        stage: 'bundled-plugin-publish',
+        event: 'start',
+      });
+      publishedBundledPluginArtifacts = await publishBundledPluginArtifactsAfterWorkspaceBuild({
+        repoRoot,
+        // E2 reports the actual rebuilt closure after its package locks and
+        // post-lock currentness checks. Publishing that result avoids treating
+        // a requested plugin as changed when another owner already made it
+        // current while we waited.
+        pluginWorkspaceNames: rebuiltPluginWorkspaceNames,
+        syncId: `source-dev-publish.${process.pid}`,
+        syncBundledWorkspaceDistImpl: opts.syncBundledWorkspaceDistImpl,
+        env: createWorkspaceChildBuildEnv({
+          env: opts.env ?? process.env,
+          heldLockValue,
+        }),
+        quiet: opts.quiet === true,
+        publishBundledPluginArtifactsImpl: opts.publishBundledPluginArtifactsImpl,
+      });
+      if (publishedBundledPluginArtifacts) {
+        rebuiltGeneratedSourceWorkspaces = await rebuildWorkspacesInvalidatedByBundledPluginPublication({
+          repoRoot,
+          workspaceNames,
+          includeUiArtifacts: includeRuntimeDependencies,
+          env: opts.env ?? process.env,
+          quiet: opts.quiet === true,
+          includeDevDependencies: false,
+          timeoutMs: workspaceBuildTimeoutMs,
+          syncId: `source-dev-generated.${process.pid}`,
+          ensureWorkspacePackagesBuiltByNameImpl: ensureWorkspacePackagesBuilt,
+        });
+        reportSourceDevSharedDepsProgress(reportProgress, {
+          stage: 'bundled-plugin-generated-source-build',
+          event: 'done',
+          staleWorkspaceCount: rebuiltGeneratedSourceWorkspaces.length,
+        });
+      }
+      reportSourceDevSharedDepsProgress(reportProgress, {
+        stage: 'bundled-plugin-publish',
+        event: 'done',
+        published: publishedBundledPluginArtifacts,
+      });
+    }
+    if (staleBuilds.length > 0 || publishedBundledPluginArtifacts) {
       reportSourceDevSharedDepsProgress(reportProgress, {
         stage: 'signature',
         event: 'start-after-build',
@@ -1355,19 +1698,30 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     }
 
     const syncId = opts.syncId ?? `source-dev.${process.pid}`;
-    const syncBundledDist = opts.syncBundledWorkspaceDistImpl ?? syncBundledWorkspaceDist;
-    const syncBundledRuntimeDependencies =
-      opts.syncBundledWorkspaceRuntimeDependenciesImpl ?? syncBundledWorkspaceRuntimeDependencies;
     const syncCliDependencies = opts.syncCliRuntimeDependenciesImpl ?? syncCliRuntimeDependencies;
-    const workspaceNamesToSync = resolveSourceDevSharedDepsWorkspaceNamesToSync({
-      repoRoot,
-      stamp: readSourceDevSharedDepsStamp(stampPath, readFile),
-      signature,
-      exists,
-      readFile,
-      readDir,
-      stat,
-    });
+    const workspaceNamesToSyncBeforeIncrementalPublication = publishedBundledPluginArtifacts
+      ? normalizeSourceDevSharedDepsWorkspaceNames([
+        ...rebuiltWorkspaceNames,
+        ...rebuiltPluginWorkspaceNames,
+        ...rebuiltGeneratedSourceWorkspaces,
+      ])
+      : resolveSourceDevSharedDepsWorkspaceNamesToSync({
+        repoRoot,
+        stamp: readSourceDevSharedDepsStamp(stampPath, readFile),
+        signature,
+        exists,
+        readFile,
+        readDir,
+        stat,
+      });
+    const workspaceNamesNeedingPostBuildPublication = new Set([
+      ...rebuiltPluginWorkspaceNames,
+      ...rebuiltGeneratedSourceWorkspaces,
+    ]);
+    const workspaceNamesToSync = workspaceNamesToSyncBeforeIncrementalPublication.filter(
+      (workspaceName) => !incrementallySyncedWorkspaceNames.has(workspaceName)
+        || workspaceNamesNeedingPostBuildPublication.has(workspaceName),
+    );
 
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'bundled-dist-sync',
@@ -1387,22 +1741,6 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
       stage: 'bundled-dist-sync',
       event: 'done',
       syncId,
-    });
-    reportSourceDevSharedDepsProgress(reportProgress, {
-      stage: 'bundled-dist-prune',
-      event: 'start',
-    });
-    pruneSourceDevBundledDistExtras({
-      repoRoot,
-      signature,
-      workspaceNames: workspaceNamesToSync,
-      exists,
-      readDir,
-      rm,
-    });
-    reportSourceDevSharedDepsProgress(reportProgress, {
-      stage: 'bundled-dist-prune',
-      event: 'done',
     });
     reportSourceDevSharedDepsProgress(reportProgress, {
       stage: 'bundled-runtime-deps-sync',
@@ -1475,11 +1813,9 @@ export async function buildBundledWorkspaceDependenciesForCli(opts = {}) {
   const workspaceNames = Array.isArray(opts.workspaceNames)
     ? opts.workspaceNames
     : resolveCliBundledWorkspacePackageNames({ repoRoot: resolvedRepoRoot });
-  const syncWorkspaceBuildDependencies =
-    opts.syncWorkspaceBundledDependenciesForBuildImpl ?? syncWorkspaceBundledDependenciesForBuild;
   const ensureWorkspacePackagesBuilt =
     opts.ensureWorkspacePackagesBuiltByNameImpl ?? ensureWorkspacePackagesBuiltByName;
-  await ensureWorkspacePackagesBuilt(
+  const buildResult = await ensureWorkspacePackagesBuilt(
     resolvedRepoRoot,
     workspaceNames.map((workspaceName) => `@happier-dev/${workspaceName}`),
     {
@@ -1490,23 +1826,53 @@ export async function buildBundledWorkspaceDependenciesForCli(opts = {}) {
       // build. Timestamps can identify missing/likely-stale dev outputs, but
       // cannot prove derivation when stale bytes are recreated later.
       force: true,
-      beforePackageBuild: ({ packageName }) => {
-        // Some workspaces resolve internal dependencies through their bundled
-        // node_modules copy. Refresh that copy after dependency owners have
-        // published and immediately before this package builds.
-        syncWorkspaceBuildDependencies({
-          repoRoot: resolvedRepoRoot,
-          workspaceName: packageName.replace(/^@happier-dev\//, ''),
-          syncId: opts.syncId ?? `build-shared.${process.pid}`,
-        });
-      },
     },
   );
+  const rebuiltPluginWorkspaceNames = resolveSelectedBundledPluginWorkspaceNames({
+    repoRoot: resolvedRepoRoot,
+    workspaceNames: normalizeSourceDevSharedDepsWorkspaceNames(buildResult?.built),
+  });
+
+  const publishedBundledPluginArtifacts = await publishBundledPluginArtifactsAfterWorkspaceBuild({
+    repoRoot: resolvedRepoRoot,
+    workspaceNames: rebuiltPluginWorkspaceNames,
+    syncId: opts.syncId ?? `build-shared-publish.${process.pid}`,
+    syncBundledWorkspaceDistImpl: opts.syncBundledWorkspaceDistImpl,
+    env: opts.publishBundledPluginArtifactsEnv ?? opts.env ?? process.env,
+    quiet: opts.quiet === true,
+    publishBundledPluginArtifactsImpl: opts.publishBundledPluginArtifactsImpl,
+  });
+  if (publishedBundledPluginArtifacts) {
+    await rebuildWorkspacesInvalidatedByBundledPluginPublication({
+      repoRoot: resolvedRepoRoot,
+      workspaceNames,
+      includeUiArtifacts: true,
+      env: opts.env ?? process.env,
+      quiet: opts.quiet === true,
+      includeDevDependencies: false,
+      syncId: opts.syncId ?? `build-shared-generated.${process.pid}`,
+      ensureWorkspacePackagesBuiltByNameImpl: ensureWorkspacePackagesBuilt,
+    });
+  }
 
   return workspaceNames;
 }
 
-export function main(options = {}) {
+function isCurrentRuntimeClosureReusable(options = {}) {
+  const inspectCurrent = options.inspectSourceDevSharedDepsForSourceDevImpl
+    ?? inspectSourceDevSharedDepsForSourceDev;
+  try {
+    return inspectCurrent({
+      repoRoot: resolveRepoRootOption(options.repoRoot),
+      workspaceNames: options.workspaceNames,
+      includeRuntimeDependencies: true,
+    })?.current === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function main(options = {}) {
   if (options.mode === 'declarations' || options.mode === 'source-dev') {
     const syncSharedDeps = options.syncSharedDepsForSourceDevImpl ?? syncSharedDepsForSourceDev;
     return syncSharedDeps({
@@ -1516,10 +1882,31 @@ export function main(options = {}) {
     });
   }
 
+  if (isCurrentRuntimeClosureReusable(options)) return;
+
+  const lockOptions = {
+    ...options,
+    tryResolveWaiter: options.tryResolveWaiter ?? (async () => (
+      isCurrentRuntimeClosureReusable(options)
+        ? { resolved: true, value: undefined }
+        : { resolved: false }
+    )),
+  };
+
   return withBuildSharedDepsLock(async ({ heldLockValue } = {}) => {
+    // The closure may have become current before this caller acquired the
+    // repository-wide publication lock. Reuse that exact stamped generation
+    // instead of rebuilding the same workspace packages again.
+    if (isCurrentRuntimeClosureReusable(options)) return undefined;
+
+    const childBuildEnv = createWorkspaceChildBuildEnv({
+      env: options.env ?? process.env,
+      heldLockValue,
+    });
     const workspaceNames = await buildBundledWorkspaceDependenciesForCli({
       repoRoot,
       ...options,
+      publishBundledPluginArtifactsEnv: childBuildEnv,
     });
     // Import build helpers only after the forced artifact closure is current.
     // Otherwise a stale-but-newer cli-common dist could steer publication even
@@ -1527,10 +1914,7 @@ export function main(options = {}) {
     const cliCommonWorkspacesModule =
       await resolveCliCommonWorkspacesHelpersAfterBuild({
         ...options,
-        env: createWorkspaceChildBuildEnv({
-          env: options.env ?? process.env,
-          heldLockValue,
-        }),
+        env: childBuildEnv,
       });
 
     const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
@@ -1553,7 +1937,7 @@ export function main(options = {}) {
     // already superseded it. The Stack freshness owner activates that coherent
     // build and schedules the trailing generation; source children separately
     // require a current readiness stamp through their spawn preflight.
-  }, options);
+  }, lockOptions);
 }
 
 const invokedAsMain = (() => {

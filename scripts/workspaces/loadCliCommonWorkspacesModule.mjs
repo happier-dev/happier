@@ -92,7 +92,7 @@ export async function loadCliCommonWorkspacesModule(
   repoRoot,
   env = process.env,
   ensureWorkspacePackagesBuiltByName = ensureWorkspacePackagesBuiltByNameDefault,
-  { force = false, includeDevDependencies = false, quiet = false } = {},
+  { force = false, includeDevDependencies = false, publicationMode = '', quiet = false } = {},
 ) {
   const packageJsonPath = resolve(repoRoot, 'packages', 'cli-common', 'package.json');
   if (existsSync(packageJsonPath)) {
@@ -103,6 +103,7 @@ export async function loadCliCommonWorkspacesModule(
   await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/cli-common'], {
     quiet,
     env,
+    ...(publicationMode ? { publicationMode } : {}),
     ...(force ? { force: true } : {}),
     ...(includeDevDependencies ? {} : { includeDevDependencies: false }),
   });

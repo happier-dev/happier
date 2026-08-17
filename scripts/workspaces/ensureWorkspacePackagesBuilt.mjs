@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat, readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, utimes } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 import { buildIntoTempThenReplace } from '../../apps/stack/scripts/utils/fs/atomic_dir_swap.mjs';
@@ -18,6 +18,8 @@ import {
 } from './packageBuildOutputTargets.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR } from './workspaceChildBuildEnv.mjs';
+import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
+import { syncBundledWorkspacePackages } from './syncBundledWorkspacePackages.mjs';
 
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
   'dist/happier-plugin-ui/ui-artifacts.json';
@@ -93,14 +95,49 @@ function resolveExpectedPackageOutputTargetMatches({ packageDir, distDir, expect
   }));
 }
 
-function remapDistPathToDir(path, { packageDir, distDir }) {
+function remapPathToDirectory(path, { sourceDir, destinationDir }) {
   const absolutePath = resolve(path);
-  const realDistRoot = resolve(join(packageDir, 'dist'));
-  if (absolutePath === realDistRoot) return resolve(distDir);
-  if (absolutePath.startsWith(realDistRoot + sep)) {
-    return join(resolve(distDir), relative(realDistRoot, absolutePath));
+  const sourceRoot = resolve(sourceDir);
+  if (absolutePath === sourceRoot) return resolve(destinationDir);
+  if (absolutePath.startsWith(sourceRoot + sep)) {
+    return join(resolve(destinationDir), relative(sourceRoot, absolutePath));
   }
   return absolutePath;
+}
+
+function remapDistPathToDir(path, { packageDir, distDir }) {
+  return remapPathToDirectory(path, {
+    sourceDir: join(packageDir, 'dist'),
+    destinationDir: distDir,
+  });
+}
+
+async function refreshWorkspaceBuildOutputCurrentness(outputPaths) {
+  const timestamp = new Date();
+  for (const path of new Set(outputPaths)) {
+    let entryStat;
+    try {
+      entryStat = await lstat(path);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (entryStat.isSymbolicLink()) continue;
+    await utimes(path, timestamp, timestamp);
+  }
+}
+
+async function collectStagedWorkspaceBuildOutputPaths(path) {
+  const entryStat = await lstat(path);
+  if (!entryStat.isDirectory()) return [path];
+
+  const entries = await readdir(path);
+  if (entries.length === 0) return [path];
+  return (
+    await Promise.all(
+      entries.map((entry) => collectStagedWorkspaceBuildOutputPaths(join(path, entry))),
+    )
+  ).flat();
 }
 
 function isWorkspaceBuildConfigFile(name) {
@@ -158,8 +195,8 @@ async function readNewestWorkspaceBuildInputChangeTimeNs(packageDir) {
   return newest;
 }
 
-async function readOldestWorkspaceBuildOutputChangeTimeNs(outputPaths) {
-  let oldest = null;
+async function readWorkspaceBuildOutputChangeTimeNs(outputPaths, { newest = false } = {}) {
+  let selected = null;
   let complete = true;
   const visit = async (path) => {
     let entryStat;
@@ -185,21 +222,38 @@ async function readOldestWorkspaceBuildOutputChangeTimeNs(outputPaths) {
     const changedAtNs = entryStat.ctimeNs > entryStat.mtimeNs
       ? entryStat.ctimeNs
       : entryStat.mtimeNs;
-    oldest = oldest === null || changedAtNs < oldest ? changedAtNs : oldest;
+    const shouldSelect = selected === null
+      || (newest ? changedAtNs > selected : changedAtNs < selected);
+    if (shouldSelect) selected = changedAtNs;
   };
 
   for (const outputPath of outputPaths) await visit(outputPath);
-  return complete ? oldest : null;
+  return complete ? selected : null;
+}
+
+async function readOldestWorkspaceBuildOutputChangeTimeNs(outputPaths) {
+  return await readWorkspaceBuildOutputChangeTimeNs(outputPaths);
+}
+
+async function readNewestWorkspaceBuildOutputChangeTimeNs(outputPaths) {
+  return await readWorkspaceBuildOutputChangeTimeNs(outputPaths, { newest: true });
 }
 
 // Timestamp ordering is a reuse heuristic, not derivation proof. Artifact
 // publishers that must bind outputs to current inputs use this owner's `force`
 // admission instead of trusting recreated output timestamps.
-async function workspaceOutputsAppearCurrent(packageDir, expectedFiles) {
+async function workspaceOutputsAppearCurrent(packageDir, expectedTargetMatches) {
   const newestInput = await readNewestWorkspaceBuildInputChangeTimeNs(packageDir);
   if (newestInput === null) return true;
-  const oldestOutput = await readOldestWorkspaceBuildOutputChangeTimeNs(expectedFiles);
-  return oldestOutput !== null && oldestOutput >= newestInput;
+  // Live publication retains formerly referenced content-addressed wildcard
+  // targets. One current match is sufficient for that variable output family;
+  // exact targets still require every declared output to be current.
+  const outputTimes = await Promise.all(expectedTargetMatches.map(({ target, paths }) => (
+    String(target).includes('*')
+      ? readNewestWorkspaceBuildOutputChangeTimeNs(paths)
+      : readOldestWorkspaceBuildOutputChangeTimeNs(paths)
+  )));
+  return outputTimes.every((outputTime) => outputTime !== null && outputTime >= newestInput);
 }
 
 function parsePositiveEnvInt(envValue, fallback) {
@@ -328,7 +382,7 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
 
   const outputsAreAdmissible = missing.length === 0 && (
     admitPriorOutputsImmediately
-    || await workspaceOutputsAppearCurrent(packageDir, expectedFiles)
+    || await workspaceOutputsAppearCurrent(packageDir, expectedTargetMatches)
   );
   if (outputsAreAdmissible) {
     try {
@@ -418,24 +472,22 @@ async function runYarn(args, {
 
 async function runWorkspacePackageBuild(packageDir, { env, quiet, timeoutMs }) {
   try {
-    await runYarn(['--version'], {
+    await runYarn(['-s', 'build'], {
       cwd: packageDir,
       env,
-      input: 'y\n',
       quiet,
+      timeoutMs,
+      captureFailureDiagnostic: quiet,
     });
-  } catch {
-    throw new Error(
-      `[local] yarn is required for component at ${packageDir}. Install it via Corepack: \`corepack enable\``,
-    );
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error(
+        `[local] yarn is required for component at ${packageDir}. Install it via Corepack: \`corepack enable\``,
+        { cause: error },
+      );
+    }
+    throw error;
   }
-  await runYarn(['-s', 'build'], {
-    cwd: packageDir,
-    env,
-    quiet,
-    timeoutMs,
-    captureFailureDiagnostic: quiet,
-  });
 }
 
 const defaultWorkspaceBuildBoundary = {
@@ -444,6 +496,7 @@ const defaultWorkspaceBuildBoundary = {
 };
 
 async function ensureWorkspacePackageBuiltUnderLock({
+  monorepoRoot,
   packageDir,
   packageJsonPath,
   quiet,
@@ -455,6 +508,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
   waited,
   heldLockValue,
   workspaceBuildBoundary,
+  publicationMode,
 }) {
   const packageJson = await readJson(packageJsonPath);
   const state = await inspectWorkspacePackageOutput(packageDir, packageJson, {
@@ -484,6 +538,15 @@ async function ensureWorkspacePackageBuiltUnderLock({
       + '\nFix: add a build script, or ensure the package does not export dist/* paths.',
     );
   }
+
+  let stagedOutputPaths = [];
+  syncBundledWorkspacePackages({
+    repoRoot: monorepoRoot,
+    hostPackageDirs: [packageDir],
+    replaceExisting: true,
+    pruneStale: true,
+    syncId: `workspace-build.${process.pid}`,
+  });
 
   await onPackageBuildStart?.({
     packageDir,
@@ -517,6 +580,14 @@ async function ensureWorkspacePackageBuiltUnderLock({
         + '\nFix: ensure the package build honors HAPPIER_WORKSPACE_DIST_OUTPUT_DIR or generates the files referenced by package.json exports/main/types.',
       );
     }
+    stagedOutputPaths = (await Promise.all(stagedExpectedTargetMatches
+      .flatMap(({ paths }) => paths)
+      .map((path) => collectStagedWorkspaceBuildOutputPaths(path))))
+      .flat()
+      .map((path) => remapPathToDirectory(path, {
+        sourceDir: tmpDistDir,
+        destinationDir: distDir,
+      }));
 
     for (const entryPath of distEntrypoints) {
       await assertNoMissingLocalImportsWithRetry({
@@ -527,7 +598,16 @@ async function ensureWorkspacePackageBuiltUnderLock({
         onRetry: reportImportRetry,
       });
     }
+  }, {
+    preserveDestinationPath: publicationMode === 'live',
+    pruneStale: publicationMode === 'artifact',
   });
+  // Mounted live publication deliberately retains byte-identical files so
+  // active module resolvers keep their path/inode. Refresh only successfully
+  // staged declared outputs so this owner's existing timestamp admission still
+  // converges after a source change without introducing a build record or
+  // touching retained obsolete live targets.
+  await refreshWorkspaceBuildOutputCurrentness(stagedOutputPaths);
   await onPackageBuildDone?.({
     packageDir,
     packageName: String(packageJson?.name ?? '').trim(),
@@ -537,6 +617,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
 }
 
 async function ensureWorkspacePackageBuilt(packageDir, {
+  monorepoRoot,
   quiet,
   env: envIn,
   force,
@@ -545,6 +626,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   onPackageBuildDone,
   workspaceBuildBoundary,
   admitPriorOutputsImmediately,
+  publicationMode,
 }) {
   const packageJsonPath = join(packageDir, 'package.json');
   if (!existsSync(packageJsonPath)) return { built: false, reason: 'missing-package-json' };
@@ -581,6 +663,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
     };
   return await withCliDistBuildLock(
     ({ waited, heldLockValue }) => ensureWorkspacePackageBuiltUnderLock({
+      monorepoRoot,
       packageDir,
       packageJsonPath,
       quiet,
@@ -592,6 +675,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
       waited,
       heldLockValue,
       workspaceBuildBoundary,
+      publicationMode,
     }),
     { lockPath, env, onWait: reportLockWait, tryResolveWaiter },
   );
@@ -602,7 +686,6 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   env,
   forcePackageNames = [],
   timeoutMs,
-  beforePackageBuild,
   onPackageBuildStart,
   onPackageBuildDone,
   visitedNames = [],
@@ -610,44 +693,65 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
   packageDirsByName: packageDirsByNameIn = null,
   workspaceBuildBoundary,
   admitPriorOutputsImmediately,
+  publicationMode,
 }) {
   const built = [];
   const visited = new Set(visitedNames);
   const forced = new Set(forcePackageNames);
+  const changedClosures = new Set();
+  const closureBuildPromises = new Map();
   const packageDirsByName = packageDirsByNameIn
     ?? await collectWorkspacePackageDirsByName(monorepoRoot);
   const workspacePackageNames = new Set(packageDirsByName.keys());
 
-  const buildWorkspaceClosure = async (packageDir) => {
-    const packageJsonPath = join(packageDir, 'package.json');
-    if (!existsSync(packageJsonPath)) return;
+  const buildWorkspaceClosure = (packageDir, ancestors = new Set()) => {
+    const resolvedPackageDir = resolve(packageDir);
+    if (ancestors.has(resolvedPackageDir)) return Promise.resolve(false);
 
-    const packageJson = await readJson(packageJsonPath);
-    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
-    if (packageName && visited.has(packageName)) return;
-    if (packageName) visited.add(packageName);
+    const existing = closureBuildPromises.get(resolvedPackageDir);
+    if (existing) return existing;
 
-    for (const dependencyName of collectInternalWorkspaceDependencyNames(
-      packageJson,
-      packageName,
-      { includeDevDependencies, workspacePackageNames },
-    )) {
-      const dependencyDir = packageDirsByName.get(dependencyName);
-      if (dependencyDir) await buildWorkspaceClosure(dependencyDir);
-    }
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(resolvedPackageDir);
+    const buildPromise = (async () => {
+      const packageJsonPath = join(resolvedPackageDir, 'package.json');
+      if (!existsSync(packageJsonPath)) return false;
 
-    await beforePackageBuild?.({ packageDir, packageName });
-    const result = await ensureWorkspacePackageBuilt(packageDir, {
-      quiet,
-      env,
-      force: forced.has(packageName),
-      timeoutMs,
-      onPackageBuildStart,
-      onPackageBuildDone,
-      workspaceBuildBoundary,
-      admitPriorOutputsImmediately,
-    });
-    if (result.built && packageName) built.push(packageName);
+      const packageJson = await readJson(packageJsonPath);
+      const packageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
+      if (packageName && visited.has(packageName)) return changedClosures.has(packageName);
+      if (packageName) visited.add(packageName);
+
+      let dependencyChanged = false;
+      for (const dependencyName of collectInternalWorkspaceDependencyNames(
+        packageJson,
+        packageName,
+        { includeDevDependencies, workspacePackageNames },
+      )) {
+        const dependencyDir = packageDirsByName.get(dependencyName);
+        if (dependencyDir && await buildWorkspaceClosure(dependencyDir, nextAncestors)) {
+          dependencyChanged = true;
+        }
+      }
+
+      const result = await ensureWorkspacePackageBuilt(resolvedPackageDir, {
+        monorepoRoot,
+        quiet,
+        env,
+        force: forced.has(packageName) || dependencyChanged,
+        timeoutMs,
+        onPackageBuildStart,
+        onPackageBuildDone,
+        workspaceBuildBoundary,
+        admitPriorOutputsImmediately,
+        publicationMode,
+      });
+      if (result.built && packageName) built.push(packageName);
+      if ((dependencyChanged || result.built) && packageName) changedClosures.add(packageName);
+      return dependencyChanged || result.built;
+    })();
+    closureBuildPromises.set(resolvedPackageDir, buildPromise);
+    return buildPromise;
   };
 
   for (const packageName of packageNames ?? []) {
@@ -663,12 +767,12 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   env = process.env,
   force = false,
   timeoutMs = null,
-  beforePackageBuild = null,
   onPackageBuildStart = null,
   onPackageBuildDone = null,
   includeDevDependencies = true,
   workspaceBuildBoundary = defaultWorkspaceBuildBoundary,
   admitPriorOutputsImmediately = false,
+  publicationMode = 'live',
 } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(monorepoPath);
   if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
@@ -678,17 +782,18 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
       .map((name) => String(name ?? '').trim())
       .filter(Boolean),
   )];
+  const resolvedPublicationMode = resolveWorkspaceBundlePublicationMode({ mode: publicationMode });
   const built = await ensureWorkspacePackageNamesBuilt(monorepoRoot, normalizedPackageNames, {
     quiet,
     env,
     forcePackageNames: force ? normalizedPackageNames : [],
     timeoutMs,
-    beforePackageBuild,
     onPackageBuildStart,
     onPackageBuildDone,
     includeDevDependencies,
     workspaceBuildBoundary,
     admitPriorOutputsImmediately,
+    publicationMode: resolvedPublicationMode,
   });
   return { ok: true, built, skipped: [] };
 }
@@ -698,6 +803,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
   env = process.env,
   workspaceBuildBoundary = defaultWorkspaceBuildBoundary,
   admitPriorOutputsImmediately = false,
+  publicationMode = 'live',
 } = {}) {
   const monorepoRoot = coerceHappyMonorepoRootFromPath(componentDir);
   if (!monorepoRoot) return { ok: true, built: [], skipped: ['not-monorepo'] };
@@ -715,6 +821,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
   const packageNames = collectInternalWorkspaceDependencyNames(componentPackageJson, componentName, {
     workspacePackageNames: packageDirsByName.keys(),
   });
+  const resolvedPublicationMode = resolveWorkspaceBundlePublicationMode({ mode: publicationMode });
   const built = await ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, {
     quiet,
     env,
@@ -723,6 +830,7 @@ export async function ensureWorkspacePackagesBuiltForComponent(componentDir, {
     packageDirsByName,
     workspaceBuildBoundary,
     admitPriorOutputsImmediately,
+    publicationMode: resolvedPublicationMode,
   });
   return { ok: true, built, skipped: [] };
 }
