@@ -91,4 +91,43 @@ describe("AgentInputChipPickerOptionSelector state semantics", () => {
                 ?.props.accessibilityLabel,
         ).toBe(RUNNING.accessibilityLabel);
     });
+    it("names the selection in the accessible name, because the rail's only marker is a glyph", async () => {
+        const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
+
+        const PLAIN_SELECTED = { id: "engine:claude", label: "Claude" } as const;
+        const PLAIN_OTHER = { id: "engine:codex", label: "Codex" } as const;
+
+        const screen = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[{ id: "agents", options: [PLAIN_SELECTED, PLAIN_OTHER] }]}
+                focusedOptionId={PLAIN_SELECTED.id}
+                selectedOptionId={PLAIN_SELECTED.id}
+                onFocusOption={() => {}}
+                variant="rail"
+            />,
+        );
+
+        const selected = screen.findByTestId(`agent-input-chip-picker.option:${PLAIN_SELECTED.id}`);
+        const other = screen.findByTestId(`agent-input-chip-picker.option:${PLAIN_OTHER.id}`);
+
+        // `accessibilityState.selected` becomes `aria-selected`, which is invalid on
+        // `role="button"` and is dropped before it reaches the accessibility tree, so a row
+        // that only publishes state is indistinguishable from every other row.
+        expect(other?.props.accessibilityLabel).toBe(PLAIN_OTHER.label);
+        expect(selected?.props.accessibilityLabel).not.toBe(PLAIN_SELECTED.label);
+        expect(String(selected?.props.accessibilityLabel)).toContain(PLAIN_SELECTED.label);
+
+        // A row that already says something more precise keeps its own words.
+        const explicit = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[{ id: "agents", options: [RUNNING] }]}
+                focusedOptionId={RUNNING.id}
+                selectedOptionId={RUNNING.id}
+                onFocusOption={() => {}}
+                variant="rail"
+            />,
+        );
+        expect(explicit.findByTestId(`agent-input-chip-picker.option:${RUNNING.id}`)?.props.accessibilityLabel)
+            .toBe(RUNNING.accessibilityLabel);
+    });
 });

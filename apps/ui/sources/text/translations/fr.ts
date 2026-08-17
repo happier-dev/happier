@@ -6000,6 +6000,9 @@ export const fr: TranslationStructure = {
     },
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Sélectionné.`,
+        },
         // Section headers for the composer suggestion picker. One per suggestion
         // kind; the registry maps kind -> key, mirroring markdown.slash.groups.*.
         suggestionGroups: {

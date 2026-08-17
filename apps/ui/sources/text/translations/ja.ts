@@ -6652,6 +6652,9 @@ localTailscale: {
   },
 
   agentInput: {
+      chipPicker: {
+          selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。選択中。`,
+      },
     suggestionGroups: {
       files: 'ファイル',
       plugins: 'プラグイン',

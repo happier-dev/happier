@@ -14,6 +14,7 @@ import {
 import { normalizeAgentInputChipPickerOptionIcon } from "./agentInputChipPickerOptionIcon";
 import { Icon } from '@/components/ui/icons/Icon';
 
+import { resolveAgentInputChipPickerOptionAccessibilityLabel } from "./AgentInputChipPickerTypes";
 import type {
   AgentInputChipPickerOption,
   AgentInputChipPickerOptionSection,
@@ -229,7 +230,7 @@ function AgentInputChipPickerOptionButton(
       <WebClickableView
         testID={testID}
         accessibilityRole="button"
-        accessibilityLabel={props.option.accessibilityLabel ?? props.option.label}
+        accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
         accessibilityState={{
           disabled: props.option.disabled === true,
           selected: props.selected,
@@ -255,7 +256,7 @@ function AgentInputChipPickerOptionButton(
     <Pressable
       testID={testID}
       accessibilityRole="button"
-      accessibilityLabel={props.option.accessibilityLabel ?? props.option.label}
+      accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(props.option, props.selected)}
       accessibilityState={{
         disabled: props.option.disabled === true,
         selected: props.selected,

@@ -5998,6 +5998,9 @@ export const en = {
     },
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selected.`,
+        },
         // Section headers for the composer suggestion picker. One per suggestion
         // kind; the registry maps kind -> key, mirroring markdown.slash.groups.*.
         suggestionGroups: {

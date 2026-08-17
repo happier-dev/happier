@@ -5358,6 +5358,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已選擇。`,
+        },
         suggestionGroups: {
             files: '檔案',
             plugins: '外掛',

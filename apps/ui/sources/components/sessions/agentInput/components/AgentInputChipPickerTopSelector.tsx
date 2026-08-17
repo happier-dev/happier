@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 
+import { resolveAgentInputChipPickerOptionAccessibilityLabel } from "./AgentInputChipPickerTypes";
 import type {
     AgentInputChipPickerOption,
     AgentInputChipPickerOptionSection,
@@ -63,7 +64,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                             key={option.id}
                             testID={`agent-input-chip-picker.top-selector-option:${option.id}`}
                             accessibilityRole="button"
-                            accessibilityLabel={option.accessibilityLabel ?? option.label}
+                            accessibilityLabel={resolveAgentInputChipPickerOptionAccessibilityLabel(option, props.selectedOptionId === option.id)}
                             accessibilityState={{
                                 selected: props.selectedOptionId === option.id,
                                 disabled,

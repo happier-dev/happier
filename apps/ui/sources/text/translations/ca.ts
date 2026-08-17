@@ -6014,6 +6014,9 @@ deps: {
     },
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Seleccionat.`,
+        },
         suggestionGroups: {
             files: 'Fitxers',
             plugins: 'Connectors',

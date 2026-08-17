@@ -1,3 +1,5 @@
+import { t } from '@/text';
+
 export type AgentInputChipPickerDetailSelectOption = Readonly<{
     id: string;
     label: string;
@@ -79,6 +81,12 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
     detailPaneHeaderAccessory?: React.ReactNode;
+    /**
+     * Height the surrounding popover gives this panel. The split layout bounds each of its two
+     * columns to it so the rail and the detail pane scroll independently instead of riding the
+     * popover's single scroller together.
+     */
+    maxHeight?: number | null;
 }>;
 
 export type AgentInputChipPickerOptionSection = Readonly<{
@@ -86,6 +94,25 @@ export type AgentInputChipPickerOptionSection = Readonly<{
     label?: string;
     options: ReadonlyArray<AgentInputChipPickerOption>;
 }>;
+
+/**
+ * The accessible name for one picker row.
+ *
+ * A checkmark is a glyph, not an accessible state, and `accessibilityState.selected` maps to
+ * `aria-selected`, which is invalid on `role="button"` and never reaches the web accessibility
+ * tree — measured on the rendered rail, where every row exposed nothing but `aria-label`. The
+ * selection therefore travels in the name, which is the pattern the in-session rail already uses
+ * through `option.accessibilityLabel`. A row that supplies its own name keeps it: it is already
+ * saying something more precise than "selected".
+ */
+export function resolveAgentInputChipPickerOptionAccessibilityLabel(
+    option: AgentInputChipPickerOption,
+    selected: boolean,
+): string {
+    if (option.accessibilityLabel) return option.accessibilityLabel;
+    if (!selected) return option.label;
+    return t('agentInput.chipPicker.selectedOptionAccessibilityLabel', { option: option.label });
+}
 
 export function buildAgentInputChipPickerSections(
     options: ReadonlyArray<AgentInputChipPickerOption>,

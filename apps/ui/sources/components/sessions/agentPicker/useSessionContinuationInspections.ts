@@ -22,16 +22,17 @@ type UseSessionContinuationInspectionsParams = Readonly<{
     machinePresence: SessionContinuationMachinePresenceV1;
     /** The exact targets the picker can offer, so nothing else is ever asked about. */
     targetAgentIds: readonly string[];
+    /**
+     * Whether this Session wants live answers at all. The caller decides; a
+     * Session whose picker could never offer a switch passes `false` and its
+     * machine is asked nothing.
+     */
+    demanded: boolean;
 }>;
 
 export type SessionContinuationInspections = Readonly<{
     /** This target's state; `checking` until this connection has an answer for it. */
     read: (agentId: string) => SessionAgentContinuationInspectionState;
-    /**
-     * The composer's Agent picker opened or closed. Inspection is demand-driven:
-     * a Session the user never asks to switch costs its machine nothing.
-     */
-    setDemand: (demanded: boolean) => void;
 }>;
 
 /**
@@ -39,9 +40,10 @@ export type SessionContinuationInspections = Readonly<{
  *
  * Three properties are deliberate.
  *
- * **Demand-driven.** Every answer is per target, so a Session with several enabled
- * Agents would otherwise cost one machine round trip per Agent on every open. The
- * picker asks; merely viewing a Session does not.
+ * **Asked only where a switch is possible.** Every answer is per target, so the
+ * caller narrows the question to the Sessions whose picker could actually offer
+ * one: a closed gate, a read-only or external Session, an offline machine or a
+ * Session with no other Agent asks nothing at all.
  *
  * **One connection, one answer.** Answers are cached against the realtime
  * connection and machine state they were read over, and discarded when either
@@ -56,8 +58,7 @@ export type SessionContinuationInspections = Readonly<{
 export function useSessionContinuationInspections(
     params: UseSessionContinuationInspectionsParams,
 ): SessionContinuationInspections {
-    const { machine, machinePresence, sessionId, targetAgentIds } = params;
-    const [demanded, setDemanded] = React.useState(false);
+    const { demanded, machine, machinePresence, sessionId, targetAgentIds } = params;
     const [answers, setAnswers] = React.useState<
         ReadonlyMap<string, SessionAgentContinuationInspectionState>
     >(() => new Map());
@@ -95,27 +96,34 @@ export function useSessionContinuationInspections(
         // Claim before awaiting so a re-render mid-flight cannot ask twice.
         for (const agentId of pending) scope.asked.add(agentId);
 
+        // Each answer is recorded on arrival rather than gathered into one batch.
+        // A batch is only as fast as its slowest target, and the rail decision now
+        // waits on these answers, so one target running out its transport timeout
+        // would hold every other target's answer — and the rail — behind it for the
+        // whole of that timeout.
+        //
         // No cancellation on cleanup: closing the picker mid-flight must still
         // record the answer, or the claim above would strand the row on
         // "checking" for the rest of the connection.
-        void Promise.all(pending.map(async (agentId) => ({
-            agentId,
-            result: await inspectSessionContinuationOnMachine({
+        for (const agentId of pending) {
+            void inspectSessionContinuationOnMachine({
                 machineId,
                 serverId,
                 sessionId,
                 selection: { v: 1, agentId },
-            }).catch((): SessionAgentContinuationInspectionState => INDETERMINATE),
-        }))).then((settled) => {
-            // An answer read over a connection or machine state that no longer
-            // applies is discarded rather than shown.
-            if (scopeRef.current !== scope) return;
-            setAnswers((current) => {
-                const next = new Map(current);
-                for (const { agentId, result } of settled) next.set(agentId, result);
-                return next;
-            });
-        });
+            })
+                .catch((): SessionAgentContinuationInspectionState => INDETERMINATE)
+                .then((result) => {
+                    // An answer read over a connection or machine state that no
+                    // longer applies is discarded rather than shown.
+                    if (scopeRef.current !== scope) return;
+                    setAnswers((current) => {
+                        const next = new Map(current);
+                        next.set(agentId, result);
+                        return next;
+                    });
+                });
+        }
     }, [demanded, machineId, offline, scopeKey, serverId, sessionId, targetsKey]);
 
     const read = React.useCallback((agentId: string): SessionAgentContinuationInspectionState => {
@@ -126,5 +134,5 @@ export function useSessionContinuationInspections(
         return answers.get(agentId) ?? CHECKING;
     }, [answers, machineId, offline]);
 
-    return { read, setDemand: setDemanded };
+    return { read };
 }

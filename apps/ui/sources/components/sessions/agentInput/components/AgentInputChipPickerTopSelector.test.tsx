@@ -104,7 +104,9 @@ describe('AgentInputChipPickerTopSelector', () => {
 
         expect(codexButton).toBeTruthy();
         expect(claudeButton).toBeTruthy();
-        expect(codexButton?.props.accessibilityLabel).toBe('Codex');
+        // The compact rail has no checkmark at all, so the selected row's name is the only
+        // place its state can live — `accessibilityState.selected` is dropped on a button role.
+        expect(codexButton?.props.accessibilityLabel).not.toBe('Codex');
         expect(claudeButton?.props.accessibilityLabel).toBe('Claude');
 
         const codexStyle = flattenStyle(codexButton?.props.style({ pressed: false }));

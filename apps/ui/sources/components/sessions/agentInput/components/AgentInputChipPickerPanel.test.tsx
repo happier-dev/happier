@@ -336,4 +336,33 @@ describe('AgentInputChipPickerPanel', () => {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         expect(onRequestClose).not.toHaveBeenCalled();
     });
+    it('gives the split rail and detail column their own bounded scroller', async () => {
+        const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
+
+        const screen = await renderScreen(<AgentInputChipPickerPanel
+            title=""
+            showCloseButton={false}
+            options={[
+                { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
+                { id: 'two', label: 'Two', detailDescription: 'Feature checkout' } as any,
+            ]}
+            selectedOptionId="one"
+            onSelect={() => {}}
+            onRequestClose={() => {}}
+            maxHeight={420}
+        />);
+
+        // One scroller for the whole panel means browsing models drags the Agent rail out of
+        // view with it. Each column owns its scroll, bounded by the height the popover granted.
+        const rail = screen.findByTestId('agent-input-chip-picker.option-rail-scroll');
+        const detail = screen.findByTestId('agent-input-chip-picker.detail-scroll');
+        expect(rail).toBeTruthy();
+        expect(detail).toBeTruthy();
+
+        const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
+            ? style.reduce<Record<string, unknown>>((acc, entry) => ({ ...acc, ...flatten(entry) }), {})
+            : (style && typeof style === 'object' ? style as Record<string, unknown> : {});
+        expect(flatten(rail?.props.style).maxHeight).toBe(420);
+        expect(flatten(detail?.props.style).maxHeight).toBe(420);
+    });
 });

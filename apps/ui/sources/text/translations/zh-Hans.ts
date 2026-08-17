@@ -6177,6 +6177,9 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
+      chipPicker: {
+          selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}。已选择。`,
+      },
     suggestionGroups: {
       files: '文件',
       plugins: '插件',

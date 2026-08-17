@@ -35,6 +35,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
             railWidth={props.railWidth}
             railMaxWidth={props.railMaxWidth}
             detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
+            maxHeight={props.maxHeight}
         />
     );
 
@@ -42,6 +43,15 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
         return panel;
     }
 
+    // `scrollEnabled` is unconditional ON PURPOSE. The successor tree passes a
+    // `detailContentOwnsScroll` flag here to hand scrolling to a bounded detail
+    // pane, but that only works because its panel chain has a
+    // `fillAvailableSpace` host that gives the detail content a bounded box to
+    // scroll inside. This tree has no such host anywhere in `apps/ui`, so the
+    // surface is the ONLY scroll owner: porting the flag turns scrolling off
+    // and leaves the Agent picker and the New Session popover with content
+    // taller than the box and no way to reach it. That port was made here once
+    // and reverted. Add the layout host first, or leave this alone.
     return (
         <AgentInputPopoverSurface
             testID={props.testID}

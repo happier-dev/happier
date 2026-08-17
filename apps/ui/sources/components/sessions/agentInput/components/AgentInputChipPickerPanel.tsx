@@ -1,5 +1,5 @@
 import React from "react";
-import { useWindowDimensions, View } from "react-native";
+import { ScrollView, useWindowDimensions, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -115,16 +115,58 @@ export function AgentInputChipPickerPanel(
       : showSinglePaneDetailed
         ? styles.detailPaneSingle
         : null;
-  const detailContainerStyle =
-    detailedLayout === "split"
-      ? styles.detailScroll
-      : showSinglePaneDetailed
-        ? styles.detailSinglePane
-        : detailedLayout === "stacked"
-          ? styles.detailStackedWithSelector
-          : null;
+  // Split bounds its detail column on the scroller itself; this is the stacked container only.
+  const detailContainerStyle = showSinglePaneDetailed
+    ? styles.detailSinglePane
+    : styles.detailStackedWithSelector;
   const railWidth = props.railWidth ?? styles.railScroll.width;
   const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
+
+  // The popover is a single scroll container for the whole panel, so reaching a lower model
+  // scrolls the Agent rail out of view — measured at 824px of content in a 446px viewport, with
+  // the rail travelling the full distance with it. Bounding both split columns to the popover's
+  // own height gives each one its own scroller and leaves the outer one nothing to move.
+  const splitColumnMaxHeight = typeof props.maxHeight === "number"
+    ? props.maxHeight
+    : AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT;
+
+  const optionSelector = (
+    <AgentInputChipPickerOptionSelector
+      sections={sections}
+      focusedOptionId={focusedOption?.id ?? null}
+      selectedOptionId={props.selectedOptionId}
+      onFocusOption={handleDetailedOptionFocus}
+      variant={detailedLayout === "stacked" ? "stacked" : "rail"}
+    />
+  );
+
+  const detailPane = focusedOption ? (
+    <View style={styles.detailPane}>
+      {props.detailPaneHeaderAccessory ? (
+        <View style={styles.detailPaneHeaderAccessoryRow}>
+          {props.detailPaneHeaderAccessory}
+        </View>
+      ) : null}
+      <AgentInputChipPickerDetailPane
+        style={detailPaneStyle}
+        option={focusedOption}
+        onApply={() => {
+          if (focusedOption.disabled) return;
+          if (focusedOption.onApply) {
+            focusedOption.onApply();
+          } else {
+            props.onSelect(focusedOption.id);
+          }
+          deferAgentInputPopoverClose(props.onRequestClose);
+        }}
+        applyLabel={focusedOption.applyLabel ?? props.applyLabel ?? t("common.use")}
+        onSelectDetailOption={(id) => {
+          props.onSelect(id);
+        }}
+        onRequestClose={props.onRequestClose}
+      />
+    </View>
+  ) : null;
 
   const showCloseButton = props.showCloseButton !== false;
   const shouldRenderTitle = typeof props.title === "string" && props.title.trim().length > 0;
@@ -187,54 +229,39 @@ export function AgentInputChipPickerPanel(
             ]}
           >
             {showDetailedSelector ? (
-              <View
-                style={detailedLayout === "split"
-                  ? [styles.railScroll, { width: railWidth, maxWidth: railMaxWidth }]
-                  : null}
-              >
-                <View
-                  style={detailedLayout === "split" ? styles.railScrollContent : null}
+              detailedLayout === "split" ? (
+                <ScrollView
+                  testID="agent-input-chip-picker.option-rail-scroll"
+                  style={[
+                    styles.railScroll,
+                    { width: railWidth, maxWidth: railMaxWidth, maxHeight: splitColumnMaxHeight },
+                  ]}
+                  contentContainerStyle={styles.railScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
                 >
-                  <AgentInputChipPickerOptionSelector
-                    sections={sections}
-                    focusedOptionId={focusedOption?.id ?? null}
-                    selectedOptionId={props.selectedOptionId}
-                    onFocusOption={handleDetailedOptionFocus}
-                    variant={detailedLayout === "stacked" ? "stacked" : "rail"}
-                  />
-                </View>
-              </View>
+                  {optionSelector}
+                </ScrollView>
+              ) : (
+                <View>{optionSelector}</View>
+              )
             ) : null}
             {focusedOption ? (
-              <View
-                style={detailContainerStyle}
-              >
-                <View style={[styles.detailPane, detailedLayout === "split" ? styles.detailScrollContent : null]}>
-                  {props.detailPaneHeaderAccessory ? (
-                    <View style={styles.detailPaneHeaderAccessoryRow}>
-                      {props.detailPaneHeaderAccessory}
-                    </View>
-                  ) : null}
-                  <AgentInputChipPickerDetailPane
-                    style={detailPaneStyle}
-                    option={focusedOption}
-                    onApply={() => {
-                      if (focusedOption.disabled) return;
-                    if (focusedOption.onApply) {
-                      focusedOption.onApply();
-                    } else {
-                      props.onSelect(focusedOption.id);
-                    }
-                    deferAgentInputPopoverClose(props.onRequestClose);
-                  }}
-                  applyLabel={focusedOption.applyLabel ?? props.applyLabel ?? t("common.use")}
-                  onSelectDetailOption={(id) => {
-                    props.onSelect(id);
-                  }}
-                    onRequestClose={props.onRequestClose}
-                  />
-                </View>
-              </View>
+              detailedLayout === "split" ? (
+                <ScrollView
+                  testID="agent-input-chip-picker.detail-scroll"
+                  style={[styles.detailScroll, { maxHeight: splitColumnMaxHeight }]}
+                  contentContainerStyle={styles.detailScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
+                >
+                  {detailPane}
+                </ScrollView>
+              ) : (
+                <View style={detailContainerStyle}>{detailPane}</View>
+              )
             ) : null}
           </View>
         </View>

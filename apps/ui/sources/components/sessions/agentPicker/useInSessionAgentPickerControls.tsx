@@ -103,8 +103,8 @@ export type InSessionAgentPickerControls = Readonly<{
     armedContinuationLocalId: string | null;
     clearArmedContinuation: () => void;
     /**
-     * The composer's Agent picker became visible or hidden. Continuation support
-     * is inspected on demand, so an unopened picker asks its machine nothing.
+     * The composer's Agent picker became visible or hidden. It scopes the rail
+     * decision: one open popover keeps the one shape it opened with.
      */
     onAgentPickerVisibilityChange: (visible: boolean) => void;
 }>;
@@ -173,6 +173,9 @@ export function useInSessionAgentPickerControls(
     const { currentAgentId, currentAgentLabel, entries, featureEnabled, sessionId, source } = params;
 
     const [armed, setArmed] = React.useState<ArmedAgentContinuation | null>(null);
+    // Whether the composer's Agent picker is on screen. Its only job is to scope
+    // the rail decision below to one open popover.
+    const [pickerVisible, setPickerVisible] = React.useState(false);
 
     const targetEntries = React.useMemo(() => entries.filter((entry) => (
         entry.targetKey !== source.currentBackendTargetKey
@@ -190,11 +193,25 @@ export function useInSessionAgentPickerControls(
             : []
     ), [featureEnabled, sessionReason, targetEntries]);
 
+    // The rail decision has to be settled BEFORE the popover paints, or the
+    // popover opens at one width and then grows by the width of the rail. That is
+    // the same defect as a rail appearing and vanishing, seen as geometry.
+    //
+    // Asking when the popover opens is structurally too late: the machine round
+    // trip and the popover's own mount take about the same time, so which one
+    // wins is a coin flip, and the reader sees the loser. The question is
+    // therefore asked as soon as the rail is a live possibility for this Session.
+    //
+    // It is still not asked for every Session. `inspectableTargetAgentIds` is
+    // already empty for a closed gate, a read-only or external Session and one
+    // with no other Agent; the inspection hook itself never calls a machine it
+    // knows is offline; and one answer serves the whole realtime connection.
     const inspections = useSessionContinuationInspections({
         sessionId,
         machine: params.machine,
         machinePresence: source.machinePresence,
         targetAgentIds: inspectableTargetAgentIds,
+        demanded: inspectableTargetAgentIds.length > 0,
     });
     const readInspection = inspections.read;
 
@@ -209,12 +226,15 @@ export function useInSessionAgentPickerControls(
         }))
     ), [readInspection, source, targetEntries]);
 
-    // The rail exists to offer a choice. When nothing in it can be chosen, the
-    // composer keeps its pre-existing model picker and shows no Agent rail at all,
-    // rather than a list of dead options with a reason repeated down every row. A
-    // row still being asked about counts as pending, not refused, so the rail does
-    // not flicker away and back while the machine answers.
-    const hasSwitchableTarget = targetRows.some((row) => row.eligibility.status !== 'unavailable');
+    // The rail exists to offer a choice, and a question still in flight is not a
+    // choice. Only a target the machine has actually cleared sustains the rail:
+    // counting an unanswered one is what let the rail appear on the strength of
+    // questions the machine then refused, and take itself away half a second
+    // later with the reader already looking at it.
+    const hasSwitchableTarget = targetRows.some((row) => row.eligibility.status === 'eligible');
+    // Every target has been decided — answered by the machine, or refused by the
+    // local rules before the machine was ever asked.
+    const railDecisionSettled = targetRows.every((row) => row.eligibility.status !== 'checking');
 
     // Whether the Agent rail is offered at all.
     //
@@ -226,10 +246,45 @@ export function useInSessionAgentPickerControls(
     // It is resolved once, here, because two things depend on it and they must
     // not disagree: the rows the composer is given, and whether an armed choice
     // is still cancellable.
-    const railOffersRows = featureEnabled
+    const railOffersRowsNow = featureEnabled
         && currentAgentId !== null
         && targetRows.length > 0
         && hasSwitchableTarget;
+
+    // One open popover keeps one shape.
+    //
+    // Inspection is answered over the network while the popover is opening, so
+    // the honest value of the line above changes mid-open. Rendering that change
+    // is the defect: a rail that appears and then vanishes is worse than either
+    // steady answer, and a rail frozen on the optimistic pending value would be a
+    // list of dead rows, which is worse still.
+    //
+    // So the decision moves in one direction per open. It starts at "no rail",
+    // becomes "rail" the moment one target is proven switchable, and settles at
+    // "no rail" once every target has answered and none was. Whichever it reaches
+    // first is what that popover keeps until it closes. In practice the answers
+    // arrive while the popover is still mounting, so the reader sees a decided
+    // popover; a warm cache — every reopen on the same connection — decides
+    // before the first render.
+    //
+    // While the picker is closed the live value is used directly: nothing is on
+    // screen to disturb, and the next open must start from the truth.
+    const railLatchRef = React.useRef<Readonly<{ open: boolean; decided: boolean | null }>>(
+        { open: false, decided: null },
+    );
+    if (railLatchRef.current.open !== pickerVisible) {
+        railLatchRef.current = { open: pickerVisible, decided: null };
+    }
+    if (pickerVisible && railLatchRef.current.decided === null) {
+        if (railOffersRowsNow) {
+            railLatchRef.current = { open: true, decided: true };
+        } else if (railDecisionSettled) {
+            railLatchRef.current = { open: true, decided: false };
+        }
+    }
+    const railOffersRows = pickerVisible
+        ? railLatchRef.current.decided === true
+        : railOffersRowsNow;
 
     // An armed choice belongs to one Session, one running Agent, one open feature
     // gate, and one live rail. If any of them changes underneath the composer the
@@ -485,6 +540,6 @@ export function useInSessionAgentPickerControls(
         armedContinuation: armed?.intent ?? null,
         armedContinuationLocalId,
         clearArmedContinuation,
-        onAgentPickerVisibilityChange: inspections.setDemand,
+        onAgentPickerVisibilityChange: setPickerVisible,
     };
 }

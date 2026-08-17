@@ -163,16 +163,67 @@ describe('useInSessionAgentPickerControls', () => {
         expect(machineRpcWithServerScope).not.toHaveBeenCalled();
     });
 
-    it('asks no machine anything until the picker is actually opened', async () => {
+    it('has the answer before the popover is ever opened, so it opens decided', async () => {
+        // Asking when the popover opens is too late: the machine round trip and the
+        // popover's own mount take about the same time, so the popover would open
+        // at one width and grow by the width of the rail when the answers land.
         const hook = await renderControls();
+        await act(async () => { await Promise.resolve(); });
 
-        expect(machineRpcWithServerScope).not.toHaveBeenCalled();
-        const [, codexOption] = optionsOf(hook.getCurrent());
-        expect(codexOption).toMatchObject({
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+
+        // Opening it now changes nothing: the decision was already made.
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
+            'engine:claude',
+            'builtInAgent:codex',
+        ]);
+        expect(machineRpcWithServerScope).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks nothing at all for a Session whose picker could never offer a switch', async () => {
+        // The cost of asking early is bounded by never asking where the answer
+        // cannot matter: a closed gate, a Session that cannot be written to or whose
+        // transcript is its Agent's own, and a Session with no other Agent.
+        for (const props of [
+            { featureEnabled: false },
+            { source: { ...supportedSource, canEditSession: false } },
+            { source: { ...supportedSource, storageKind: 'direct' as const } },
+            { entries: [entry('claude')] },
+        ]) {
+            machineRpcWithServerScope.mockClear();
+            const hook = await renderControls(props);
+            await act(async () => { await Promise.resolve(); });
+            await act(async () => {
+                hook.getCurrent().onAgentPickerVisibilityChange(true);
+            });
+
+            expect(machineRpcWithServerScope).not.toHaveBeenCalled();
+            expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
+        }
+    });
+
+    it('holds a target still being asked about in the restrained pending treatment', async () => {
+        // A live rail can still contain an unanswered row when its siblings have
+        // already answered. That row is disabled and says it is being checked; it
+        // never claims a refusal it has not been given.
+        machineRpcWithServerScope.mockImplementation((params: { payload: { selection: { agentId: string } } }) => (
+            params.payload.selection.agentId === 'codex'
+                ? Promise.resolve(AVAILABLE)
+                : new Promise(() => {})
+        ));
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
+        await openPicker(hook);
+
+        const geminiOption = optionsOf(hook.getCurrent())
+            .find((option) => option.id === 'builtInAgent:gemini');
+        expect(geminiOption).toMatchObject({
             disabled: true,
             subtitle: t('session.agentContinuation.checking'),
         });
-        expect(codexOption?.onApply).toBeUndefined();
+        expect(geminiOption?.onApply).toBeUndefined();
     });
 
     it('makes an eligible Agent armable once its machine reports live support', async () => {
@@ -434,6 +485,19 @@ describe('useInSessionAgentPickerControls', () => {
         // `isMachineOnline(...)` goes false and every target becomes unavailable.
         await hook.rerender({ source: { ...supportedSource, machinePresence: 'offline' } });
 
+        // The open popover keeps the shape it opened with, so the cancel gesture is
+        // still on screen and the arm is still reachable — the invariant is that an
+        // arm never outlives its way out, not that it dies the instant its target
+        // does.
+        expect(optionsOf(hook.getCurrent())[0]?.onSelectImmediate).toBeTypeOf('function');
+        expect(hook.getCurrent().armedContinuation).not.toBeNull();
+
+        // Closing it is where the rail decision is taken again, and the arm goes
+        // with the rail.
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(false);
+        });
+
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
         expect(hook.getCurrent().armedContinuation).toBeNull();
         // The submit path reads the identity too; a surviving localId would keep
@@ -520,18 +584,85 @@ describe('useInSessionAgentPickerControls', () => {
             entries: [entry('claude'), entry('codex'), entry('gemini')],
         });
 
-        // A row still being asked about is pending, not refused: the rail stays put
-        // rather than flickering away and back while the machine answers.
-        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
-            'engine:claude',
-            'builtInAgent:codex',
-            'builtInAgent:gemini',
-        ]);
+        // An unanswered question is not a choice, so a rail is never offered on the
+        // strength of one — not before the picker is opened, and not while it waits.
+        expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
 
         await openPicker(hook);
 
         expect(optionsOf(hook.getCurrent())).toEqual([CURRENT_AGENT_ROW]);
         expect(hook.getCurrent().armedContinuation).toBeNull();
+    });
+
+    it('never takes the rail away while the popover the reader opened is still open', async () => {
+        // The reported defect. The rail appeared on the strength of questions still
+        // in flight, then vanished about half a second later when the machine
+        // refused every one of them — the popover changing shape under the reader.
+        const answers: Array<(value: unknown) => void> = [];
+        machineRpcWithServerScope.mockImplementation(() => new Promise((resolve) => {
+            answers.push(resolve);
+        }));
+        const hook = await renderControls({
+            entries: [entry('claude'), entry('codex'), entry('gemini')],
+        });
+
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        // Opened with nothing proven switchable: no rail.
+        const whileWaiting = optionsOf(hook.getCurrent()).map((option) => option.id);
+        expect(whileWaiting).toEqual(['engine:claude']);
+
+        await act(async () => {
+            for (const resolve of answers) resolve({ type: 'unavailable', reason: 'unsupported_session' });
+            await Promise.resolve();
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        // …and the answers cannot change what this open popover already is.
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual(whileWaiting);
+    });
+
+    it('holds a rail it has already shown for the rest of that open popover', async () => {
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex')] });
+        await openPicker(hook);
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
+            'engine:claude',
+            'builtInAgent:codex',
+        ]);
+
+        // A reconnect discards every answer read over the previous connection, so
+        // the rows go back to being unanswered. That must not empty a rail the
+        // reader is looking at.
+        machineRpcWithServerScope.mockImplementation(() => new Promise(() => {}));
+        await hook.rerender({ machine: { ...onlineMachine, connectionGeneration: 2 } });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
+            'engine:claude',
+            'builtInAgent:codex',
+        ]);
+    });
+
+    it('decides before the popover paints when the answers are already cached', async () => {
+        // Second open on the same connection: the answers are held, so the rail
+        // decision is available in the first render of the reopened popover rather
+        // than arriving after it.
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex')] });
+        await openPicker(hook);
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(false);
+        });
+
+        await act(async () => {
+            hook.getCurrent().onAgentPickerVisibilityChange(true);
+        });
+        expect(optionsOf(hook.getCurrent()).map((option) => option.id)).toEqual([
+            'engine:claude',
+            'builtInAgent:codex',
+        ]);
     });
 
     it('does not blame the CLI when the call simply failed to complete', async () => {

@@ -6516,6 +6516,9 @@ export const pt: TranslationStructure = {
   },
 
   agentInput: {
+      chipPicker: {
+          selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Selecionado.`,
+      },
     suggestionGroups: {
       files: 'Arquivos',
       plugins: 'Plugins',

@@ -6386,6 +6386,9 @@ export const ru: TranslationStructure = {
       },
 
     agentInput: {
+        chipPicker: {
+            selectedOptionAccessibilityLabel: ({ option }: { option: string }) => `${option}. Выбрано.`,
+        },
         suggestionGroups: {
             files: 'Файлы',
             plugins: 'Плагины',
