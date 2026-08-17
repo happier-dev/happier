@@ -219,13 +219,14 @@ remote_load_probe() {
   number=$1
   ssh_target=$(value_for_target ssh "$number")
   ssh_config=$(value_for_target ssh_config "$number")
+  remote_repo=$(value_for_target repo_dir "$number")
   remote_path=$(value_for_target remote_path "$number")
   path_setup=
   if [ -n "$remote_path" ]; then
     path_setup="PATH=$(quote_remote "$remote_path"):\$PATH; export PATH; "
   fi
-  probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); case $(uname -s) in Darwin) load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\'') ;; *) load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); free=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}'\'' /proc/meminfo 2>/dev/null) ;; esac; [ -n "$free" ] || free=1; printf "%s %s %s\\n" "$cpu" "$load" "$free"'
-  remote_command="${path_setup}bash -lc $(quote_remote "$probe")"
+  probe='cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || printf 1); case $(uname -s) in Darwin) load=$(sysctl -n vm.loadavg | awk '\''{print $2}'\''); free=$(memory_pressure -Q 2>/dev/null | awk '\''/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}'\'') ;; *) load=$(awk '\''{print $1}'\'' /proc/loadavg 2>/dev/null || uptime | awk -F'\''load average: '\'' '\''{print $2}'\'' | cut -d, -f1); free=$(awk '\''/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}'\'' /proc/meminfo 2>/dev/null) ;; esac; [ -n "$free" ] || free=1; disk=$(df -Pk . 2>/dev/null | awk '\''NR==2 {gsub(/%/,"",$5); print $4, $5}'\''); set -- $disk; disk_free=${1-}; disk_used=${2-}; printf "%s %s %s %s %s\\n" "$cpu" "$load" "$free" "$disk_free" "$disk_used"'
+  remote_command="${path_setup}cd -- $(quote_remote "$remote_repo") && bash -lc $(quote_remote "$probe")"
   if [ -n "$ssh_config" ]; then
     ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$remote_command"
   else
@@ -349,7 +350,10 @@ probe_target() {
   score=
   capacity=
   if [ -n "$sample" ]; then
-    score=$(printf '%s\n' "$sample" | awk '{if ($1 > 0 && $2 >= 0) printf "%.6f", ($2 / $1) + (($3 < 0.1) ? 1 : 0)}')
+    # A filesystem that reports 100% usage is not an execution target: even a
+    # read-mostly command may need SSH, compiler, or package-manager scratch
+    # space. Older three-field cached/test probes remain valid until refreshed.
+    score=$(printf '%s\n' "$sample" | awk '{if ($1 > 0 && $2 >= 0 && ($5 == "" || $5 < 100)) printf "%.6f", ($2 / $1) + (($3 < 0.1) ? 1 : 0)}')
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
   fi
   temporary="$cache_path.$$.tmp"
@@ -381,8 +385,13 @@ if [ "${include_local-0}" = 1 ]; then
   free=$(memory_pressure -Q 2>/dev/null | awk '/free percentage/ {gsub(/%/,"",$5); print $5/100; exit}')
   [ -n "$free" ] || free=$(awk '/MemTotal:/ {t=$2} /MemAvailable:/ {a=$2} END {if(t>0) print a/t}' /proc/meminfo 2>/dev/null)
   [ -n "$free" ] || free=1
+  local_disk_used=$(df -Pk "$repo_root" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
   local_score=$(awk -v load="$load" -v cpu="$cpu" -v free="$free" 'BEGIN {if(cpu>0) printf "%.6f", (load/cpu)+((free<0.1)?1:0); else print "999999"}')
-  printf '0 local 1 %s %s local\n' "$local_score" "$cpu" > "$probe_tmp/local"
+  if [ -n "$local_disk_used" ] && [ "$local_disk_used" -ge 100 ]; then
+    printf '0 local 0 - %s local\n' "$cpu" > "$probe_tmp/local"
+  else
+    printf '0 local 1 %s %s local\n' "$local_score" "$cpu" > "$probe_tmp/local"
+  fi
 fi
 
 dispatch_lock="$cache_dir/dispatch.lock"
@@ -513,7 +522,7 @@ pid_file="$remote_home/remote-exec/$execution_id.pid"
 remote_script="set -euo pipefail; execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); mkdir -p -- \"\$(dirname -- \"\$pid_file\")\"; printf '%s\\n' \"\$\$\" > \"\$pid_file\"; trap 'rm -f -- \"\$pid_file\"' EXIT; export HAPPIER_DEV_TARGET_EXECUTION=1;"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 if [ "$requires_remote_dependencies" -eq 1 ]; then
-  remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); corepack yarn node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs;"
+  remote_script="$remote_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs;"
 fi
 remote_script="$remote_script cd -- $(quote_remote "$remote_cwd");"
 for argument in "$@"; do remote_script="$remote_script $(quote_remote "$argument")"; done

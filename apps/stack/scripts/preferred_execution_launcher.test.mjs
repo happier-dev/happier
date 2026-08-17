@@ -261,6 +261,72 @@ test('native launcher ignores an inherited local preference and dispatches to th
   assert.match(result.stdout, /remote:.*mac2-host.*probe-command.*ok/);
 });
 
+test('native launcher excludes a target whose repository filesystem reports full', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-full-disk-'));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='2'",
+    "target_1_name='mac'",
+    "target_1_ssh='mac-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    "target_2_name='mac2'",
+    "target_2_ssh='mac2-host'",
+    "target_2_ssh_config=''",
+    "target_2_repo_dir='/remote/repo'",
+    "target_2_cli_home='/remote/home'",
+    "target_2_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) case "$*" in *mac2-host*) printf "8 0.5 0.8 220000 100\\n" ;; *) printf "8 4 0.5 22000000 98\\n" ;; esac ;;',
+    '  *command\\ -v*) exit 0 ;;',
+    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *mac2-host*) printf "wrong-target:mac2\\n" ;;',
+    '  *mac-host*) printf "remote:mac:%s\\n" "$*" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /selected mac /);
+  assert.match(result.stdout, /remote:mac:/);
+  assert.doesNotMatch(result.stdout, /wrong-target:mac2/);
+});
+
 test('native launcher retries another target when the selected host is unreachable before dispatch', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-predispatch-'));
   const binDir = join(root, 'bin');
@@ -562,6 +628,8 @@ test('native launcher bootstraps Yarn commands before dispatching them and leave
   assert.equal(typed.status, 0, typed.stderr);
   assert.match(typed.stdout, /typed-after-bootstrap/);
   assert.match(typed.stdout, /remote_dependency_bootstrap\.mjs/);
+  assert.match(typed.stdout, /node .*remote_dependency_bootstrap\.mjs/);
+  assert.doesNotMatch(typed.stdout, /corepack .*yarn .*node .*remote_dependency_bootstrap\.mjs/);
   assert.match(typed.stdout, /HAPPIER_STACK_PM_CACHE_BASE_DIR.*remote\/home\/cache/);
 
   const raw = spawnSync('/bin/sh', [launcher, '--', 'rg', '-n', 'needle'], {
