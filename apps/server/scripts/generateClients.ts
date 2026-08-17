@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
 import { runCommand } from "./runCommand";
@@ -106,6 +107,24 @@ const PRISMA_BINARY_TARGET_ENGINE_FILES = new Map<string, string>([
     ["windows", "query_engine-windows.dll.node"],
 ]);
 
+const PRISMA_SOURCE_SCHEMA_STAMP = ".happier-source-schema.sha256";
+
+function digestPrismaSourceSchema(sourceSchema: string): string {
+    return createHash("sha256").update(sourceSchema).digest("hex");
+}
+
+async function writePrismaSourceSchemaStamp(params: Readonly<{
+    sourcePath: string;
+    generatedClientDir: string;
+}>): Promise<void> {
+    const sourceSchema = await readFile(params.sourcePath, "utf8");
+    await writeFile(
+        join(params.generatedClientDir, PRISMA_SOURCE_SCHEMA_STAMP),
+        `${digestPrismaSourceSchema(sourceSchema)}\n`,
+        "utf8",
+    );
+}
+
 function resolveRequiredGeneratedClientFiles(sourceSchema: string): string[] | null {
     const binaryTargetsMatch = sourceSchema.match(/binaryTargets\s*=\s*\[([\s\S]*?)\]/m);
     if (!binaryTargetsMatch) {
@@ -171,7 +190,13 @@ export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParam
                 return false;
             }
         }
-        if (normalizePrismaSchemaText(sourceSchema) !== normalizePrismaSchemaText(generatedSchema)) {
+        const stampPath = join(check.generatedClientDir, PRISMA_SOURCE_SCHEMA_STAMP);
+        const stampedSourceDigest = await readText(stampPath).catch(() => null);
+        if (stampedSourceDigest !== null) {
+            if (stampedSourceDigest.trim() !== digestPrismaSourceSchema(sourceSchema)) {
+                return false;
+            }
+        } else if (normalizePrismaSchemaText(sourceSchema) !== normalizePrismaSchemaText(generatedSchema)) {
             return false;
         }
     }
@@ -224,6 +249,10 @@ async function main(): Promise<void> {
             DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres"),
         },
     });
+    await writePrismaSourceSchemaStamp({
+        sourcePath: join(serverRoot, "prisma", "schema.prisma"),
+        generatedClientDir: join(serverRoot, "..", "..", "node_modules", ".prisma", "client"),
+    });
 
     if (providers.has("sqlite")) {
         await runPrismaCli({
@@ -234,6 +263,10 @@ async function main(): Promise<void> {
                 DATABASE_URL: prismaGenerateDatabaseUrlForProvider("sqlite"),
             },
         });
+        await writePrismaSourceSchemaStamp({
+            sourcePath: join(serverRoot, "prisma", "sqlite", "schema.prisma"),
+            generatedClientDir: join(serverRoot, "generated", "sqlite-client"),
+        });
     }
     if (providers.has("mysql")) {
         await runPrismaCli({
@@ -243,6 +276,10 @@ async function main(): Promise<void> {
                 ...env,
                 DATABASE_URL: prismaGenerateDatabaseUrlForProvider("mysql"),
             },
+        });
+        await writePrismaSourceSchemaStamp({
+            sourcePath: join(serverRoot, "prisma", "mysql", "schema.prisma"),
+            generatedClientDir: join(serverRoot, "generated", "mysql-client"),
         });
     }
 }

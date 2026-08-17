@@ -8,6 +8,7 @@ import {
 } from "./generateClients";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 function extractPrismaModelBlock(schema: string, modelName: string): string {
@@ -117,6 +118,8 @@ describe("resolveSchemaSyncInvocation", () => {
 });
 
 describe("areRequestedPrismaOutputsCurrent", () => {
+    const sourceDigest = (schema: string): string => createHash("sha256").update(schema).digest("hex");
+
     it("keeps the checked-in MySQL generated client synchronized with the MySQL schema", async () => {
         const serverRoot = process.cwd();
         const [sourceSchema, generatedSchema, generatedTypes] = await Promise.all([
@@ -187,6 +190,59 @@ describe("areRequestedPrismaOutputsCurrent", () => {
         });
 
         expect(current).toBe(true);
+    });
+
+    it("uses the source-schema generation stamp instead of Prisma's reordered generated schema text", async () => {
+        const serverRoot = "/repo/apps/server";
+        const sourceSchema = `
+            generator client {
+                provider = "prisma-client-js"
+                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
+            }
+
+            model Run {
+                id String @db.VarChar(36) @id @default(uuid())
+                @@index([id])
+                @@unique([id])
+            }
+        `;
+        const prismaGeneratedSchema = `
+            generator client {
+                provider = "prisma-client-js"
+                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
+            }
+
+            model Run {
+                id String @id @default(uuid()) @db.VarChar(36)
+                @@unique([id])
+                @@index([id])
+            }
+        `;
+        const generatedDir = "/repo/node_modules/.prisma/client";
+        const files = new Map<string, string>([
+            ["/repo/apps/server/prisma/schema.prisma", sourceSchema],
+            [`${generatedDir}/schema.prisma`, prismaGeneratedSchema],
+            [`${generatedDir}/.happier-source-schema.sha256`, `${sourceDigest(sourceSchema)}\n`],
+            [`${generatedDir}/index.js`, "module.exports = {}\n"],
+            [`${generatedDir}/default.js`, "module.exports = {}\n"],
+            [`${generatedDir}/package.json`, "{\n}\n"],
+            [`${generatedDir}/libquery_engine-debian-openssl-3.0.x.so.node`, ""],
+            [`${generatedDir}/libquery_engine-linux-arm64-openssl-3.0.x.so.node`, ""],
+            [`${generatedDir}/libquery_engine-darwin.dylib.node`, ""],
+            [`${generatedDir}/libquery_engine-darwin-arm64.dylib.node`, ""],
+            [`${generatedDir}/query_engine-windows.dll.node`, ""],
+        ]);
+
+        await expect(areRequestedPrismaOutputsCurrent({
+            serverRoot,
+            providers: new Set(["postgres"]),
+            fileExists: async (path) => files.has(path),
+            readText: async (path) => {
+                const value = files.get(path);
+                if (typeof value !== "string") throw new Error(`Unexpected file read: ${path}`);
+                return value;
+            },
+        })).resolves.toBe(true);
     });
 
     it("returns false when a requested generated schema drifts from the source schema", async () => {
