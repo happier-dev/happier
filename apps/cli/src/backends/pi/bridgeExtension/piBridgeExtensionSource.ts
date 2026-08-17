@@ -3,6 +3,7 @@ import {
   PI_BRIDGE_DISABLE_RENAME_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
   PI_BRIDGE_MEMORY_MACHINE_ID_ENV,
+  PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
 
 /**
@@ -10,7 +11,7 @@ import {
  * file name stays stable; bumping this version changes the emitted source so the
  * write-if-changed asset refresh replaces stale local copies.
  */
-export const PI_BRIDGE_EXTENSION_VERSION = '1';
+export const PI_BRIDGE_EXTENSION_VERSION = '2';
 
 export type PiBridgeExtensionSourceParams = Readonly<{
   /** Register the `change_title` bridge tool. */
@@ -57,6 +58,7 @@ const SESSION_ID_FLAG = ${jsString(PI_BRIDGE_SESSION_ID_FLAG)};
 const DISABLE_RENAME_FLAG = ${jsString(PI_BRIDGE_DISABLE_RENAME_FLAG)};
 const DISABLE_MEMORY_FLAG = ${jsString(PI_BRIDGE_DISABLE_MEMORY_FLAG)};
 const MEMORY_MACHINE_ID_ENV = ${jsString(PI_BRIDGE_MEMORY_MACHINE_ID_ENV)};
+const TOKEN_COUNT_MARKER_TYPE = ${jsString(PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE)};
 const TOOL_CALL_TIMEOUT_MS = 120000;
 
 const RENAME_ENABLED = ${params.renameEnabled ? 'true' : 'false'};
@@ -225,6 +227,33 @@ function boundMemoryMachineId(explicit) {
   return fromEnv;
 }
 
+// Live context telemetry: after each assistant message, publish pi's context usage as a
+// single-line JSON marker on stderr. The Happier Pi RPC backend parses these markers and
+// merges them into its per-turn token_count agent message (context_used_tokens /
+// context_window_tokens), giving Pi sessions a live context-size badge like Claude and
+// OpenCode. Stderr is a machine-readable side channel that does not touch the LLM context.
+function emitContextTelemetryMarker(ctx) {
+  let usage = null;
+  try {
+    usage = typeof ctx?.getContextUsage === "function" ? ctx.getContextUsage() : null;
+  } catch {
+    usage = null;
+  }
+  if (!usage || typeof usage !== "object") return;
+  const used = typeof usage.tokens === "number" && Number.isFinite(usage.tokens) && usage.tokens >= 0
+    ? Math.trunc(usage.tokens)
+    : null;
+  const size = typeof usage.contextWindow === "number" && Number.isFinite(usage.contextWindow) && usage.contextWindow > 0
+    ? Math.trunc(usage.contextWindow)
+    : null;
+  if (used === null || used <= 0 || size === null) return;
+  try {
+    process.stderr.write(JSON.stringify({ type: TOKEN_COUNT_MARKER_TYPE, used, size }) + "\\n");
+  } catch {
+    // Best-effort telemetry; never fail the turn over it.
+  }
+}
+
 // Pi extension factory: registers the bridge flags up front, then registers the bridge
 // tools on session_start only when the session binding flag is present. Happier passes
 // this generated file through Pi's --extension argument together with --happy-session-id.
@@ -249,6 +278,14 @@ export default function HappierPiToolsBridgeExtension(pi) {
     if (registered) return;
     if (!readFlagString(pi, SESSION_ID_FLAG)) return; // Not launched by Happier: stay inert.
     registered = true;
+
+    // Context telemetry rides the session binding (never the per-tool disable flags): the
+    // live context badge is core session UX, not an advertised tool.
+    pi.on("message_end", (event, ctx) => {
+      const message = event && typeof event === "object" ? event.message : null;
+      if (!message || typeof message !== "object" || message.role !== "assistant") return;
+      emitContextTelemetryMarker(ctx);
+    });
 
     const disableRename = readFlagBool(pi, DISABLE_RENAME_FLAG) || !RENAME_ENABLED;
     const disableMemory = readFlagBool(pi, DISABLE_MEMORY_FLAG) || !MEMORY_ENABLED;

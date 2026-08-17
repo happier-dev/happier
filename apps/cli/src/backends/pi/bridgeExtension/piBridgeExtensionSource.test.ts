@@ -14,6 +14,7 @@ import {
   PI_BRIDGE_DISABLE_MEMORY_FLAG,
   PI_BRIDGE_DISABLE_RENAME_FLAG,
   PI_BRIDGE_SESSION_ID_FLAG,
+  PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE,
 } from './piBridgeExtensionEnv';
 
 function baseParams(overrides?: Partial<PiBridgeExtensionSourceParams>): PiBridgeExtensionSourceParams {
@@ -101,5 +102,30 @@ describe('buildPiBridgeExtensionSource', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('pi bridge extension context telemetry emission', () => {
+  it('bakes the shared marker type constant and an assistant-gated message_end listener', () => {
+    const source = buildPiBridgeExtensionSource(baseParams());
+    expect(source).toContain(`"${PI_BRIDGE_TOKEN_COUNT_MARKER_TYPE}"`);
+    expect(source).toContain('pi.on("message_end"');
+    expect(source).toContain('message.role !== "assistant"');
+    expect(source).toContain('getContextUsage');
+    expect(source).toContain('process.stderr.write(JSON.stringify({ type: TOKEN_COUNT_MARKER_TYPE');
+  });
+
+  it('registers the listener inside the session-bound branch (inert without the binding)', () => {
+    const source = buildPiBridgeExtensionSource(baseParams());
+    const boundBranchStart = source.indexOf('registered = true;');
+    const listenerStart = source.indexOf('pi.on("message_end"');
+    const toolsStart = source.indexOf('pi.registerTool({');
+    expect(boundBranchStart).toBeGreaterThan(-1);
+    expect(listenerStart).toBeGreaterThan(boundBranchStart);
+    // Listener must also be independent of the tool-disable flags: it precedes them.
+    const disableRenameRead = source.indexOf('const disableRename');
+    expect(listenerStart).toBeGreaterThan(-1);
+    expect(listenerStart).toBeLessThan(disableRenameRead);
+    expect(toolsStart).toBeGreaterThan(listenerStart);
   });
 });
