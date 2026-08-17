@@ -69,14 +69,16 @@ The workflow's job-scoped token is a narrow exception to the ordinary interactiv
 
 Use at most one `needs:*` label to show whose response or action can move an open issue forward:
 
-- `needs:maintainer`: project review, diagnosis, implementation, release follow-up, or another maintainer decision is required;
-- `needs:reporter`: the project asked an external participant for information or confirmation and cannot make useful progress without their response.
+- `needs:maintainer`: a concrete project-side review, diagnosis, product decision, implementation, or engineering correction is required now;
+- `needs:reporter`: the project explicitly asked an external participant for decision-material information, reproduction, logs, versions, or confirmation, and that response is the next missing human input.
 
-These labels describe conversational ownership, not diagnosis, priority, roadmap intent, or fix availability. They are mutually exclusive and independent of `type:*`, `priority:*`, the release milestone, and `stage:*`. In particular, do not replace `needs:*` with a stage label when a correction exists: an issue can be available in source while still awaiting reporter confirmation or maintainer release follow-up.
+These labels describe the next human handoff, not diagnosis, priority, roadmap intent, generic backlog membership, open/closed state, or fix availability. They are mutually exclusive, optional, and independent of `type:*`, `priority:*`, the release milestone, and `stage:*`. No `needs:*` label is an intentional state when no immediate human response or engineering decision is required—for example, when only normal release progression or release-owned certification remains.
+
+Keep availability and handoff separate. A correction may carry `stage:source` while also carrying `needs:reporter` when the project has already requested a retry or diagnostics after the reporter's channel receives it; the stage records the release prerequisite and the handoff records whose evidence is ultimately required. Do not use `needs:maintainer` merely because a correction is waiting for a release, promotion, artifact publication, routine release validation, or eventual closure. Use it only when a named substantive project action remains. If useful diagnosis, review, or implementation can still proceed before the reporter answers, retain `needs:maintainer`; if the only prerequisite is release progression and the requested reporter evidence remains decision-material, use `needs:reporter`.
 
 The issue handoff workflow performs only three pre-authorized transitions:
 
-1. a newly opened or reopened issue becomes `needs:maintainer`;
+1. a newly opened or reopened issue becomes `needs:maintainer` as an inbox default until triage selects `needs:reporter`, retains `needs:maintainer` for a concrete project action, or clears both labels;
 2. when an external human comments on an open `needs:reporter` issue, it becomes `needs:maintainer`;
 3. a project-side commenter with `admin`, `maintain`, `write`, or `triage` permission may apply the exact allowlisted hidden directives below.
 
