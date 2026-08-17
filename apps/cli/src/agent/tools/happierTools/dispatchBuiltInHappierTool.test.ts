@@ -444,8 +444,8 @@ describe('built-in Happier tools', () => {
     const executeActionByToolName = vi.fn(async () => ok({ unreachable: true }));
 
     const result = await dispatchBuiltInHappierTool({
-      toolName: 'memory_search',
-      args: { machineId: 'machine-1', query: { q: 'needle' } },
+      toolName: 'memory_ensure_up_to_date',
+      args: { machineId: 'machine-1', sessionId: 'sess-1' },
       sessionId: 'sess-1',
       surface: 'cli',
       deps: {
