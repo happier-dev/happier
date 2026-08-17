@@ -214,6 +214,8 @@ export type ActionExecutorDeps = Readonly<{
     windowsTerminalWindowName?: string;
     codexBackendMode?: SessionSpawnNewInput['codexBackendMode'];
     agentRuntimeDescriptorV1?: SessionSpawnNewInput['agentRuntimeDescriptorV1'];
+    /** Typed source recipe for a Replay-seeded child; required semantics when present. */
+    sourceContext?: SessionSpawnNewInput['sourceContext'];
     surface?: keyof ActionSurfaces | null;
     callerSurface?: keyof ActionSurfaces | null;
     callerPermissionMode?: string | null;

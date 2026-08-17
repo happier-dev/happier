@@ -153,6 +153,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['sessions'],
     representation: 'server',
   },
+  'sessions.agentSwitching': {
+    description: 'Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'server',
+  },
   'sessions.folders': {
     description: 'Per-account session folder organization and assignment APIs.',
     defaultFailMode: 'fail_closed',

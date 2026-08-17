@@ -11,6 +11,10 @@ import {
   type RuntimeConfigOutcomeTimingV1,
 } from './transcriptRawRecordV1.js';
 import * as transcriptProtocol from './transcriptRawRecordV1.js';
+import {
+  SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
+  SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
+} from '../sessionAgentTransitionDivider.js';
 
 describe('TranscriptRawRecordV1Schema', () => {
   it('parses user text records with extra fields', () => {
@@ -270,6 +274,68 @@ describe('TranscriptRawRecordV1Schema', () => {
         affectsMeaningfulActivity: true,
       });
     }
+  });
+
+  it('classifies the same-Session transition divider as no user attention', () => {
+    expect(agentEventAttentionImpact({
+      type: 'message',
+      message: SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
+      [SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY]: {
+        v: 1,
+        fromAgentId: 'claude',
+        toAgentId: 'codex',
+      },
+    } as unknown as TranscriptRawAgentEventV1)).toEqual({
+      affectsUnread: false,
+      affectsMeaningfulActivity: false,
+    });
+  });
+
+  it('keeps ordinary passthrough message events attention-bearing', () => {
+    // Guards the "add `message` to the no-attention allowlist" shortcut, which
+    // would silence every unrelated informational passthrough event.
+    expect(agentEventAttentionImpact({
+      type: 'message',
+      message: 'Something the user should see.',
+    } as unknown as TranscriptRawAgentEventV1)).toEqual({
+      affectsUnread: true,
+      affectsMeaningfulActivity: true,
+    });
+  });
+
+  it('does not silence a malformed or wrong-version transition sidecar', () => {
+    const malformedSidecars: ReadonlyArray<unknown> = [
+      { v: 2, fromAgentId: 'claude', toAgentId: 'codex' },
+      { v: 1, fromAgentId: '', toAgentId: 'codex' },
+      { v: 1, fromAgentId: 'claude' },
+      { v: 1, fromAgentId: 'claude', toAgentId: 'codex', extra: 'nope' },
+      'not-an-object',
+      null,
+    ];
+    for (const sidecar of malformedSidecars) {
+      expect(agentEventAttentionImpact({
+        type: 'message',
+        message: SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
+        [SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY]: sidecar,
+      } as unknown as TranscriptRawAgentEventV1)).toEqual({
+        affectsUnread: true,
+        affectsMeaningfulActivity: true,
+      });
+    }
+  });
+
+  it('does not treat a transition sidecar on a non-message event as a divider', () => {
+    expect(agentEventAttentionImpact({
+      type: 'ready',
+      [SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY]: {
+        v: 1,
+        fromAgentId: 'claude',
+        toAgentId: 'codex',
+      },
+    } as unknown as TranscriptRawAgentEventV1)).toEqual({
+      affectsUnread: true,
+      affectsMeaningfulActivity: true,
+    });
   });
 
   it('parses codex turn_aborted lifecycle records', () => {
@@ -1236,5 +1302,64 @@ describe('runtime-config-outcome timing and sessionMode contract', () => {
       changes: [{ key: 'sessionGoal', requested: 'x' }],
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+/**
+ * `attentionImpact` is not a persisted column, so every read re-derives attention
+ * from stored content. This owner is therefore the single attention decision for
+ * the transition divider; both re-read resolvers inherit it by delegating here.
+ */
+describe('agent-transition divider attention', () => {
+  const divider = {
+    type: 'message',
+    message: 'Continued with another Agent.',
+    sessionAgentTransitionV1: { v: 1, fromAgentId: 'claude', toAgentId: 'codex' },
+  };
+
+  it('silences an event carrying the transition sidecar', () => {
+    expect(agentEventAttentionImpact(divider)).toEqual({
+      affectsUnread: false,
+      affectsMeaningfulActivity: false,
+    });
+  });
+
+  it('leaves an ordinary passthrough message event attention-bearing', () => {
+    expect(agentEventAttentionImpact({ type: 'message', message: 'Continued with another Agent.' })).toEqual({
+      affectsUnread: true,
+      affectsMeaningfulActivity: true,
+    });
+  });
+
+  it('does not silence a malformed or unknown-version sidecar', () => {
+    for (const sidecar of [{ v: 2, fromAgentId: 'claude', toAgentId: 'codex' }, 'garbage', null]) {
+      expect(agentEventAttentionImpact({ type: 'message', message: 'x', sessionAgentTransitionV1: sidecar })).toEqual({
+        affectsUnread: true,
+        affectsMeaningfulActivity: true,
+      });
+    }
+  });
+
+  /**
+   * A malformed sidecar must not make the whole row unparseable. The key name is
+   * writable by any client that can post an agent event, and the passthrough
+   * `message` arm accepted arbitrary extra keys before this program existed — so
+   * a strict nested field that fails the arm would let one write erase a
+   * transcript row for every reader.
+   */
+  it('keeps the transcript row parseable when the sidecar is malformed', () => {
+    const parseEventRow = (data: unknown) => TranscriptRawRecordV1Schema.safeParse({
+      role: 'agent',
+      content: { type: 'event', id: 'evt-1', data },
+    });
+
+    // Control: the same row shape with a well-formed sidecar parses.
+    expect(parseEventRow(divider).success).toBe(true);
+
+    for (const sidecar of [{ v: 2 }, 'garbage', 42]) {
+      expect(
+        parseEventRow({ type: 'message', message: 'hi', sessionAgentTransitionV1: sidecar }).success,
+      ).toBe(true);
+    }
   });
 });

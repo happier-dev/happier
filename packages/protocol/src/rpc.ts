@@ -89,6 +89,19 @@ export const RPC_METHODS = {
   DAEMON_SESSION_HANDOFF_ABORT_V2: 'daemon.sessionHandoff.abort.v2',
   SESSION_CONTINUE_WITH_REPLAY: 'session.continueWithReplay',
   SESSION_FORK: 'session.fork',
+  /**
+   * Same-Session cross-Agent continuation. Owned by the DAEMON machine RPC, not
+   * the session-process registrar: the operation stops the very runtime that
+   * would otherwise be handling it, so the session process cannot be its own
+   * coordinator.
+   */
+  SESSION_AGENT_TRANSITION: 'session.agentTransition',
+  /**
+   * Read-only live eligibility probe for the transition and for a
+   * source-context spawn on this machine. Grants no authority and persists
+   * nothing; the mutation revalidates every fact.
+   */
+  SESSION_CONTINUATION_INSPECT: 'session.continuation.inspect',
   BASH: 'bash',
   PREVIEW_ENV: 'preview-env',
   READ_FILE: 'readFile',
@@ -178,6 +191,7 @@ const MAX_SOCKET_RPC_AUTHORIZATION_SESSION_ID_LENGTH = 512;
 const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION_METHODS = new Set<string>([
   RPC_METHODS.STOP_SESSION,
   RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
+  RPC_METHODS.SESSION_AGENT_TRANSITION,
 ]);
 
 const SOCKET_RPC_PROVIDER_STARTING_METHODS = new Set<string>([
@@ -185,6 +199,7 @@ const SOCKET_RPC_PROVIDER_STARTING_METHODS = new Set<string>([
   RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
   RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY,
   RPC_METHODS.SESSION_FORK,
+  RPC_METHODS.SESSION_AGENT_TRANSITION,
   RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
   RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
   RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL,

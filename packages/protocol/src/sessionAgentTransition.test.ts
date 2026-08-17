@@ -1,0 +1,382 @@
+import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+import {
+  SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1,
+  SESSION_AGENT_TRANSITION_ERROR_CODES_V1,
+  SESSION_AGENT_TRANSITION_REJECTED_CODES_V1,
+  SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1,
+  ComposerAgentContinuationIntentV1Schema,
+  SessionAgentTransitionRequestV1Schema,
+  SessionAgentTransitionResultV1Schema,
+  SessionAgentTransitionSelectionV1Schema,
+  SessionContinuationInspectionRequestV1Schema,
+  SessionContinuationInspectionV1Schema,
+  resolveSessionContinuationUnavailablePresentationV1,
+  type SessionContinuationInspectionUnavailableReasonV1,
+  type SessionContinuationMachinePresenceV1,
+} from './sessionAgentTransition.js';
+import {
+  SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX,
+  SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
+  SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
+  SessionAgentTransitionDividerV1Schema,
+  buildSessionAgentTransitionDividerLocalId,
+  isSessionAgentTransitionDividerLocalId,
+  readSessionAgentTransitionDividerV1,
+} from './sessionAgentTransitionDivider.js';
+import { SESSION_AGENT_TRANSITION_VECTORS as V } from './sessionAgentTransitionVectors.js';
+import { SessionSpawnSourceContextV1Schema } from './sessionSpawnSourceContextV1.js';
+import { SessionForkRpcParamsSchema, SessionForkStrategySchema } from './sessionFork.js';
+import { createTranscriptRawRecordV1Schema } from './sessionMessages/transcriptRawRecordV1.js';
+
+function expectAllParse(schema: z.ZodTypeAny, group: Readonly<Record<string, unknown>>): void {
+  for (const [name, value] of Object.entries(group)) {
+    const parsed = schema.safeParse(value);
+    expect(parsed.success, `${name} should parse but failed: ${JSON.stringify(parsed.error?.issues)}`)
+      .toBe(true);
+  }
+}
+
+function expectAllReject(schema: z.ZodTypeAny, group: Readonly<Record<string, unknown>>): void {
+  for (const [name, value] of Object.entries(group)) {
+    expect(schema.safeParse(value).success, `${name} should be rejected but parsed`).toBe(false);
+  }
+}
+
+describe('session agent transition — portable selection', () => {
+  it('accepts every valid selection vector and rejects every invalid one', () => {
+    expectAllParse(SessionAgentTransitionSelectionV1Schema, V.selection.valid);
+    expectAllReject(SessionAgentTransitionSelectionV1Schema, V.selection.invalid);
+  });
+
+  it('requires modelId whenever providerConnectionId is set', () => {
+    const parsed = SessionAgentTransitionSelectionV1Schema.safeParse(
+      V.selection.invalid.providerConnectionWithoutModel,
+    );
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.some((issue) => issue.path.join('.') === 'modelId')).toBe(true);
+  });
+
+  it('trims bounded identifiers instead of persisting padded ids', () => {
+    const parsed = SessionAgentTransitionSelectionV1Schema.parse({
+      v: 1,
+      agentId: '  claude  ',
+      modelId: '  opus  ',
+    });
+    expect(parsed.agentId).toBe('claude');
+    expect(parsed.modelId).toBe('opus');
+  });
+
+  it('does not accept a builtInAgent target carrier as the selection shape', () => {
+    expect(
+      SessionAgentTransitionSelectionV1Schema.safeParse({
+        v: 1,
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('session agent transition — request', () => {
+  it('accepts the valid request vectors and rejects the invalid ones', () => {
+    expectAllParse(SessionAgentTransitionRequestV1Schema, V.request.valid);
+    expectAllReject(SessionAgentTransitionRequestV1Schema, V.request.invalid);
+  });
+
+  it('promotes localId from optional to required on the reused message input', () => {
+    const parsed = SessionAgentTransitionRequestV1Schema.parse(V.request.valid.minimal);
+    expect(parsed.input.localId).toBe('local_01');
+  });
+});
+
+describe('session agent transition — result union', () => {
+  it('accepts every valid result vector', () => {
+    expectAllParse(SessionAgentTransitionResultV1Schema, V.result.valid);
+  });
+
+  it('rejects every invalid result vector', () => {
+    expectAllReject(SessionAgentTransitionResultV1Schema, V.result.invalid);
+  });
+
+  it('partitions every error code across exactly one arm', () => {
+    const partitions = [
+      SESSION_AGENT_TRANSITION_REJECTED_CODES_V1,
+      SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1,
+      SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1,
+    ].flatMap((codes) => [...codes]);
+
+    expect(new Set(partitions).size).toBe(partitions.length);
+    expect([...partitions].sort()).toEqual([...SESSION_AGENT_TRANSITION_ERROR_CODES_V1].sort());
+  });
+
+  it('makes every error code reachable from the result union', () => {
+    for (const code of SESSION_AGENT_TRANSITION_REJECTED_CODES_V1) {
+      expect(
+        SessionAgentTransitionResultV1Schema.safeParse({
+          type: 'rejected', code, sourceEffect: 'none',
+        }).success,
+        `rejected:${code}`,
+      ).toBe(true);
+    }
+    for (const code of SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1) {
+      expect(
+        SessionAgentTransitionResultV1Schema.safeParse({
+          type: 'partially_applied', localId: 'local_01', applied: 'source_stopped', code,
+        }).success,
+        `source_stopped:${code}`,
+      ).toBe(true);
+    }
+    for (const code of SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1) {
+      expect(
+        SessionAgentTransitionResultV1Schema.safeParse({
+          type: 'partially_applied',
+          localId: 'local_01',
+          applied: 'current_view_committed',
+          code,
+        }).success,
+        `current_view_committed:${code}`,
+      ).toBe(true);
+    }
+  });
+
+  it('carries no code on outcome_unknown, so it cannot name a cause it lacks', () => {
+    expect(SessionAgentTransitionResultV1Schema.safeParse(V.result.valid.unknownBare).success)
+      .toBe(true);
+    for (const code of SESSION_AGENT_TRANSITION_ERROR_CODES_V1) {
+      expect(
+        SessionAgentTransitionResultV1Schema.safeParse({
+          type: 'outcome_unknown', localId: 'local_01', code,
+        }).success,
+        `outcome_unknown must not carry ${code}`,
+      ).toBe(false);
+    }
+  });
+
+  it('never lets a code reachable after the source stopped ride the rejected arm', () => {
+    const postStopCodes = [
+      ...SESSION_AGENT_TRANSITION_SOURCE_STOPPED_CODES_V1,
+      ...SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1,
+    ];
+    for (const code of postStopCodes) {
+      expect(
+        SessionAgentTransitionResultV1Schema.safeParse({
+          type: 'rejected', code, sourceEffect: 'none',
+        }).success,
+        `rejected must not carry ${code}`,
+      ).toBe(false);
+    }
+  });
+
+  it('routes a still-running stop to rejected and an unconfirmed stop to outcome_unknown', () => {
+    // The stop result PROVED the source is still running: no effect, so keep
+    // editing and retry-in-place stay safe.
+    expect(
+      SessionAgentTransitionResultV1Schema.safeParse(V.result.valid.rejectedSourceStopFailed)
+        .success,
+    ).toBe(true);
+
+    // An unconfirmed stop means the source may already be gone. It must not
+    // claim `sourceEffect: 'none'`, and it names no cause.
+    expect(SessionAgentTransitionResultV1Schema.safeParse(V.result.valid.unknownBare).success)
+      .toBe(true);
+    expect(
+      SessionAgentTransitionResultV1Schema.safeParse(V.result.invalid.unknownCarryingStopCode)
+        .success,
+    ).toBe(false);
+  });
+
+  it('separates a known source-stopped outcome from a genuinely indeterminate one', () => {
+    // Known: source stopped, nothing committed. The Session is still the source,
+    // so the client may safely resume the source or retry.
+    const stopped = SessionAgentTransitionResultV1Schema.parse(
+      V.result.valid.partialContextUnavailable,
+    );
+    expect(stopped).toMatchObject({ type: 'partially_applied', applied: 'source_stopped' });
+
+    // Known: the Session IS the target.
+    const committed = SessionAgentTransitionResultV1Schema.parse(
+      V.result.valid.partialDividerMissing,
+    );
+    expect(committed).toMatchObject({
+      type: 'partially_applied',
+      applied: 'current_view_committed',
+    });
+
+    // Indeterminate: no depth and no cause may be claimed.
+    expect(SessionAgentTransitionResultV1Schema.parse(V.result.valid.unknownBare))
+      .toEqual({ type: 'outcome_unknown', localId: 'local_01' });
+  });
+
+  it('guarantees rejected means the source was never touched', () => {
+    const parsed = SessionAgentTransitionResultV1Schema.parse(V.result.valid.rejectedForbidden);
+    expect(parsed).toMatchObject({ type: 'rejected', sourceEffect: 'none' });
+    expect(
+      SessionAgentTransitionResultV1Schema.safeParse(V.result.invalid.rejectedWithSourceEffect)
+        .success,
+    ).toBe(false);
+  });
+
+  it('correlates applied depth with the codes truthfully reachable at that depth', () => {
+    for (const name of [
+      'partialWithUnknownAppliedDepth',
+      'committedCarryingPreCommitCode',
+      'sourceStoppedCarryingCommittedCode',
+    ] as const) {
+      expect(
+        SessionAgentTransitionResultV1Schema.safeParse(V.result.invalid[name]).success,
+        name,
+      ).toBe(false);
+    }
+  });
+});
+
+describe('session continuation inspection', () => {
+  it('accepts and rejects the inspection request vectors', () => {
+    expectAllParse(SessionContinuationInspectionRequestV1Schema, V.inspection.request.valid);
+    expectAllReject(SessionContinuationInspectionRequestV1Schema, V.inspection.request.invalid);
+  });
+
+  it('accepts and rejects the inspection result vectors', () => {
+    expectAllParse(SessionContinuationInspectionV1Schema, V.inspection.valid);
+    expectAllReject(SessionContinuationInspectionV1Schema, V.inspection.invalid);
+  });
+
+  it('requires every support flag so a missing flag never reads as false', () => {
+    expect(
+      SessionContinuationInspectionV1Schema.safeParse(V.inspection.invalid.missingFlag).success,
+    ).toBe(false);
+  });
+
+  it('distinguishes update-required from machine-offline using machine presence', () => {
+    for (const vector of V.inspection.unavailablePresentation) {
+      expect(
+        resolveSessionContinuationUnavailablePresentationV1({
+          reason: vector.reason as SessionContinuationInspectionUnavailableReasonV1,
+          machinePresence: vector.machinePresence as SessionContinuationMachinePresenceV1,
+        }),
+        `${vector.reason}/${vector.machinePresence}`,
+      ).toBe(vector.expected);
+    }
+  });
+});
+
+describe('session agent transition divider', () => {
+  it('pins the reserved namespace, sidecar key, and old-reader prose', () => {
+    expect(SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX).toBe(V.divider.localIdPrefix);
+    expect(SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY).toBe(V.divider.sidecarKey);
+    expect(SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE).toBe(V.divider.message);
+  });
+
+  it('derives a deterministic divider localId from the submitted localId', () => {
+    expect(buildSessionAgentTransitionDividerLocalId(V.divider.submittedLocalId))
+      .toBe(V.divider.expectedLocalId);
+  });
+
+  it('recognizes exactly the reserved localId namespace', () => {
+    for (const localId of V.divider.reservedLocalIds) {
+      expect(isSessionAgentTransitionDividerLocalId(localId), localId).toBe(true);
+    }
+    for (const localId of V.divider.unreservedLocalIds) {
+      expect(isSessionAgentTransitionDividerLocalId(localId), localId).toBe(false);
+    }
+  });
+
+  it('accepts and rejects the divider payload vectors', () => {
+    expectAllParse(SessionAgentTransitionDividerV1Schema, V.divider.payload.valid);
+    expectAllReject(SessionAgentTransitionDividerV1Schema, V.divider.payload.invalid);
+  });
+
+  it('keeps a conflicting divider distinct from a missing one', () => {
+    // Both are committed-view outcomes, but they are different states with
+    // different safe recoveries: `divider_missing` may resume and send
+    // normally, `divider_conflict` may not and must not be retried into the
+    // same conflict. Collapsing them loses that distinction.
+    expect(
+      SessionAgentTransitionResultV1Schema.safeParse(V.result.valid.partialDividerConflict).success,
+    ).toBe(true);
+    expect(SESSION_AGENT_TRANSITION_CURRENT_VIEW_COMMITTED_CODES_V1)
+      .toEqual(expect.arrayContaining(['divider_missing', 'divider_conflict']));
+    expect(V.result.valid.partialDividerConflict.code)
+      .not.toBe(V.result.valid.partialDividerMissing.code);
+  });
+
+  it('reads the sidecar only from a well-formed transition message event', () => {
+    expect(readSessionAgentTransitionDividerV1(V.divider.agentEvent))
+      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude' });
+    expect(readSessionAgentTransitionDividerV1(V.divider.plainMessageAgentEvent)).toBeNull();
+    expect(readSessionAgentTransitionDividerV1(V.divider.malformedSidecarAgentEvent)).toBeNull();
+    expect(readSessionAgentTransitionDividerV1({ type: 'switch', mode: 'local' })).toBeNull();
+    expect(readSessionAgentTransitionDividerV1(null)).toBeNull();
+  });
+
+  it('rides the existing message arm of the real transcript record schema', () => {
+    const schema = createTranscriptRawRecordV1Schema(z);
+    const parsed = schema.safeParse({
+      role: 'agent',
+      content: { type: 'event', id: 'evt_01', data: V.divider.agentEvent },
+    });
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+
+    const content = (parsed.data as { content: { data: unknown } }).content;
+    expect(readSessionAgentTransitionDividerV1(content.data))
+      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude' });
+  });
+
+  it('is not a new agent-event variant, so a released reader keeps rendering it', () => {
+    // Exactly the shipped `type:'message'` arm as it existed before this feature.
+    const releasedMessageArm = z
+      .object({ type: z.literal('message'), message: z.string() })
+      .passthrough();
+
+    const parsed = releasedMessageArm.safeParse(V.divider.agentEvent);
+    expect(parsed.success).toBe(true);
+    // The old reader renders the prose ...
+    expect((parsed.data as { message: string }).message).toBe(V.divider.message);
+    // ... and its passthrough preserves the sidecar rather than dropping the row.
+    expect((parsed.data as Record<string, unknown>)[V.divider.sidecarKey])
+      .toEqual({ v: 1, fromAgentId: 'codex', toAgentId: 'claude' });
+  });
+});
+
+describe('source-context spawn recipe', () => {
+  it('accepts and rejects the sourceContext vectors', () => {
+    expectAllParse(SessionSpawnSourceContextV1Schema, V.sourceContext.valid);
+    expectAllReject(SessionSpawnSourceContextV1Schema, V.sourceContext.invalid);
+  });
+
+  it('reuses SessionForkPoint rather than inventing a cutoff field', () => {
+    expect(
+      SessionSpawnSourceContextV1Schema.safeParse(V.sourceContext.invalid.inventedCutoffField)
+        .success,
+    ).toBe(false);
+    expect(SessionSpawnSourceContextV1Schema.parse(V.sourceContext.valid.exactSeq).forkPoint)
+      .toEqual({ type: 'seq', upToSeqInclusive: 42 });
+  });
+});
+
+describe('fork strategy and request identity', () => {
+  it('exposes exactly the agreed strategy vocabulary', () => {
+    expect([...SessionForkStrategySchema.options].sort()).toEqual([...V.fork.strategies].sort());
+  });
+
+  it('accepts the generic native intent and the predecessor requestId', () => {
+    expectAllParse(SessionForkRpcParamsSchema, V.fork.valid);
+    expectAllReject(SessionForkRpcParamsSchema, V.fork.invalid);
+  });
+});
+
+describe('armed composer intent', () => {
+  it('accepts and rejects the composer intent vectors', () => {
+    expectAllParse(ComposerAgentContinuationIntentV1Schema, V.composerIntent.valid);
+    expectAllReject(ComposerAgentContinuationIntentV1Schema, V.composerIntent.invalid);
+  });
+
+  it('rejects a review reason persisted on the intent', () => {
+    expect(
+      ComposerAgentContinuationIntentV1Schema.safeParse(
+        V.composerIntent.invalid.persistedReviewReason,
+      ).success,
+    ).toBe(false);
+  });
+});

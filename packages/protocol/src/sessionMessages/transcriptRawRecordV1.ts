@@ -6,6 +6,10 @@ import {
   ConnectedServiceProfileIdSchema,
 } from '../connect/connectedServiceSchemas.js';
 import { ConnectedServiceUxDiagnosticV1Schema } from '../connect/connectedServiceUxDiagnostics.js';
+import {
+  SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY,
+  readSessionAgentTransitionDividerV1,
+} from '../sessionAgentTransitionDivider.js';
 import { createSessionMessageMetaSchema } from './sessionMessageMeta.js';
 import type { SessionMessageMeta } from './sessionMessageMeta.js';
 
@@ -612,7 +616,34 @@ const TerminalComposerDraftBlockedReasonV1Schema = z.enum([
 
 const AgentEventSchema = z.discriminatedUnion('type', [
   withAgentEventLifecycle(z.object({ type: z.literal('switch'), mode: z.enum(['local', 'remote']) })),
-  withAgentEventLifecycle(z.object({ type: z.literal('message'), message: z.string() })),
+  withAgentEventLifecycle(
+    z.object({
+      type: z.literal('message'),
+      message: z.string(),
+      /**
+       * Same-Session cross-Agent transition divider. This is a strict nested
+       * sidecar on the EXISTING passthrough `message` arm, never a new
+       * `AgentEventSchema` variant: this union is closed at the discriminator,
+       * so a new variant would be dropped by every released reader.
+       * `withAgentEventLifecycle` ends in `.passthrough()`, so an old reader
+       * parses this row as an ordinary informational message and keeps the
+       * sidecar untouched.
+       *
+       * Declared as `unknown` ON PURPOSE. A strict nested schema here would
+       * invalidate the whole discriminated-union member on a malformed or
+       * future-version sidecar, and this arm accepted arbitrary extra keys
+       * before the divider existed — so one write at this key name would erase
+       * an otherwise valid transcript row for every reader. Strictness lives at
+       * the two places that can act on it: writers parse
+       * {@link SessionAgentTransitionDividerV1Schema} before sealing, and the
+       * single canonical reader
+       * {@link readSessionAgentTransitionDividerV1} strict-parses and returns
+       * `null` for anything else — so a malformed sidecar is never treated as a
+       * divider, never silenced, and never a departure boundary.
+       */
+      [SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY]: z.unknown().optional(),
+    }),
+  ),
   withAgentEventLifecycle(
     z.object({
       type: z.literal('terminal-composer-draft-blocked'),
@@ -1105,6 +1136,19 @@ export function agentEventAttentionImpact(
   event: (Pick<TranscriptRawAgentEventV1, 'type'> & { status?: unknown }) | null | undefined,
 ): SessionMessageAttentionImpact {
   const type = readAgentEventType(event);
+  // The same-Session transition divider is a boundary marker, not news for the
+  // user. It rides the ordinary passthrough `message` arm, so the decision is
+  // conditioned on a VALID `sessionAgentTransitionV1` sidecar and never on the
+  // event type: adding bare `message` to the type-keyed no-attention set would
+  // silence every unrelated informational passthrough event.
+  //
+  // This is the single attention decision. `attentionImpact` is not a persisted
+  // column, so every re-read re-derives from stored content and both the server
+  // resolver and the client resolvers reach this function — teaching them
+  // separately would create a third decision-maker.
+  if (readSessionAgentTransitionDividerV1(event) !== null) {
+    return SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT;
+  }
   if (type === 'connected-service-runtime-auth-recovery') {
     const parsedStatus = ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema.safeParse(event?.status);
     return parsedStatus.success && RUNTIME_AUTH_RECOVERY_STATUSES_WITHOUT_USER_ATTENTION.has(parsedStatus.data)

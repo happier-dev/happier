@@ -12,6 +12,7 @@ import { BackendTargetKeySchema, BackendTargetRefSchema, buildBackendTargetKey, 
 import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
 import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
 import { SessionRollbackTargetSchema } from '../sessionRollback.js';
+import { SessionSpawnSourceContextV1Schema } from '../sessionSpawnSourceContextV1.js';
 import { SessionHandoffWorkspaceTransferSchema } from '../sessionControl/handoff/handoffSchemas.js';
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
 import {
@@ -567,6 +568,17 @@ const SessionSpawnNewInputSchema = z.object({
   windowsTerminalWindowName: z.string().min(1).optional(),
   codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   agentRuntimeDescriptorV1: AgentRuntimeDescriptorV1Schema.optional(),
+  /**
+   * Typed source recipe for a configurable Replay-seeded child Session.
+   *
+   * When present this is required semantics: the daemon resolves the source
+   * transcript and Replay seed before creating the child, and a failure creates
+   * no child. This schema is `.strict()`, so a daemon that predates the field
+   * rejects the whole request — the intended operation-scoped degradation,
+   * surfaced ahead of the send by `session.continuation.inspect`, which such a
+   * daemon also predates and answers METHOD_NOT_AVAILABLE.
+   */
+  sourceContext: SessionSpawnSourceContextV1Schema.optional(),
 }).strict().superRefine((value, ctx) => {
   const record = value as Record<string, unknown>;
   const rejectConflictingAliases = (fields: readonly string[]) => {
