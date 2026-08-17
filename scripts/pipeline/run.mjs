@@ -2014,7 +2014,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       runReleaseValidate({
         repoRoot,
         args: [...passthrough, '--dry-run'],
-        dryRun: false,
+        dryRun: passthrough.length === 0,
+        skipExecOnDryRun: passthrough.length === 0,
       });
       return;
     }

@@ -40,6 +40,7 @@ test('release-validation registry is the single owner of candidate-aware automat
     hasCliCandidate: true,
     hasServerCandidate: false,
     hasPublishedRelayPredecessor: true,
+    risks: { cliUpgrade: true, sessionContinuity: true, relayUpgrade: true },
   }), {
     selectedSuiteIds: ['artifact-verify', 'binary-smoke', 'cli-update'],
     skippedSuiteIds: ['session-continuity', 'docker-release-assets'],
@@ -49,6 +50,7 @@ test('release-validation registry is the single owner of candidate-aware automat
     hasCliCandidate: false,
     hasServerCandidate: true,
     hasPublishedRelayPredecessor: true,
+    risks: { cliUpgrade: true, sessionContinuity: true, relayUpgrade: true },
   }), {
     selectedSuiteIds: ['binary-smoke', 'session-continuity', 'docker-release-assets'],
     skippedSuiteIds: ['artifact-verify', 'cli-update'],
@@ -58,6 +60,7 @@ test('release-validation registry is the single owner of candidate-aware automat
     hasCliCandidate: true,
     hasServerCandidate: true,
     hasPublishedRelayPredecessor: true,
+    risks: { cliUpgrade: true, sessionContinuity: true, relayUpgrade: true },
   }), /normal release profile/);
 });
 
