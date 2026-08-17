@@ -24,7 +24,7 @@ test('pipeline checks release-assets profile dry-run routes through the unified 
   );
   assert.match(
     res.stdout ?? '',
-    /\[pipeline\] exec: node .*"--suite" "docker-release-assets"[\s\S]*?"--mode" "local"[\s\S]*?"--monorepo" "local"[\s\S]*?"--with-relay-upgrade" "--dry-run"/,
+    /"suite": "docker-release-assets"[\s\S]*?"type": "command"[\s\S]*?"--mode=local"[\s\S]*?"--monorepo=local"[\s\S]*?"--with-relay-upgrade"/,
   );
 });
 
