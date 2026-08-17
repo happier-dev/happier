@@ -2275,7 +2275,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect((client as any).canonicalPendingDeliveryByLocalId.has('ack-timeout-settlement')).toBe(false);
   });
 
-  it('caps response-loss settlement at one same-operation rejoin and never redrives it from wake or reconnect', async () => {
+  it('caps same-operation response-loss rejoin while reserving exact redrive for reconnect', async () => {
     const client = await createClient({
       latestTurnStatus: 'completed',
       pendingCount: 1,
@@ -2314,12 +2314,16 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
         pendingVersion: 3,
       },
     });
-    if (!supervisorOnConnected) throw new Error('missing supervised reconnect callback');
-    await supervisorOnConnected();
     await vi.advanceTimersByTimeAsync(60_000);
-
     expect(resolveAcceptedPendingDeliveryMock).toHaveBeenCalledTimes(2);
     expect((client as any).canonicalPendingDeliveryByLocalId.has('bounded-rejoin-local')).toBe(true);
+
+    if (!supervisorOnConnected) throw new Error('missing supervised reconnect callback');
+    await supervisorOnConnected();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(resolveAcceptedPendingDeliveryMock).toHaveBeenCalledTimes(3);
+    expect((client as any).canonicalPendingDeliveryByLocalId.has('bounded-rejoin-local')).toBe(false);
     expect(materializeNextMock).toHaveBeenCalledTimes(1);
   });
 
@@ -3607,7 +3611,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     expect(materializeNextMock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not let reconnect retry accepted-delivery settlement', async () => {
+  it('re-drives exact provider acceptance after reconnect when acceptance arrived while disconnected', async () => {
     const client = await createClient({
       latestTurnStatus: 'completed',
       pendingCount: 1,
@@ -3616,23 +3620,26 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
     });
     await waitForCurrentPendingInputContract(client);
     materializeNextMock.mockResolvedValueOnce(createProviderDeliveryMaterializeResult('retry-on-reconnect'));
-    resolveAcceptedPendingDeliveryMock
-      .mockRejectedValueOnce(new Error('temporary accepted-resolution failure'))
-      .mockResolvedValueOnce({
-        didResolve: true,
-        pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3 },
-      });
+    resolveAcceptedPendingDeliveryMock.mockResolvedValueOnce({
+      didResolve: true,
+      pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 3 },
+    });
 
     await client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' });
+    if (!sessionSocketStub) throw new Error('missing session socket');
+    sessionSocketStub.connected = false;
     confirmProviderInputAccepted(client, 'retry-on-reconnect');
-    await waitUntil(() => resolveAcceptedPendingDeliveryMock.mock.calls.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(resolveAcceptedPendingDeliveryMock).not.toHaveBeenCalled();
+    expect((client as any).canonicalPendingDeliveryByLocalId.has('retry-on-reconnect')).toBe(true);
 
     if (!supervisorOnConnected) throw new Error('missing supervised reconnect callback');
+    sessionSocketStub.connected = true;
     await supervisorOnConnected();
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitUntil(() => resolveAcceptedPendingDeliveryMock.mock.calls.length === 1);
     expect(resolveAcceptedPendingDeliveryMock).toHaveBeenCalledTimes(1);
-    expect((client as any).canonicalPendingDeliveryByLocalId.has('retry-on-reconnect')).toBe(true);
+    expect((client as any).canonicalPendingDeliveryByLocalId.has('retry-on-reconnect')).toBe(false);
     expect(materializeNextMock).toHaveBeenCalledTimes(1);
   });
 

@@ -1279,6 +1279,8 @@ export class ApiSessionClient extends EventEmitter {
                     if (!isResolvedContractCurrent()) return;
                 }
 
+                this.reofferAcceptedCanonicalPendingDeliveriesAfterConnection();
+
                 await this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' }).catch((error) => {
                     logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
                         error: serializeAxiosErrorForLog(error),
@@ -1620,6 +1622,37 @@ export class ApiSessionClient extends EventEmitter {
         this.acceptedCanonicalPendingDeliveryResolutionWrites.add(tracked);
         void tracked.finally(() => {
             this.acceptedCanonicalPendingDeliveryResolutionWrites.delete(tracked);
+        });
+    }
+
+    private reofferAcceptedCanonicalPendingDeliveriesAfterConnection(): void {
+        const producerGeneration = this.providerInputOutcomeProducerGeneration;
+        const sessionConnectionEpoch = this.sessionConnectionEpoch;
+        const precedingResolutions = [...this.acceptedCanonicalPendingDeliveryResolutionWrites];
+        const reoffer = async () => {
+            await Promise.all(precedingResolutions);
+            if (
+                this.closed
+                || this.runtimeTerminationStarted
+                || producerGeneration !== this.providerInputOutcomeProducerGeneration
+                || sessionConnectionEpoch !== this.sessionConnectionEpoch
+            ) {
+                return;
+            }
+            const authority = this.captureAcceptedCanonicalPendingDeliveryOperationAuthority(producerGeneration);
+            if (!authority) return;
+            for (const localId of this.canonicalPendingDeliveryByLocalId.keys()) {
+                if (this.providerInputTerminalOutcomeByLocalId.get(localId) !== 'accepted') continue;
+                this.trackAcceptedCanonicalPendingDeliveryResolution(
+                    this.resolveAcceptedCanonicalPendingDelivery(localId, authority),
+                );
+            }
+        };
+        void reoffer().catch((error) => {
+            logger.debug('[pendingQueue] accepted provider delivery reoffer after connection crashed', {
+                sessionId: this.sessionId,
+                error: serializeAxiosErrorForLog(error),
+            });
         });
     }
 
