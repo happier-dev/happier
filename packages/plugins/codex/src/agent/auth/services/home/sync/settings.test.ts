@@ -1,31 +1,17 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   codexHomeSyncProviderLabel,
   mapCodexStateSymlinkUnavailableDiagnostic,
-  resolveCodexHomeSharingSettings,
 } from './settings.js';
 
 describe('Codex home-sync settings policy', () => {
-  it('resolves Codex sharing settings from account settings payloads', () => {
-    expect(resolveCodexHomeSharingSettings({
-      connectedServicesProviderStateSharingSettingsV1: {
-        v: 1,
-        defaults: {
-          configMode: 'linked',
-          stateMode: 'isolated',
-        },
-        byAgentId: {
-          codex: {
-            configMode: 'copied',
-            stateMode: 'shared',
-          },
-        },
-      },
-    })).toMatchObject({
-      configMode: 'copied',
-      stateMode: 'shared',
-    });
+  it('does not retain the unreachable raw policy resolver', () => {
+    const source = readFileSync(new URL('./settings.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('resolveCodexHomeSharingSettings');
   });
 
   it('declares the provider label and symlink-unavailable diagnostic shape', () => {

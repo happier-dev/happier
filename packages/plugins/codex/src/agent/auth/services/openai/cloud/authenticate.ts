@@ -1,19 +1,18 @@
+import type {
+    AuthDiagnostic as CloudAuthDiagnosticV1,
+    AuthenticateOptions as CloudConnectAuthenticateOptionsV1,
+    AuthenticateResult as CloudConnectAuthenticateResultV1,
+    AuthenticatorContext as CloudCustomAuthenticatorContextV1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import {
-  buildConnectedServiceCredentialRecord,
-  type CloudAuthDiagnosticV1,
-  type CloudConnectAuthenticateOptionsV1,
-  type CloudConnectAuthenticateResultV1,
-  type CloudCustomAuthenticatorContextV1,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import { sleepWithSignal as sdkSleepWithSignal } from '@happier-dev/plugin-sdk/experimental/timeout';
+    OPENAI_CODEX_OAUTH_PROFILE,
+    parseCredentialRecord,
+    type OauthCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { sleepWithSignal as sdkSleepWithSignal } from '@happier-dev/plugin-sdk/async';
 
-import type { CodexRuntimeFetch } from '../../runtimeFetch.js';
 import { resolveCodexCloudAuthMode } from './authenticator.js';
-import {
-  authenticateCodexDevice,
-  OPENAI_CODEX_DEVICE_VERIFICATION_URL,
-} from './device.js';
+import { authenticateCodexDevice } from './device.js';
 import {
   buildCodexAuthorizationUrl,
   exchangeCodexAuthorizationCodeForTokens,
@@ -75,23 +74,31 @@ function buildCredentialRecord(params: Readonly<{
   }>;
   now: number;
   profileId: string;
-}>): ConnectedServiceCredentialRecordV1 {
-  return buildConnectedServiceCredentialRecord({
-    now: params.now,
+}>): OauthCredentialRecord {
+  const record = parseCredentialRecord({
+    v: 1,
     serviceId: CODEX_CLOUD_SERVICE_ID,
     profileId: params.profileId,
-    kind: 'oauth',
+    createdAt: params.now,
+    updatedAt: params.now,
     expiresAt: params.tokens.expiresAt,
+    kind: 'oauth',
     oauth: {
       accessToken: params.tokens.accessToken,
       refreshToken: params.tokens.refreshToken,
       idToken: params.tokens.idToken,
-      scope: 'openid profile email offline_access',
+      scope: OPENAI_CODEX_OAUTH_PROFILE.scope,
       tokenType: 'Bearer',
       providerAccountId: params.tokens.accountId,
       providerEmail: null,
+      raw: null,
     },
+    token: null,
   });
+  if (!record || record.kind !== 'oauth') {
+    throw new Error('Codex cloud OAuth credential construction failed');
+  }
+  return record;
 }
 
 async function writeCredential(params: Readonly<{
@@ -132,34 +139,6 @@ async function writeCredential(params: Readonly<{
   };
 }
 
-function normalizeFetchHeaders(headers: HeadersInit | undefined): Readonly<Record<string, string>> | undefined {
-  if (!headers) return undefined;
-  if (headers instanceof Headers) {
-    const normalized: Record<string, string> = {};
-    headers.forEach((value, key) => {
-      normalized[key] = value;
-    });
-    return normalized;
-  }
-  if (Array.isArray(headers)) {
-    return Object.fromEntries(headers);
-  }
-  return headers;
-}
-
-function createFetchAdapter(runtimeFetch: CodexRuntimeFetch, signal: AbortSignal): typeof fetch {
-  return (async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const response = await runtimeFetch({
-      url: String(url),
-      method: init?.method,
-      headers: normalizeFetchHeaders(init?.headers),
-      body: init?.body,
-      signal,
-    });
-    return response as unknown as Response;
-  }) as typeof fetch;
-}
-
 async function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
   try {
     await sdkSleepWithSignal(ms, signal);
@@ -176,8 +155,9 @@ async function authenticateDevice(
   const deadline = timeoutMs ? context.now() + timeoutMs : null;
   try {
     const tokens = await authenticateCodexDevice({
-      fetcher: createFetchAdapter(context.fetch, context.signal),
-      now: context.now(),
+      http: context.fetch,
+      now: context.now,
+      signal: context.signal,
       onUserCode: ({ verificationUrl, userCode }) => {
         if (!opts.noOpen) {
           void context.browser.open(verificationUrl);

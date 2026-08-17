@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
 import { createCodexForkSurface } from './providerOps.js';
 
 describe('createCodexForkSurface', () => {
@@ -16,15 +15,14 @@ describe('createCodexForkSurface', () => {
       directory: '/repo',
       forkPoint: { kind: 'latest' },
       parentMetadata: {
-        agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-          backendMode: 'appServer',
-          providerSessionId: 'parent-thread',
-          home: 'connectedService',
-          connectedServiceId: 'service-1',
-          connectedServiceProfileId: 'profile-1',
-          connectedServiceGroupId: 'group-1',
-          homePath: '/codex-home',
-        }),
+        providerSessionId: 'stale-other-agent-thread',
+        codexSessionId: 'parent-thread',
+        codexBackendMode: 'appServer',
+        codexHome: 'connectedService',
+        codexConnectedServiceId: 'service-1',
+        codexConnectedServiceProfileId: 'profile-1',
+        codexConnectedServiceGroupId: 'group-1',
+        codexHomePath: '/codex-home',
       },
     });
 
@@ -70,10 +68,8 @@ describe('createCodexForkSurface', () => {
       directory: '/repo',
       forkPoint: { kind: 'message_seq', upToSeqInclusive: 10 },
       parentMetadata: {
-        agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-          backendMode: 'appServer',
-          providerSessionId: 'parent-thread',
-        }),
+        providerSessionId: 'parent-thread',
+        codexBackendMode: 'appServer',
       },
     })).resolves.toBeNull();
 
@@ -107,15 +103,14 @@ describe('createCodexForkSurface', () => {
       directory: '/repo',
       forkPoint: { kind: 'latest' },
       parentMetadata: {
-        agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-          backendMode: 'acp',
-          providerSessionId: 'parent-acp-thread',
-          home: 'connectedService',
-          connectedServiceId: 'service-1',
-          connectedServiceProfileId: 'profile-1',
-          connectedServiceGroupId: 'group-1',
-          homePath: '/codex-home',
-        }),
+        providerSessionId: 'stale-other-agent-thread',
+        codexSessionId: 'parent-acp-thread',
+        codexBackendMode: 'acp',
+        codexHome: 'connectedService',
+        codexConnectedServiceId: 'service-1',
+        codexConnectedServiceProfileId: 'profile-1',
+        codexConnectedServiceGroupId: 'group-1',
+        codexHomePath: '/codex-home',
       },
       acp: {
         loadSession,

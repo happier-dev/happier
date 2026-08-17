@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';
+import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -27,7 +27,7 @@ function activateConnectedAccountRuntime(): PluginConnectedAccountRuntime {
       registerExternalSessionObservation() {},
     },
     hooks: { register() {} },
-    mcp: { registerDiscoveryProvider() {} },
+    mcp: { registerDiscoverySource() {} },
     connectedAccounts: {
       register(id: string, runtime: PluginConnectedAccountRuntime) {
         registrations.push({ id, runtime });
@@ -45,6 +45,27 @@ function jwt(payload: Readonly<Record<string, unknown>>): string {
   return `${header}.${body}.signature`;
 }
 
+function materializationContext(
+  credentials: ReturnType<typeof credentialStore>['store'],
+): Parameters<PluginConnectedAccountRuntime['materialize']>[1] {
+  const account = {
+    service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+    accountId: 'chatgpt-account-1',
+  };
+  return {
+    account,
+    configuration: {
+      target: { kind: 'account', account, modeId: 'oauth' },
+      revision: 'configuration-1',
+      values: {},
+      async getSecret() { return null; },
+    },
+    signal: new AbortController().signal,
+    services: {},
+    credentials,
+  } as Parameters<PluginConnectedAccountRuntime['materialize']>[1];
+}
+
 describe('OpenAI Codex Connected Account', () => {
   it('registers exactly the authentication modes declared by the descriptor', () => {
     const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
@@ -53,12 +74,67 @@ describe('OpenAI Codex Connected Account', () => {
     expect(descriptor).toBeDefined();
     expect(descriptor?.authentication.modes).toEqual([
       expect.objectContaining({ id: 'oauth', outcomeReconciliation: 'none' }),
+      expect.objectContaining({ id: 'device', outcomeReconciliation: 'none' }),
     ]);
     expect(Object.keys(activateConnectedAccountRuntime().authentication.modes).sort()).toEqual(
       descriptor?.authentication.modes.map(({ id }) => id).sort(),
     );
     expect(activateConnectedAccountRuntime().authentication.modes.oauth)
       .not.toHaveProperty('reconcile');
+  });
+
+  it('uses the canonical device-attempt lifecycle without polling inside begin', async () => {
+    const runtime = activateConnectedAccountRuntime();
+    const mode = runtime.authentication.modes.device;
+    if (!mode || mode.kind !== 'oauthDeviceCode') {
+      throw new Error('OpenAI Codex device mode is unavailable');
+    }
+    const attempted = credentialStore();
+    const request = vi.fn(async (input: Readonly<{ url: string }>) => {
+      if (input.url.endsWith('/api/accounts/deviceauth/usercode')) {
+        return {
+          status: 200,
+          finalUrl: input.url,
+          headers: {},
+          body: new TextEncoder().encode(JSON.stringify({
+            device_auth_id: 'device-auth-1',
+            user_code: 'ABCD-EFGH',
+            interval: '2',
+            expires_in: 900,
+          })),
+        };
+      }
+      if (input.url.endsWith('/api/accounts/deviceauth/token')) {
+        return {
+          status: 403,
+          finalUrl: input.url,
+          headers: {},
+          body: new Uint8Array(),
+        };
+      }
+      throw new Error(`unexpected URL: ${input.url}`);
+    });
+    const context = {
+      attempt: { kind: 'connect', attemptId: 'codex-device-attempt' },
+      signal: new AbortController().signal,
+      services: { http: { request } },
+      attemptCredentials: attempted.store,
+    } as Parameters<typeof mode.begin>[0];
+
+    await expect(mode.begin(context)).resolves.toMatchObject({
+      status: 'awaitingDeviceAuthorization',
+      verificationUri: 'https://auth.openai.com/codex/device',
+      userCode: 'ABCD-EFGH',
+      pollIntervalMs: 2_000,
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(attempted.values.get('deviceAuthId')).toBe('device-auth-1');
+    expect(attempted.values.get('deviceUserCode')).toBe('ABCD-EFGH');
+
+    await expect(mode.poll(context)).resolves.toEqual({
+      status: 'pending',
+      retryAfterMs: 5_000,
+    });
   });
 
   it('exchanges a PKCE authorization code, stages provider tokens, and exposes stable identity', async () => {
@@ -87,7 +163,7 @@ describe('OpenAI Codex Connected Account', () => {
     const context = {
       attempt: { kind: 'connect', attemptId: 'codex-attempt' },
       signal,
-      services: { fetch: { request } },
+      services: { http: { request } },
       attemptCredentials: attempted.store,
     } as Parameters<typeof mode.complete>[1];
 
@@ -131,6 +207,48 @@ describe('OpenAI Codex Connected Account', () => {
     expect(attempted.values.get('refreshToken')).toBe('codex-refresh');
     expect(attempted.values.get('idToken')).toBe(idToken);
     expect(attempted.values.get('providerAccountId')).toBe(accountId);
+  });
+
+  it('materializes only the requested current Codex access token environment key', async () => {
+    const runtime = activateConnectedAccountRuntime();
+    const currentCredentials = credentialStore(new Map([
+      ['accessToken', 'codex-access'],
+      ['refreshToken', 'codex-refresh-must-not-disclose'],
+      ['idToken', 'codex-id-must-not-disclose'],
+      ['providerAccountId', 'chatgpt-account-must-not-disclose'],
+      ['expiresAtMs', String(Date.now() + 60_000)],
+    ]));
+
+    await expect(runtime.materialize(
+      { kind: 'environment', keys: ['OPENAI_CODEX_OAUTH_TOKEN', 'UNRELATED_KEY'] },
+      materializationContext(currentCredentials.store),
+    )).resolves.toEqual({
+      kind: 'environment',
+      env: { OPENAI_CODEX_OAUTH_TOKEN: 'codex-access' },
+    });
+    await expect(runtime.materialize(
+      { kind: 'environment', keys: ['UNRELATED_KEY'] },
+      materializationContext(currentCredentials.store),
+    )).resolves.toEqual({ kind: 'environment', env: {} });
+
+    const unavailableCredentials = credentialStore(new Map([
+      ['refreshToken', 'codex-refresh-must-not-disclose'],
+      ['idToken', 'codex-id-must-not-disclose'],
+      ['providerAccountId', 'chatgpt-account-must-not-disclose'],
+    ]));
+    const expiredCredentials = credentialStore(new Map([
+      ['accessToken', 'expired-codex-access-must-not-disclose'],
+      ['refreshToken', 'codex-refresh-must-not-disclose'],
+      ['idToken', 'codex-id-must-not-disclose'],
+      ['providerAccountId', 'chatgpt-account-must-not-disclose'],
+      ['expiresAtMs', '1'],
+    ]));
+    for (const credentials of [unavailableCredentials, expiredCredentials]) {
+      await expect(runtime.materialize(
+        { kind: 'environment', keys: ['OPENAI_CODEX_OAUTH_TOKEN'] },
+        materializationContext(credentials.store),
+      )).rejects.toThrow('OpenAI Codex connected-account credentials are unavailable');
+    }
   });
 
   it('materializes the exact native Codex credential file and reports uncertain exchanges safely', async () => {
@@ -388,7 +506,7 @@ describe('OpenAI Codex Connected Account', () => {
       attempt: { kind: 'connect', attemptId: 'uncertain-attempt' },
       signal: new AbortController().signal,
       services: {
-        fetch: {
+        http: {
           async request() {
             throw new Error('connection reset after request');
           },
@@ -439,7 +557,7 @@ describe('OpenAI Codex Connected Account', () => {
         async getSecret() { return null; },
       },
       signal,
-      services: { fetch: { request } },
+      services: { http: { request } },
       credentials: credentialStore(values).store,
     } as Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0]))
       .resolves.toMatchObject({
@@ -492,7 +610,7 @@ describe('OpenAI Codex Connected Account', () => {
       attempt: { kind: 'connect', attemptId: 'host-identity-attempt' },
       signal: new AbortController().signal,
       services: {
-        fetch: {
+        http: {
           async request() {
             return {
               status: 200,

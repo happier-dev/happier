@@ -3,27 +3,30 @@ import type {
   AgentSessionConversationRollbackRequest,
   AgentSessionConversationRollbackResult,
   AgentSessionConversationRollbackReconciliationResult,
+  AgentSessionRuntimeAuthApplyRequest,
+  AgentSessionRuntimeAuthApplyResult,
+  AgentSessionRuntimeAuthControl,
+  AgentSessionRuntimeAuthIdentityRequest,
+  AgentSessionRuntimeAuthIdentityResult,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { SessionAuthService } from '@happier-dev/plugin-sdk/sessions';
+import {
+  AgentRuntimeJsonValueSchema,
+  buildAgentAccountUsageRecordId,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import {
   resolveRecoverableTurnFailureRetryDecision,
   resolveRecoverableTurnFailureSecondFailure,
-} from '@happier-dev/agents';
-import { readPendingLocalId } from '@happier-dev/protocol';
-import {
-  buildProviderAccountUsageRecordId,
-} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
-import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { isChangeTitleToolNameAlias, readPendingLocalId } from '@happier-dev/plugin-sdk/sessions';
 import type {
   AgentSessionRealtimeConversation,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type {
   CodexAppServerCancelResult,
-  CodexAppServerConnectedServiceAuthApplyRequest,
-  CodexAppServerConnectedServiceAuthApplyResponse,
-  CodexAppServerConnectedServiceRuntimeIdentityRequest,
-  CodexAppServerConnectedServiceRuntimeIdentityResponse,
   CodexAppServerEvent,
   CodexAppServerEventInput,
   CodexAppServerInput,
@@ -64,10 +67,14 @@ import {
   type CodexAppServerRequestOptions,
   type DisposableCodexAppServerClient,
 } from './client.js';
-import { isCodexAppServerNoActiveTurnToInterruptError } from './compatibility.js';
 import {
-  readCodexAppServerRequestTimeoutMs,
+  isCodexAppServerInvalidParamsError,
+  isCodexAppServerNoActiveTurnToInterruptError,
+} from './compatibility.js';
+import {
+  readCodexAppServerRealtimeStartTimeoutMs,
   readCodexAppServerResumeRecoveryTimeoutMs,
+  readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
 import { buildCodexAppServerConfigOverrides } from './config/overrides.js';
 import {
@@ -82,7 +89,10 @@ import {
   type CodexAppServerPermissionSupport,
   type CodexAppServerPermissionTarget,
 } from './permissionProfile.js';
-import { buildCodexAppServerTurnInput } from './turnInput.js';
+import {
+  buildCodexAppServerTurnInput,
+  type CodexAppServerTurnInputItem,
+} from './turnInput.js';
 import {
   buildCodexLiveAccountRuntimeIdentity,
   computeCodexAccessTokenFingerprint,
@@ -198,12 +208,7 @@ export type CodexAppServerRuntime = CodexAppServerSession & Readonly<{
     userMessageSeq?: number | null;
     userMessageSeqs?: readonly number[];
   }>): Promise<void>;
-  applyConnectedServiceAuthGeneration(
-    request: CodexAppServerConnectedServiceAuthApplyRequest,
-  ): Promise<CodexAppServerConnectedServiceAuthApplyResponse>;
-  readConnectedServiceRuntimeIdentity(
-    request: CodexAppServerConnectedServiceRuntimeIdentityRequest,
-  ): Promise<CodexAppServerConnectedServiceRuntimeIdentityResponse>;
+  runtimeAuth: AgentSessionRuntimeAuthControl;
   rollbackConversation(
     request: CodexAppServerRollbackConversationRequest,
   ): Promise<CodexAppServerRollbackConversationResult>;
@@ -284,10 +289,14 @@ export type CodexAppServerRuntimeHost = Readonly<{
     accountId: string | null;
   }>): Promise<unknown>;
   accountUsage?: CodexAppServerAccountUsageService;
-  ui?: Pick<AgentSessionRuntimeContext['ui'], 'requestApproval' | 'askQuestions'>;
+  ui?: Pick<AgentSessionRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
+  mcp?: Pick<
+    NonNullable<AgentSessionRuntimeContext['services']['sessions']['current']>['mcp'],
+    'elicit'
+  >;
   setTitle?(title: string): Promise<void>;
-  refreshRuntimeAuth?(request: unknown): Promise<unknown>;
-  reportCapacityFailure?(classification: Readonly<Record<string, unknown>>): Promise<void>;
+  refreshRuntimeAuth?: SessionAuthService['services']['refreshRuntimeAuth'];
+  reportCapacityFailure?(classification: Readonly<Record<string, JsonValue>>): Promise<void>;
   publishGeneratedMedia?(candidate: CodexGeneratedMediaCandidate): Promise<void>;
   dispose?(): Promise<void>;
 }>;
@@ -308,6 +317,17 @@ const CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS = 50;
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
+function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonValue>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readJsonRecord(value: unknown): Readonly<Record<string, JsonValue>> | null {
+  const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
+  return parsed.success && isJsonRecord(parsed.data)
+    ? parsed.data
     : null;
 }
 
@@ -339,7 +359,7 @@ async function requestCodexTurnInterruptWithStartupRetry(params: Readonly<{
   client: DisposableCodexAppServerClient;
   threadId: string;
   turnId: string;
-  waitForProviderTerminal?: () => Promise<boolean>;
+  waitForProviderTerminal?: (waitKind: 'startup_gap' | 'ambiguous_request') => Promise<boolean>;
 }>): Promise<'requested' | 'providerTerminal'> {
   const startedAtMs = Date.now();
   for (;;) {
@@ -350,11 +370,15 @@ async function requestCodexTurnInterruptWithStartupRetry(params: Readonly<{
       });
       return 'requested';
     } catch (error) {
-      if (!isCodexAppServerNoActiveTurnToInterruptError(error)) throw error;
+      const startupGap = isCodexAppServerNoActiveTurnToInterruptError(error);
       const providerTerminalObserved = params.waitForProviderTerminal
-        ? await params.waitForProviderTerminal()
-        : (await delay(CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS), false);
+        ? await params.waitForProviderTerminal(startupGap ? 'startup_gap' : 'ambiguous_request')
+        : false;
       if (providerTerminalObserved) return 'providerTerminal';
+      if (!startupGap) throw error;
+      if (!params.waitForProviderTerminal) {
+        await delay(CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS);
+      }
       if (Date.now() - startedAtMs >= CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_WINDOW_MS) {
         throw error;
       }
@@ -596,27 +620,6 @@ function buildCodexProviderAccountUsageProvisionalDiscriminator(input: Readonly<
   return `${input.happierSessionId}:${input.codexHome}`;
 }
 
-function buildCodexProviderAccountUsageSourceContext(
-  identity: CodexConnectedServiceRuntimeIdentity | null,
-): CodexProviderAccountUsageSourceContext {
-  if (!identity) return null;
-  if (identity.groupId) {
-    if (identity.generation === null) return null;
-    return {
-      serviceId: identity.serviceId,
-      profileId: identity.profileId,
-      bindingKind: 'group_member',
-      groupId: identity.groupId,
-      groupGeneration: identity.generation,
-    };
-  }
-  return {
-    serviceId: identity.serviceId,
-    profileId: identity.profileId,
-    bindingKind: 'profile',
-  };
-}
-
 function isCodexRuntimeAuthQuotaFailure(error: Error): boolean {
   const classification = readRecord((error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification);
   const kind = trimStringValue(classification?.kind);
@@ -661,7 +664,7 @@ function buildCodexAppServerBackgroundCompletionFailureDiagnostics(
     ? Math.trunc(classification.resetsAtMs)
     : null;
   return {
-    errorName: error.name,
+    ...buildCodexAppServerSafeErrorIdentity(error),
     runtimeIssueSource: resolveCodexRuntimeIssueSource(error),
     ...(runtimeAuthKind ? { runtimeAuthKind } : {}),
     ...(runtimeAuthSource ? { runtimeAuthSource } : {}),
@@ -852,7 +855,7 @@ export function createCodexAppServerRuntime(
   let deferredTemporaryRecoverableFailure: Error | null = null;
   let terminalPendingTurnFailure: Error | null = null;
   let originalTemporaryRecoverableFailure: Error | null = null;
-  let promptForTemporaryRecoverableRetry: string | null = null;
+  let inputForTemporaryRecoverableRetry: CodexAppServerInput | null = null;
   let providerPromptForDeferredTemporaryRecoverableRetry: PendingProviderPrompt | null = null;
   let temporaryRecoverableRetryAttemptCount = 0;
   let active = false;
@@ -1103,7 +1106,9 @@ export function createCodexAppServerRuntime(
         verifiedLiveProviderAccount = null;
         forceProvisional = true;
       }
-      const sourceContext = buildCodexProviderAccountUsageSourceContext(appliedIdentity);
+      const sourceContext = appliedIdentity
+        ? await service.resolveSourceContext({ serviceId: appliedIdentity.serviceId })
+        : null;
       const provisionalDiscriminator = buildCodexProviderAccountUsageProvisionalDiscriminator({
         sourceContext,
         happierSessionId: params.happierSessionId,
@@ -1131,18 +1136,9 @@ export function createCodexAppServerRuntime(
       const result = await service.recordSnapshot({
         snapshot,
         ...(options.policyDisposition ? { policyDisposition: options.policyDisposition } : {}),
-        ...(sourceContext ? { source: sourceContext } : {}),
-        ...(appliedIdentity ? {
-          appliedIdentity: {
-            serviceId: appliedIdentity.serviceId,
-            profileId: appliedIdentity.profileId,
-            groupId: appliedIdentity.groupId,
-            groupGeneration: appliedIdentity.generation,
-            providerAccountId: appliedIdentity.providerAccountId,
-            credentialFingerprint: appliedIdentity.credentialFingerprint,
-            observedAtMs,
-          },
-        } : {}),
+        ...(sourceContext && appliedIdentity
+          ? { source: { serviceId: appliedIdentity.serviceId } }
+          : {}),
       });
       if (result.status !== 'recorded') {
         params.host.logger.debug('Codex app-server provider-account usage snapshot was not recorded', {
@@ -1162,8 +1158,8 @@ export function createCodexAppServerRuntime(
           };
           const adoptionResult = await service.adoptProvisionalRecord({
             adoption: {
-              fromRecordId: buildProviderAccountUsageRecordId(provisionalRecordKey),
-              toRecordId: snapshot.recordId,
+              fromRecordId: buildAgentAccountUsageRecordId(provisionalRecordKey),
+              toRecordId: buildAgentAccountUsageRecordId(snapshot.recordKey),
               stableRecordKey: snapshot.recordKey,
               proof: subject.proof === 'auth_store_chatgpt_account_id'
                 ? { kind: 'id_token_account_id', issuer: 'chatgpt' }
@@ -1229,10 +1225,11 @@ export function createCodexAppServerRuntime(
           refreshAttemptId: `codex-auth-refresh-${randomUUID()}`,
         });
     pendingChatGptRefreshAttempt = refreshAttempt;
-    let refreshServiceResult: unknown;
+    let refreshServiceResult: Awaited<ReturnType<NonNullable<
+      CodexAppServerRuntimeHost['refreshRuntimeAuth']
+    >>>;
     do {
       refreshServiceResult = await refreshRuntimeAuth({
-        agentId: 'codex',
         serviceId: 'openai-codex',
         refreshAttemptId: refreshAttempt.refreshAttemptId,
         selection,
@@ -1679,7 +1676,7 @@ export function createCodexAppServerRuntime(
     deferredTemporaryRecoverableFailure = null;
     terminalPendingTurnFailure = null;
     originalTemporaryRecoverableFailure = null;
-    promptForTemporaryRecoverableRetry = null;
+    inputForTemporaryRecoverableRetry = null;
     providerPromptForDeferredTemporaryRecoverableRetry = null;
     temporaryRecoverableRetryAttemptCount = 0;
     void providerTurn.promise.catch(() => undefined);
@@ -1750,12 +1747,12 @@ export function createCodexAppServerRuntime(
   };
 
   const reportProviderCapacityFailureForRecovery = (error: Error): void => {
-    const classification = readRecord(
+    const classification = readJsonRecord(
       (error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification,
     );
-    if (trimStringValue(classification?.kind) !== 'capacity') return;
+    if (!classification || trimStringValue(classification.kind) !== 'capacity') return;
     if (!params.host.reportCapacityFailure) return;
-    void params.host.reportCapacityFailure(classification!).catch((reportError: unknown) => {
+    void params.host.reportCapacityFailure(classification).catch((reportError: unknown) => {
       params.host.logger.debug('Codex app-server capacity recovery report failed', {
         errorName: reportError instanceof Error ? reportError.name : typeof reportError,
       });
@@ -1895,6 +1892,7 @@ export function createCodexAppServerRuntime(
     registerCodexAppServerInteractionHandlers({
       client: nextClient,
       ...(params.host.ui ? { ui: params.host.ui } : {}),
+      ...(params.host.mcp ? { mcp: params.host.mcp } : {}),
       getThreadId: () => threadId,
     });
     nextClient.registerNotificationHandler('account/rateLimits/updated', (notificationParams) => {
@@ -2168,16 +2166,14 @@ export function createCodexAppServerRuntime(
     getThreadId: () => threadId,
     isDisposed: () => disposed,
     isRuntimeExited: () => unexpectedExitPublished,
-    settlementTimeoutMs: readCodexAppServerRequestTimeoutMs(
-      'thread/realtime/start',
-      readRuntimeProcessEnv(),
-    ),
+    settlementTimeoutMs: readCodexAppServerRealtimeStartTimeoutMs(readRuntimeProcessEnv()),
   });
 
   const startTurnPromptAttempt = async (
-    prompt: string,
+    input: CodexAppServerInput,
     options?: CodexAppServerSendOptions,
   ): Promise<void> => {
+    const prompt = input.text;
     await waitForConnectedServiceAuthApply();
     const activeThreadId = await ensureThreadId();
     await waitForConnectedServiceAuthApply();
@@ -2207,6 +2203,10 @@ export function createCodexAppServerRuntime(
     try {
       const policy = resolveCurrentPolicy();
       const effectiveReasoningEffort = providerDisablesReasoning ? 'none' : currentReasoningEffort;
+      const turnInput = buildCodexAppServerTurnInput({
+        text: prompt,
+        ...(input.structuredInput === undefined ? {} : { structuredInput: input.structuredInput }),
+      });
       const requestParams: Record<string, unknown> = {
         ...buildCodexAppServerPermissionParams({
           policy,
@@ -2214,32 +2214,43 @@ export function createCodexAppServerRuntime(
           target: 'turn',
         }),
         threadId: activeThreadId,
-        input: buildCodexAppServerTurnInput({ text: prompt }),
+        input: turnInput,
         ...(currentModelId ? { model: currentModelId } : {}),
         ...(effectiveReasoningEffort ? { effort: effectiveReasoningEffort } : {}),
         ...(hasServiceTierOverride
           ? (currentServiceTier === 'fast' ? { serviceTier: 'fast' } : { serviceTier: null })
           : {}),
       };
-      const response = await appServerClient.request('turn/start', requestParams)
-        .then((result) => {
-          if (Object.prototype.hasOwnProperty.call(requestParams, 'permissions')) {
-            permissionSupport = 'supported';
-          }
-          return result;
-        })
-        .catch(async (error: unknown) => {
-          if (!policy || !shouldRetryWithoutCodexAppServerPermissionProfile(error, requestParams)) {
-            throw error;
-          }
-          permissionSupport = 'legacy';
-          const retryParams = { ...requestParams };
-          delete retryParams.permissions;
-          return await appServerClient.request('turn/start', {
-            ...retryParams,
-            ...buildCodexAppServerLegacyPermissionParams({ policy, target: 'turn' }),
+      const requestTurnStart = async (params: Record<string, unknown>): Promise<unknown> =>
+        await appServerClient.request('turn/start', params)
+          .then((result) => {
+            if (Object.prototype.hasOwnProperty.call(params, 'permissions')) {
+              permissionSupport = 'supported';
+            }
+            return result;
+          })
+          .catch(async (error: unknown) => {
+            if (!policy || !shouldRetryWithoutCodexAppServerPermissionProfile(error, params)) {
+              throw error;
+            }
+            permissionSupport = 'legacy';
+            const retryParams = { ...params };
+            delete retryParams.permissions;
+            return await appServerClient.request('turn/start', {
+              ...retryParams,
+              ...buildCodexAppServerLegacyPermissionParams({ policy, target: 'turn' }),
+            });
           });
+      const response = await requestTurnStart(requestParams).catch(async (error: unknown) => {
+        // A Codex app-server that predates structured turn input items rejects them with
+        // invalid params. The user's text still has to reach the provider rather than failing
+        // the turn outright.
+        if (turnInput.length <= 1 || !isCodexAppServerInvalidParamsError(error)) throw error;
+        return await requestTurnStart({
+          ...requestParams,
+          input: buildCodexAppServerTurnInput({ text: prompt }),
         });
+      });
       const agentTurnId = readTurnId(response);
       activeTurn.providerStartAcknowledged = true;
       if (activeTurn.interruptWhenProviderTurnIdArrives) {
@@ -2280,10 +2291,10 @@ export function createCodexAppServerRuntime(
     }
   };
 
-  const resolveTemporaryRecoverableRetryPrompt = (failure: Error): string | null => {
+  const resolveTemporaryRecoverableRetryInput = (failure: Error): CodexAppServerInput | null => {
     if (!isCodexAppServerTemporaryRecoverableTurnFailureError(failure)) return null;
-    const originalPrompt = promptForTemporaryRecoverableRetry;
-    if (!originalPrompt) return null;
+    const originalInput = inputForTemporaryRecoverableRetry;
+    if (!originalInput?.text) return null;
     const decision = resolveRecoverableTurnFailureRetryDecision({
       attemptCount: temporaryRecoverableRetryAttemptCount,
       maxRetries: 1,
@@ -2291,7 +2302,7 @@ export function createCodexAppServerRuntime(
       failureRetryAfterMs: null,
       failedTurnHadMeaningfulActivity: activeTurnHadMeaningfulActivity,
       promptMode: 'activity_aware',
-      originalPrompt,
+      originalPrompt: originalInput.text,
       continuationPrompt: temporaryRecoverableTurnContinuationPrompt,
     });
     if (decision.action !== 'retry') return null;
@@ -2301,19 +2312,29 @@ export function createCodexAppServerRuntime(
     if (decision.consumeRetryBudget) {
       temporaryRecoverableRetryAttemptCount += 1;
     }
-    return decision.prompt;
+    // A continuation prompt resumes work the provider already accepted, so it carries only text;
+    // resending the original prompt must carry its structured input again or the retried turn
+    // silently loses the user's mentions and attachments.
+    return decision.promptKind === 'continuation'
+      ? { text: decision.prompt }
+      : {
+        text: decision.prompt,
+        ...(originalInput.structuredInput === undefined
+          ? {}
+          : { structuredInput: originalInput.structuredInput }),
+      };
   };
 
   const sendTurnPrompt = async (
-    prompt: string,
+    input: CodexAppServerInput,
     options?: CodexAppServerSendOptions,
   ): Promise<void> => {
-    promptForTemporaryRecoverableRetry = prompt;
+    inputForTemporaryRecoverableRetry = input;
     temporaryRecoverableRetryAttemptCount = 0;
     originalTemporaryRecoverableFailure = null;
     providerPromptForDeferredTemporaryRecoverableRetry = null;
     terminalPendingTurnFailure = null;
-    await startTurnPromptAttempt(prompt, options);
+    await startTurnPromptAttempt(input, options);
   };
 
   const waitForTurnCompletion = async (): Promise<void> => {
@@ -2328,12 +2349,12 @@ export function createCodexAppServerRuntime(
         const deferredFailure = deferredTemporaryRecoverableFailure;
         if (!deferredFailure) return;
         deferredTemporaryRecoverableFailure = null;
-        const retryPrompt = resolveTemporaryRecoverableRetryPrompt(deferredFailure);
+        const retryInput = resolveTemporaryRecoverableRetryInput(deferredFailure);
         const retryProviderPrompt = providerPromptForDeferredTemporaryRecoverableRetry;
         providerPromptForDeferredTemporaryRecoverableRetry = null;
-        if (!retryPrompt) throw resolveTerminalPendingTurnFailure(deferredFailure);
+        if (!retryInput) throw resolveTerminalPendingTurnFailure(deferredFailure);
         await startTurnPromptAttempt(
-          retryPrompt,
+          retryInput,
           buildRuntimeSendOptionsForPendingProviderPrompt(retryProviderPrompt),
         );
         continue;
@@ -2343,12 +2364,12 @@ export function createCodexAppServerRuntime(
         return;
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
-        const retryPrompt = resolveTemporaryRecoverableRetryPrompt(failure);
+        const retryInput = resolveTemporaryRecoverableRetryInput(failure);
         const retryProviderPrompt = providerPromptForDeferredTemporaryRecoverableRetry;
         providerPromptForDeferredTemporaryRecoverableRetry = null;
-        if (!retryPrompt) throw resolveTerminalPendingTurnFailure(failure);
+        if (!retryInput) throw resolveTerminalPendingTurnFailure(failure);
         await startTurnPromptAttempt(
-          retryPrompt,
+          retryInput,
           buildRuntimeSendOptionsForPendingProviderPrompt(retryProviderPrompt),
         );
       }
@@ -2381,9 +2402,10 @@ export function createCodexAppServerRuntime(
   };
 
   const steerInFlightTurn = async (
-    message: string,
+    input: CodexAppServerInput,
     options?: CodexAppServerSendOptions,
   ): Promise<void> => {
+    const message = input.text;
     const activeTurn = pendingTurn;
     if (!activeTurn) throw new Error('Codex app-server steer requires an active turn');
     const agentTurnId = activeTurn.agentTurnId ?? await waitForActiveProviderTurnId(activeTurn);
@@ -2391,12 +2413,26 @@ export function createCodexAppServerRuntime(
     const appServerClient = await ensureClient();
     const userMessageSeq = readRuntimeUserMessageSeq(options);
     const pendingProviderPrompt = trackPendingProviderPrompt(message, options);
-    try {
+    const steerInput = buildCodexAppServerTurnInput({
+      text: message,
+      ...(input.structuredInput === undefined ? {} : { structuredInput: input.structuredInput }),
+    });
+    const requestSteer = async (turnInput: CodexAppServerTurnInputItem[]): Promise<void> => {
       await appServerClient.request('turn/steer', {
         threadId: activeTurn.threadId,
-        input: buildCodexAppServerTurnInput({ text: message }),
+        input: turnInput,
         expectedTurnId: agentTurnId,
       });
+    };
+    try {
+      try {
+        await requestSteer(steerInput);
+      } catch (error) {
+        // A Codex app-server that predates structured turn input items rejects them with
+        // invalid params; the steered text must still reach the provider.
+        if (steerInput.length <= 1 || !isCodexAppServerInvalidParamsError(error)) throw error;
+        await requestSteer(buildCodexAppServerTurnInput({ text: message }));
+      }
     } catch (error) {
       clearPendingProviderPrompt(pendingProviderPrompt);
       throw error;
@@ -2441,7 +2477,7 @@ export function createCodexAppServerRuntime(
       client: appServerClient,
       threadId: activeTurn.threadId,
       turnId: agentTurnId,
-      waitForProviderTerminal: async () => {
+      waitForProviderTerminal: async (waitKind) => {
         if (
           pendingTurn === activeTurn
           && turnCompletionSettling
@@ -2452,7 +2488,9 @@ export function createCodexAppServerRuntime(
         }
         return await waitForPromiseSettlementWithin(
           activeTurn.promise,
-          CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS,
+          waitKind === 'startup_gap'
+            ? CODEX_APP_SERVER_CANCEL_STARTUP_RETRY_INTERVAL_MS
+            : readCodexAppServerRpcTimeoutMs(readRuntimeProcessEnv()),
         );
       },
     });
@@ -2732,9 +2770,9 @@ export function createCodexAppServerRuntime(
     }
   };
 
-  const applyConnectedServiceAuthGeneration = async (
-    rawRequest: CodexAppServerConnectedServiceAuthApplyRequest,
-  ): Promise<CodexAppServerConnectedServiceAuthApplyResponse> => await runConnectedServiceAuthApply(async () => {
+  const applyRuntimeAuth = async (
+    rawRequest: AgentSessionRuntimeAuthApplyRequest,
+  ): Promise<AgentSessionRuntimeAuthApplyResult> => await runConnectedServiceAuthApply(async () => {
     const request = normalizeCodexConnectedServiceAuthGenerationRequest(rawRequest);
     if (!request) {
       return {
@@ -2852,19 +2890,14 @@ export function createCodexAppServerRuntime(
       ok: true,
       appliedVia: applied.appliedVia,
       activeAccountId: applied.activeAccountId,
-      verification: {
-        ...buildConnectedServiceApplicationVerification(latestConnectedServiceRuntimeIdentity),
-        durability: applied.durability,
-        ...(accountLabel ? { accountLabel } : {}),
-      },
+      verification: buildConnectedServiceApplicationVerification(latestConnectedServiceRuntimeIdentity),
       durability: applied.durability,
-      ...(accountLabel ? { accountLabel } : {}),
     };
   });
 
-  const readConnectedServiceRuntimeIdentity = async (
-    request: CodexAppServerConnectedServiceRuntimeIdentityRequest,
-  ): Promise<CodexAppServerConnectedServiceRuntimeIdentityResponse> => {
+  const readRuntimeAuthIdentity = async (
+    request: AgentSessionRuntimeAuthIdentityRequest,
+  ): Promise<AgentSessionRuntimeAuthIdentityResult> => {
     const record = readRecord(request);
     if (record?.serviceId !== 'openai-codex') {
       return {
@@ -2939,11 +2972,15 @@ export function createCodexAppServerRuntime(
           diagnostic: 'Codex app-server does not support queued follow-up delivery yet',
         };
       }
+      const turnInput: CodexAppServerInput = {
+        text,
+        ...(input.structuredInput === undefined ? {} : { structuredInput: input.structuredInput }),
+      };
       if (options?.deliverAs === 'steer') {
-        await steerInFlightTurn(text, options);
+        await steerInFlightTurn(turnInput, options);
         return acceptedSendResult();
       }
-      const submitted = sendTurnPrompt(text, options);
+      const submitted = sendTurnPrompt(turnInput, options);
       observeCompletionInBackground(submitted);
       await submitted;
       return acceptedSendResult();
@@ -2956,8 +2993,10 @@ export function createCodexAppServerRuntime(
     rollbackConversation,
     rollbackNativeConversation,
     reconcileNativeConversationRollback,
-    applyConnectedServiceAuthGeneration,
-    readConnectedServiceRuntimeIdentity,
+    runtimeAuth: {
+      apply: applyRuntimeAuth,
+      readIdentity: readRuntimeAuthIdentity,
+    },
     permissions: { capability: 'inline' },
     async updateConfig(update) {
       const updateRecord = readRecord(update);
@@ -3035,7 +3074,7 @@ export function createCodexAppServerRuntime(
         ...(userMessageSeq === null ? [] : [userMessageSeq]),
         ...(options?.userMessageSeqs ?? []),
       ].filter((seq, index, values) => Number.isSafeInteger(seq) && seq >= 0 && values.indexOf(seq) === index);
-      await steerInFlightTurn(prompt, {
+      await steerInFlightTurn({ text: prompt }, {
         deliverAs: 'steer',
         ...(localInputId ? { localInputId } : {}),
         ...(localInputIds.length === 0 ? {} : { localInputIds }),

@@ -1,4 +1,8 @@
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import {
+  parseCredentialRecord,
+  type OauthCredentialRecord,
+  type TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { recoverCodexConnectedServiceRestartResumeOnce } from '../auth/application.js';
 import {
@@ -11,8 +15,9 @@ import {
   type CodexConnectedServiceRuntimeFailureClassification,
 } from '../auth/failure.js';
 import { resolveCodexRuntimeQuotaProbeSupport } from '../../quota/probe.js';
-import { mapCodexRateLimitSnapshotToQuotaSnapshot } from '../../quota/rateLimitSnapshot.js';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../quota/runtimeRateLimits.js';
+import { resolveCodexUsageSubjectRef } from '../../usage/identity.js';
+import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../../usage/snapshot.js';
 import type { CodexAppServerClient } from '../../../../runtime/appServer/client.js';
 
 type RuntimeAuthTargetInput = Readonly<{
@@ -60,9 +65,9 @@ function readSelection(input: RuntimeAuthTargetInput | RuntimeFailureInput): Rec
   return readRecord(input.selection);
 }
 
-function readCredentialRecord(input: RuntimeAuthTargetInput): ConnectedServiceCredentialRecordV1 | null {
+function readCredentialRecord(input: RuntimeAuthTargetInput): OauthCredentialRecord | TokenCredentialRecord | null {
   const record = readRecord(readSelection(input)?.record);
-  return record as ConnectedServiceCredentialRecordV1 | null;
+  return parseCredentialRecord(record);
 }
 
 function readClient(value: unknown): Pick<CodexAppServerClient, 'request'> | null {
@@ -288,27 +293,15 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
       const { rawSnapshot } = await readCodexRuntimeRateLimitsSnapshot({
         request: async (_method, requestParams) => await client.request('account/rateLimits/read', requestParams),
       });
-      const quotaSnapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-        serviceId: 'openai-codex',
-        profileId: record.profileId,
-        activeAccountId: record.oauth.providerAccountId ?? null,
+      const observedAtMs = Date.now();
+      const usageSnapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+        subject: resolveCodexUsageSubjectRef({ connectedServiceRecord: record }),
         accountLabel: readString(record.oauth.providerEmail),
-        fetchedAt: Date.now(),
+        observedAtMs,
+        fetchedAtMs: observedAtMs,
         rawSnapshot,
       });
-      const runtimeQuotaSnapshots = readRecord(selection?.runtimeQuotaSnapshots);
-      if (typeof runtimeQuotaSnapshots?.recordSnapshot === 'function') {
-        const groupId = readString(selection?.groupId);
-        if (groupId) {
-          runtimeQuotaSnapshots.recordSnapshot({
-            serviceId: 'openai-codex',
-            groupId,
-            profileId: record.profileId,
-            snapshot: quotaSnapshot,
-          });
-        }
-      }
-      return { status: 'available', quotaSnapshot };
+      return { status: 'available', usageSnapshot };
     },
     async refreshActiveProfile() {
       return {

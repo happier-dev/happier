@@ -1,18 +1,23 @@
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
-    ManagedExecutableRef,
-    PluginExecService,
-    PluginProcessResult,
+    ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import type {
+    ExecService,
+    PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type {
     PluginProtocolClientHandle,
-} from '@happier-dev/plugin-sdk/runtime';
-import { expandHomePath, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import {
+    expandHomePath,
+    resolveHomeDirFromEnvironment,
+} from '@happier-dev/plugin-sdk/fs';
 
 import { parseCodexCliStableVersion } from '../../cli/detect.js';
 import { readCodexAppServerRequestTimeoutMs, readCodexAppServerRpcTimeoutMs } from './client/timeout.js';
+import { isCodexRealtimeConversationCliVersionSupported } from './realtimeSupport.js';
 
 type CodexAppServerEnv = Readonly<Record<string, string | undefined>>;
 
@@ -53,7 +58,6 @@ export function isCodexAppServerOversizedJsonFrameError(error: unknown): boolean
 
 const CODEX_APP_SERVER_ARGS = ['app-server', '--listen', 'stdio://'] as const;
 const CODEX_REALTIME_CONVERSATION_FEATURE = 'realtime_conversation';
-const CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSION = '0.145.0';
 const CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE =
     'CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE';
 const DEFAULT_JSON_LINE_MAX_CHARS = 32 * 1024 * 1024;
@@ -110,14 +114,8 @@ function readJsonLineMaxChars(env: CodexAppServerEnv): number {
     return readPositiveInteger(env.HAPPIER_CODEX_APP_SERVER_MAX_JSON_LINE_CHARS, DEFAULT_JSON_LINE_MAX_CHARS);
 }
 
-function resolveHomeDirFromEnvironment(env: CodexAppServerEnv): string {
-    return readString(env.HOME) ?? readString(env.USERPROFILE) ?? homedir();
-}
-
 function expandHomeDirPath(value: string, env: CodexAppServerEnv): string {
-    const trimmed = value.trim();
-    if (!trimmed) return '';
-    return expandHomePath(trimmed, resolveHomeDirFromEnvironment(env));
+    return expandHomePath(value, resolveHomeDirFromEnvironment(env));
 }
 
 export function resolveCodexHome(env: CodexAppServerEnv): string {
@@ -246,7 +244,7 @@ function readCodexCliVersion(result: PluginProcessResult): string | null {
 }
 
 async function probeCodexCliVersion(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     executable: ManagedExecutableRef;
     env: CodexAppServerEnv;
     signal?: AbortSignal;
@@ -270,7 +268,7 @@ async function probeCodexCliVersion(params: Readonly<{
 }
 
 async function probeCodexRealtimeConversationFeature(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     executable: ManagedExecutableRef;
     env: CodexAppServerEnv;
     signal?: AbortSignal;
@@ -424,7 +422,7 @@ function buildNativeCodexAppServerClientSpec(params: Readonly<{
 }
 
 export async function createCodexNativeAppServerClient(params: Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     processEnv?: CodexAppServerEnv;
     cwd?: string;
     configOverrides?: readonly string[];
@@ -443,7 +441,7 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
         ...(params.signal ? { signal: params.signal } : {}),
     });
     const realtimeConversationVersionSupported =
-        codexCliVersion === CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSION;
+        isCodexRealtimeConversationCliVersionSupported(codexCliVersion);
     const realtimeConversationAdvertised = await probeCodexRealtimeConversationFeature({
         exec: params.exec,
         executable: resolvedSystemTool.executable,

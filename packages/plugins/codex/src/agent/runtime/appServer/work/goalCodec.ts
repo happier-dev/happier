@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type {
   SessionWorkStateItemV1,
   SessionWorkStateStatusV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+} from '@happier-dev/plugin-sdk/sessions/work-state';
 
 export const CODEX_APP_SERVER_GOAL_STATUSES = [
   'active',

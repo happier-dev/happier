@@ -1,12 +1,24 @@
 import type {
-  ExternalSessionsSource,
-  RuntimeDescriptorV1,
-  SessionHandoffResumePlan,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-import { ExternalSessionsSourceSchema } from '@happier-dev/plugin-sdk/experimental/sessions';
+  AgentTerminalSessionStateUpdate,
+  HandoffImportResultV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { z } from 'zod';
 
-import type { CodexBackendMode } from '../../../../protocol/runtimeDescriptorV1.js';
+import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
+import {
+  CodexExternalSessionHandoffSourceSchema,
+  type CodexExternalSessionHandoffSource,
+  type CodexExternalSessionSource,
+} from '../external/models.js';
+
+type CodexHandoffRuntimeDescriptor = Extract<
+  AgentTerminalSessionStateUpdate,
+  { fieldId: 'identity.runtimeDescriptor' }
+>['value'];
+
+type CodexHandoffBackendMode = NonNullable<
+  ReturnType<typeof buildCodexAgentRuntimeDescriptor>['agent']['backendMode']
+>;
 
 export function normalizeCodexHandoffBundleRelativePath(relativePath: string): string {
   const portable = relativePath.replaceAll('\\', '/');
@@ -25,9 +37,9 @@ export function normalizeCodexHandoffBundleRelativePath(relativePath: string): s
 }
 
 type CodexSessionHandoffAffinity = Readonly<{
-  backendMode: CodexBackendMode | null;
-  source?: ExternalSessionsSource;
-  runtimeDescriptor?: RuntimeDescriptorV1;
+  backendMode: CodexHandoffBackendMode | null;
+  source?: CodexExternalSessionHandoffSource;
+  runtimeDescriptor?: CodexHandoffRuntimeDescriptor;
 }>;
 
 export const CodexSessionHandoffBundleSchema = z.object({
@@ -35,7 +47,7 @@ export const CodexSessionHandoffBundleSchema = z.object({
   remoteSessionId: z.string().min(1),
   affinity: z.object({
     backendMode: z.enum(['acp', 'appServer']).nullable(),
-    source: ExternalSessionsSourceSchema.optional(),
+    source: CodexExternalSessionHandoffSourceSchema.optional(),
     runtimeDescriptor: z.record(z.string(), z.unknown()).optional(),
   }).strict().optional(),
   files: z.array(z.object({
@@ -52,7 +64,7 @@ export type CodexSessionHandoffBundle = Readonly<
 
 export type ImportedCodexSessionHandoffBundle = Readonly<{
   remoteSessionId: string;
-  externalSource: ExternalSessionsSource;
-  runtimeDescriptorV1?: RuntimeDescriptorV1;
-  resume: SessionHandoffResumePlan;
+  externalSource: CodexExternalSessionSource;
+  runtimeDescriptorV1?: CodexHandoffRuntimeDescriptor;
+  resume: HandoffImportResultV1['launch'];
 }>;

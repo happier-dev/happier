@@ -1,24 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CodexRuntimeFetch as FetchRuntimeServiceV1 } from '../runtimeFetch.js';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 import { consumeCodexRateLimitResetCredit } from './rateLimitResetCreditsClient.js';
 
-function providerResponse(code: string, windowsReset = 0): Awaited<ReturnType<FetchRuntimeServiceV1>> {
+function providerResponse(code: string, windowsReset = 0): Awaited<ReturnType<HttpService['request']>> {
   return {
-    ok: true,
     status: 200,
-    statusText: 'OK',
+    finalUrl: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume',
     headers: {},
-    json: async () => ({ code, windows_reset: windowsReset }),
-    text: async () => '',
-    arrayBuffer: async () => new ArrayBuffer(0),
+    body: new TextEncoder().encode(JSON.stringify({ code, windows_reset: windowsReset })),
   };
 }
 
 describe('consumeCodexRateLimitResetCredit', () => {
   it('posts the official aggregate wire body without invented idempotency fields or headers', async () => {
-    const runtimeFetch = vi.fn(async () => providerResponse('reset', 2));
+    const request = vi.fn(async () => providerResponse('reset', 2));
+    const runtimeFetch: Pick<HttpService, 'request'> = { request };
 
     await expect(consumeCodexRateLimitResetCredit({
       accessToken: 'access-token',
@@ -28,15 +26,19 @@ describe('consumeCodexRateLimitResetCredit', () => {
       runtimeFetch,
     })).resolves.toEqual({ code: 'reset', windowsReset: 2 });
 
-    expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
       method: 'POST',
       headers: expect.not.objectContaining({ 'Idempotency-Key': expect.anything() }),
-      body: { redeem_request_id: 'redeem-123' },
-    }));
+      body: expect.any(Uint8Array),
+    }), expect.anything());
+    expect(JSON.parse(new TextDecoder().decode(request.mock.calls[0]?.[0].body))).toEqual({
+      redeem_request_id: 'redeem-123',
+    });
   });
 
   it('posts the official explicit-id wire body', async () => {
-    const runtimeFetch = vi.fn(async () => providerResponse('reset', 1));
+    const request = vi.fn(async () => providerResponse('reset', 1));
+    const runtimeFetch: Pick<HttpService, 'request'> = { request };
 
     await consumeCodexRateLimitResetCredit({
       accessToken: 'access-token',
@@ -46,23 +48,22 @@ describe('consumeCodexRateLimitResetCredit', () => {
       runtimeFetch,
     });
 
-    expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
-      body: {
-        redeem_request_id: 'redeem-456',
-        credit_id: 'credit-123',
-      },
-    }));
+    expect(JSON.parse(new TextDecoder().decode(request.mock.calls[0]?.[0].body))).toEqual({
+      redeem_request_id: 'redeem-456',
+      credit_id: 'credit-123',
+    });
   });
 
   it('rejects a blank redeem request id before provider I/O', async () => {
-    const runtimeFetch = vi.fn();
+    const request = vi.fn();
+    const runtimeFetch: Pick<HttpService, 'request'> = { request };
 
     await expect(consumeCodexRateLimitResetCredit({
       accessToken: 'access-token',
       idempotencyKey: '   ',
       runtimeFetch,
     })).rejects.toThrow('missing redeem request id');
-    expect(runtimeFetch).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -71,7 +72,7 @@ describe('consumeCodexRateLimitResetCredit', () => {
     ['no_credit', 0, { code: 'no_credit', windowsReset: 0 }],
     ['already_redeemed', 0, { code: 'already_redeemed', windowsReset: 0 }],
   ] as const)('parses the provider %s outcome', async (code, windowsReset, expected) => {
-    const runtimeFetch = vi.fn(async () => providerResponse(code, windowsReset));
+    const runtimeFetch: Pick<HttpService, 'request'> = { request: vi.fn(async () => providerResponse(code, windowsReset)) };
 
     await expect(consumeCodexRateLimitResetCredit({
       accessToken: 'access-token',
@@ -81,7 +82,7 @@ describe('consumeCodexRateLimitResetCredit', () => {
   });
 
   it('rejects an unknown successful provider outcome', async () => {
-    const runtimeFetch = vi.fn(async () => providerResponse('future_code'));
+    const runtimeFetch: Pick<HttpService, 'request'> = { request: vi.fn(async () => providerResponse('future_code')) };
 
     await expect(consumeCodexRateLimitResetCredit({
       accessToken: 'access-token',

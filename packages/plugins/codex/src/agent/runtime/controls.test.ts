@@ -1,7 +1,7 @@
 import type {
   AgentSessionControlContext,
   AgentSessionGoalControlContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 const clientMocks = vi.hoisted(() => ({

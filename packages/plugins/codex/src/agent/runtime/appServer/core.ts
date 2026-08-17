@@ -2,25 +2,12 @@ import type {
   AgentSessionConversationRollbackRequest,
   AgentSessionConversationRollbackResult,
   AgentSessionConversationRollbackReconciliationResult,
+  AgentSessionRuntimeAuthControl,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import type {
-  SessionConnectedServiceAuthApplyGenerationRequestV1,
-  SessionConnectedServiceAuthApplyGenerationResponseV1,
-  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
-  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
-  SessionRuntimeIssueV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/sessions';
 
 export type CodexAppServerRuntimeIssue = SessionRuntimeIssueV1;
-export type CodexAppServerConnectedServiceAuthApplyRequest =
-  SessionConnectedServiceAuthApplyGenerationRequestV1;
-export type CodexAppServerConnectedServiceAuthApplyResponse =
-  SessionConnectedServiceAuthApplyGenerationResponseV1;
-export type CodexAppServerConnectedServiceRuntimeIdentityRequest =
-  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1;
-export type CodexAppServerConnectedServiceRuntimeIdentityResponse =
-  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1;
 
 export type CodexAppServerRollbackTarget =
   | Readonly<{ type: 'latest_turn' }>
@@ -188,12 +175,7 @@ export type CodexAppServerSession = Readonly<{
     permissionMode?: string;
     configOption?: Readonly<Record<string, unknown>>;
   }>): Promise<void>;
-  applyConnectedServiceAuthGeneration?(
-    request: CodexAppServerConnectedServiceAuthApplyRequest,
-  ): Promise<CodexAppServerConnectedServiceAuthApplyResponse>;
-  readConnectedServiceRuntimeIdentity?(
-    request: CodexAppServerConnectedServiceRuntimeIdentityRequest,
-  ): Promise<CodexAppServerConnectedServiceRuntimeIdentityResponse>;
+  runtimeAuth?: AgentSessionRuntimeAuthControl;
   dispose(reason?: 'session_closed' | 'plugin_deactivated' | 'host_shutdown' | 'runtime_recovery'): Promise<void>;
   rollbackNativeConversation(
     request: AgentSessionConversationRollbackRequest,

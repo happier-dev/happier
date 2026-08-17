@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { createCodexConnectedServiceRuntimeAuthAdapter } from './runtimeAuthAdapter.js';
 
@@ -24,6 +24,42 @@ function buildCodexCredential() {
 }
 
 describe('Codex runtime auth adapter', () => {
+  it('returns a public runtime usage observation without writing the retired quota snapshot store', async () => {
+    const record = buildCodexCredential();
+    const retiredRuntimeQuotaSnapshots = { recordSnapshot: vi.fn() };
+    const adapter = createCodexConnectedServiceRuntimeAuthAdapter();
+
+    await expect(adapter.probeQuota({
+      target: { agentId: 'codex' },
+      selection: {
+        record,
+        groupId: 'team',
+        runtimeQuotaSnapshots: retiredRuntimeQuotaSnapshots,
+        client: {
+          request: vi.fn(async () => ({
+            rateLimits: {
+              primary: { usedPercent: 12, resetsAt: 1_768_010_000 },
+            },
+          })),
+        },
+      },
+    })).resolves.toMatchObject({
+      status: 'available',
+      usageSnapshot: {
+        providerId: 'openai-codex',
+        recordKey: {
+          providerId: 'openai-codex',
+          accountSubjectId: 'acct-work',
+          subjectKind: 'account',
+          quotaScope: 'account',
+        },
+        accountSubject: { kind: 'providerSubject', id: 'acct-work' },
+        source: 'runtimeSignal',
+      },
+    });
+    expect(retiredRuntimeQuotaSnapshots.recordSnapshot).not.toHaveBeenCalled();
+  });
+
   it('applies the selected generation through the canonical session runtime callback', async () => {
     const record = buildCodexCredential();
     const applyConnectedServiceAuthGeneration = vi.fn(async () => ({

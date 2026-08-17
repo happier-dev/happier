@@ -1,23 +1,20 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { withExclusiveFileLock } from '@happier-dev/plugin-sdk/experimental/fs';
 import {
-  ExternalSessionsSourceSchema,
-  type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+  expandHomePath,
+  resolveHomeDirFromEnvironment,
+  withExclusiveFileLock,
+} from '@happier-dev/plugin-sdk/fs';
 
-import {
-  readCanonicalCodexRuntimeDescriptorV1,
-  resolvePersistedCodexRuntimeIdentity,
-  toCanonicalCodexRuntimeBackendMode,
-} from '../../../identity/runtimeDescriptor.js';
 import { collectCodexSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
-import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
+import {
+  buildCodexAgentRuntimeDescriptor,
+  normalizeCodexBackendMode,
+  readCanonicalCodexAgentRuntimeDescriptorV1,
+} from '../../../../protocol/runtimeDescriptorV1.js';
 import type {
   CodexSessionHandoffBundle,
   ImportedCodexSessionHandoffBundle,
@@ -26,9 +23,14 @@ import {
   CodexSessionHandoffBundleSchema,
   normalizeCodexHandoffBundleRelativePath,
 } from './bundle.js';
+import {
+  CodexExternalSessionHandoffSourceSchema,
+  type CodexExternalSessionHandoffSource,
+  type CodexExternalSessionSource,
+} from '../external/models.js';
 
-function parseExternalSessionsSource(source: unknown): ExternalSessionsSource | null {
-  const parsedSource = ExternalSessionsSourceSchema.safeParse(source);
+function parseCodexExternalSessionHandoffSource(source: unknown): CodexExternalSessionHandoffSource | null {
+  const parsedSource = CodexExternalSessionHandoffSourceSchema.safeParse(source);
   return parsedSource.success ? parsedSource.data : null;
 }
 
@@ -55,7 +57,7 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
   connectedServiceProfileId?: string;
   connectedServiceGroupId?: string;
 }> {
-  const parsedSource = parseExternalSessionsSource(source);
+  const parsedSource = parseCodexExternalSessionHandoffSource(source);
   if (!parsedSource || parsedSource.kind !== 'codexHome') {
     return {};
   }
@@ -72,11 +74,7 @@ function resolveCodexRuntimeSourceAffinity(source: unknown): Readonly<{
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   const raw = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
-  const homeDir = typeof env.HOME === 'string' && env.HOME.trim().length > 0
-    ? env.HOME.trim()
-    : typeof env.USERPROFILE === 'string' && env.USERPROFILE.trim().length > 0
-      ? env.USERPROFILE.trim()
-      : homedir();
+  const homeDir = resolveHomeDirFromEnvironment(env);
   return raw ? expandHomePath(raw, homeDir) : join(homeDir, '.codex');
 }
 
@@ -255,13 +253,11 @@ export async function importCodexSessionBundle(params: Readonly<{
   bundle: unknown;
   targetPath: string;
   env: NodeJS.ProcessEnv;
-  sessionStorageMode?: 'direct' | 'persisted';
 }>): Promise<ImportedCodexSessionHandoffBundle> {
   const bundle = CodexSessionHandoffBundleSchema.parse(normalizeLegacyCodexHandoffBundle(params.bundle)) as CodexSessionHandoffBundle;
   const codexHome = resolveCodexHome(params.env);
-  const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(bundle) ?? { backendMode: 'appServer' as const };
-  const runtimeBackendMode = toCanonicalCodexRuntimeBackendMode(runtimeIdentity.backendMode) ?? 'appServer';
-  const importedRuntimeDescriptor = readCanonicalCodexRuntimeDescriptorV1(bundle.affinity?.runtimeDescriptor);
+  const runtimeBackendMode = normalizeCodexBackendMode(bundle.affinity?.backendMode) ?? 'appServer';
+  const importedRuntimeDescriptor = readCanonicalCodexAgentRuntimeDescriptorV1(bundle.affinity?.runtimeDescriptor);
   const sourceAffinity = resolveCodexRuntimeSourceAffinity(bundle.affinity?.source);
   const runtimeDescriptor = importedRuntimeDescriptor
     ? buildCodexAgentRuntimeDescriptor({
@@ -281,7 +277,7 @@ export async function importCodexSessionBundle(params: Readonly<{
       ...sourceAffinity,
       homePath: codexHome,
     });
-  let externalSource: ExternalSessionsSource;
+  let externalSource: CodexExternalSessionSource;
   if (runtimeDescriptor.agent.home === 'connectedService') {
     externalSource = {
       kind: 'codexHome' as const,
@@ -341,12 +337,8 @@ export async function importCodexSessionBundle(params: Readonly<{
     runtimeDescriptorV1: runtimeDescriptor,
     resume: {
       directory: params.targetPath,
-      agent: 'codex',
-      resume: bundle.remoteSessionId,
       environmentVariables: { CODEX_HOME: codexHome },
-      transcriptStorage: params.sessionStorageMode === 'persisted' ? 'persisted' : 'direct',
-      approvedNewDirectoryCreation: true,
-      codexBackendMode: runtimeBackendMode,
+      resumePlanOptions: { codexBackendMode: runtimeBackendMode },
     },
   };
 }

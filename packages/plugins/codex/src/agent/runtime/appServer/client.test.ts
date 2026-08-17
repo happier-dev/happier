@@ -2,14 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
-    PluginExecService,
+    ExecService,
+    PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type {
     PluginJsonRpcClient,
-    PluginProcessResult,
     PluginProtocolClientHandle,
     PluginProtocolClientSpec,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import { createCodexNativeAppServerClient } from './client';
+import { createCodexAppServerRealtimeConversation } from './realtime';
 
 function processResult(stdout: string, options?: Readonly<{
     exitCode?: number;
@@ -36,7 +38,7 @@ function createCapturingExec(
     ),
     versionResult: PluginProcessResult | Error = processResult('codex-cli 0.145.0\n'),
 ): Readonly<{
-    exec: PluginExecService;
+    exec: ExecService;
     specs: PluginProtocolClientSpec[];
     requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number }>>;
     notifications: Array<Readonly<{ method: string; params: unknown }>>;
@@ -87,7 +89,7 @@ function createCapturingExec(
             settleExit?.(result);
         },
         exec: {
-            run: vi.fn(async (request: Parameters<PluginExecService['run']>[0]) => {
+            run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
                 if (request.args.length === 1 && request.args[0] === '--version') {
                     if (versionResult instanceof Error) throw versionResult;
                     return versionResult;
@@ -107,7 +109,7 @@ function createCapturingExec(
                     return handle;
                 },
             },
-        } as unknown as PluginExecService,
+        } as unknown as ExecService,
     };
 }
 
@@ -122,7 +124,7 @@ describe('createCodexAppServerClient', () => {
             executable: resolvedExecutable,
             executablePath: '/fixture/codex',
         }));
-        const run = vi.fn(async (request: Parameters<PluginExecService['run']>[0]) => {
+        const run = vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
             if (request.executable !== resolvedExecutable) {
                 throw new Error('Codex capability probe bypassed the resolved system-tool grant');
             }
@@ -131,7 +133,7 @@ describe('createCodexAppServerClient', () => {
                 : processResult('realtime_conversation                under development  false\n');
         });
         const spawn = vi.fn(async (
-            spec: Parameters<PluginExecService['clients']['spawn']>[0],
+            spec: Parameters<ExecService['clients']['spawn']>[0],
         ) => {
             if (spec.launch.executable !== resolvedExecutable) {
                 throw new Error('Codex app-server launch bypassed the resolved system-tool grant');
@@ -143,7 +145,7 @@ describe('createCodexAppServerClient', () => {
             run,
             clients: { spawn },
             systemTools: { resolve: resolveSystemTool },
-        } as unknown as PluginExecService;
+        } as unknown as ExecService;
 
         const client = await createCodexNativeAppServerClient({ exec, processEnv: {} });
         await client.dispose();
@@ -188,7 +190,7 @@ describe('createCodexAppServerClient', () => {
             dispose: async () => undefined,
         };
         const exec = {
-            run: vi.fn(async (request: Parameters<PluginExecService['run']>[0]) => (
+            run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => (
                 request.args.length === 1 && request.args[0] === '--version'
                     ? processResult('codex-cli 0.145.0\n')
                     : processResult(
@@ -207,7 +209,7 @@ describe('createCodexAppServerClient', () => {
                     return handle;
                 }),
             },
-        } as unknown as PluginExecService;
+        } as unknown as ExecService;
 
         const nativeClient = await createCodexNativeAppServerClient({
             exec,
@@ -345,8 +347,17 @@ describe('createCodexAppServerClient', () => {
         expect(capture.notifications).toContainEqual({ method: 'initialized', params: {} });
     });
 
-    it('validates pinned Codex 0.145.0 and realtime capability on the same resolved system tool', async () => {
-        const capture = createCapturingExec();
+    it.each([
+        '0.145.0',
+        '0.146.0',
+    ] as const)('validates Codex %s and realtime capability on the same resolved system tool', async (
+        codexCliVersion,
+    ) => {
+        const capture = createCapturingExec(
+            {},
+            processResult('realtime_conversation                under development  false\n'),
+            processResult(`codex-cli ${codexCliVersion}\n`),
+        );
 
         const client = await createCodexNativeAppServerClient({
             exec: capture.exec,
@@ -379,15 +390,53 @@ describe('createCodexAppServerClient', () => {
         ]);
         expect(client.launchFeatures).toEqual({
             realtimeConversationAdvertised: true,
-            codexCliVersion: '0.145.0',
+            codexCliVersion,
             realtimeConversationVersionSupported: true,
         });
+    });
+
+    it('makes exact Codex 0.146.0 realtime available through the loaded client', async () => {
+        const capture = createCapturingExec(
+            {
+                request: vi.fn(async (method) => method === 'experimentalFeature/list'
+                    ? {
+                        data: [{ name: 'realtime_conversation', enabled: true }],
+                        nextCursor: null,
+                    }
+                    : {}),
+            },
+            processResult('realtime_conversation                under development  false\n'),
+            processResult('codex-cli 0.146.0\n'),
+        );
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            processEnv: {},
+        });
+        const conversation = createCodexAppServerRealtimeConversation({
+            getClient: async () => client,
+            getThreadId: () => 'thread-1',
+            isDisposed: () => false,
+        });
+
+        await expect(conversation.inspect()).resolves.toEqual({
+            status: 'available',
+            transport: 'webrtc',
+        });
+        expect(capture.specs[0]?.launch.args).toEqual([
+            'app-server',
+            '--listen',
+            'stdio://',
+            '--enable',
+            'realtime_conversation',
+        ]);
+        await client.dispose();
     });
 
     it.each([
         ['older supported-provider line', 'codex-cli 0.144.9\n', '0.144.9'],
         ['unvalidated patch release', 'codex-cli 0.145.1\n', '0.145.1'],
-        ['newer release line', 'codex-cli 0.146.0\n', '0.146.0'],
+        ['unvalidated newer patch', 'codex-cli 0.146.1\n', '0.146.1'],
+        ['newer release line', 'codex-cli 0.147.0\n', '0.147.0'],
         ['prerelease', 'codex-cli 0.145.0-alpha.1\n', null],
         [
             'extraneous prerelease output',
@@ -564,7 +613,7 @@ describe('createCodexAppServerClient', () => {
         const ordinaryCapture = createCapturingExec(
             {},
             processResult('realtime_conversation                under development  false\n'),
-            processResult('codex-cli 0.146.0\n'),
+            processResult('codex-cli 0.146.1\n'),
         );
         vi.spyOn(ordinaryCapture.exec.clients, 'spawn')
             .mockRejectedValueOnce(new Error('ordinary app-server launch failed'));
@@ -664,6 +713,23 @@ describe('createCodexAppServerClient', () => {
             method: 'slow/request',
             params: {},
             timeoutMs: 1200,
+        });
+    });
+
+    it('passes the realtime-start policy timeout through to the JSON-RPC client', async () => {
+        const capture = createCapturingExec();
+        const client = await createCodexNativeAppServerClient({
+            exec: capture.exec,
+            processEnv: {},
+        });
+
+        await expect(client.request('thread/realtime/start')).resolves.toEqual({ ok: true });
+        await client.dispose();
+
+        expect(capture.requests.at(-1)).toEqual({
+            method: 'thread/realtime/start',
+            params: {},
+            timeoutMs: 45_000,
         });
     });
 });

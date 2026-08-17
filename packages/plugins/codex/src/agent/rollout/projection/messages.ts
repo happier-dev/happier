@@ -57,6 +57,7 @@ export function projectCodexRolloutActions(
                 callId: action.callId,
                 output: action.output,
                 sidechainId: params.sidechainId,
+                ...(action.isError === undefined ? {} : { isError: action.isError }),
             });
             continue;
         }

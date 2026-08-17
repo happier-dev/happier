@@ -1,10 +1,10 @@
 import { join } from 'node:path';
 
-import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
+import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
 import type {
-  ConnectedServiceCredentialRecordV1,
-  ConnectedServiceCredentialRevisionV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    OauthCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { parseCredentialRecord } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { buildCodexCloudAuthFile } from '../../openai/cloud/authFile.js';
 import type { CodexConnectedServiceRefreshSelection } from './application.js';
@@ -21,8 +21,8 @@ function readString(value: unknown): string | null {
 
 export type CodexConnectedServiceAuthGenerationRequest = Readonly<{
   serviceId: 'openai-codex';
-  credential: Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>;
-  credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+  credential: OauthCredentialRecord;
+  credentialRevision: string | null;
   forcedWorkspaceId: string | null;
   forcedLoginMethod: string | null;
   selection: CodexConnectedServiceRefreshSelection | null;
@@ -30,19 +30,14 @@ export type CodexConnectedServiceAuthGenerationRequest = Readonly<{
     profileId: string | null;
     groupId: string | null;
     generation: number | null;
-    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+    credentialRevision?: string | null;
   }>;
 }>;
 
-function readCodexOauthCredentialRecord(value: unknown): Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }> | null {
-  const record = readRecord(value);
+function readCodexOauthCredentialRecord(value: unknown): OauthCredentialRecord | null {
+  const record = parseCredentialRecord(value);
   if (!record || record.kind !== 'oauth' || record.serviceId !== 'openai-codex') return null;
-  const oauth = readRecord(record.oauth);
-  if (!oauth) return null;
-  const accessToken = readString(oauth.accessToken);
-  const refreshToken = readString(oauth.refreshToken);
-  if (!accessToken || !refreshToken) return null;
-  return record as Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>;
+  return record;
 }
 
 function readCodexRefreshSelection(value: unknown): CodexConnectedServiceRefreshSelection | null {
@@ -84,7 +79,7 @@ export function readCodexConnectedServiceExpected(value: unknown): CodexConnecte
     profileId: readString(record?.profileId),
     groupId: readString(record?.groupId),
     generation,
-    credentialRevision: readString(record?.credentialRevision) as ConnectedServiceCredentialRevisionV1 | null,
+    credentialRevision: readString(record?.credentialRevision),
   };
 }
 
@@ -99,7 +94,7 @@ export function normalizeCodexConnectedServiceAuthGenerationRequest(
   return {
     serviceId: 'openai-codex',
     credential,
-    credentialRevision: readString(generation.credentialRevision) as ConnectedServiceCredentialRevisionV1 | null,
+    credentialRevision: readString(generation.credentialRevision),
     forcedWorkspaceId: readString(generation.forcedWorkspaceId),
     forcedLoginMethod: readString(generation.forcedLoginMethod),
     selection: readCodexRefreshSelection(generation.selection),
@@ -108,7 +103,7 @@ export function normalizeCodexConnectedServiceAuthGenerationRequest(
 }
 
 export function resolveCodexAppliedProfileId(input: Readonly<{
-  credential: ConnectedServiceCredentialRecordV1;
+  credential: OauthCredentialRecord;
   selection: CodexConnectedServiceRefreshSelection | null;
   expected: CodexConnectedServiceAuthGenerationRequest['expected'];
 }>): string {
@@ -135,7 +130,7 @@ export function resolveCodexAppliedGeneration(input: Readonly<{
 
 export async function writeCodexConnectedServiceAuthStore(input: Readonly<{
   codexHome: string;
-  credential: Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }>;
+  credential: OauthCredentialRecord;
 }>): Promise<void> {
   await writeAtomicJsonFile({
     path: join(input.codexHome, 'auth.json'),

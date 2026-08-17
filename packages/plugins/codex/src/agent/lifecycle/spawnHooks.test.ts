@@ -43,10 +43,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
       },
     }, {
       tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
-    })).resolves.toMatchObject({
-      decision: 'deny',
-      reasonCode: 'codex_provider_runtime_unsupported',
-    });
+    })).resolves.toEqual({ decision: 'allow' });
     expect(runSystemTool).toHaveBeenCalledTimes(1);
   });
 
@@ -91,6 +88,17 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
     })).resolves.toEqual({ decision: 'allow' });
 
     runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.146.0', stderr: '' });
+    await expect(resolveCodexDaemonSpawnPrerequisites({
+      payload: {
+        agentId: 'codex',
+        targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        runtimeSelection: { providerBinding: { v: 1, agentTargetKey: 'backend:codex', connectionId: 'pc_gateway', modelId: 'model-a' } },
+      },
+    }, {
+      tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
+    })).resolves.toEqual({ decision: 'allow' });
+
+    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.146.1', stderr: '' });
     await expect(resolveCodexDaemonSpawnPrerequisites({
       payload: {
         agentId: 'codex',

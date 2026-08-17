@@ -1,7 +1,7 @@
 import type {
   AgentAcpRuntimeOptions,
   AgentSessionOpenRequest,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { resolveCodexApiKeyAuthMethodId } from '../cli/auth/environment.js';
 import { buildCodexAcpEnvOverrides } from './env.js';

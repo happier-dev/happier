@@ -40,13 +40,47 @@ describe('activate', () => {
 
       expect(agent).toEqual(
         expect.objectContaining({
-          providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
+          providerBinding: {
+            v: 1,
+            adapterVersion: CODEX_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
+            prepare: expect.any(Function),
+            materialize: expect.any(Function),
+          },
           factory: expect.any(Function),
-          externalSessions: codexExternalSessionsContribution,
-          externalSessionTakeover: codexExternalSessionTakeoverContribution,
-          externalSessionHooks: codexExternalSessionHooksContribution,
-          externalSessionObservation: expect.any(Object),
+          externalSessions: {
+            resolveSource: expect.any(Function),
+            listCandidates: expect.any(Function),
+            resolveLinkIdentity: expect.any(Function),
+            resolveLinkedIdentity: expect.any(Function),
+            pageTranscript: expect.any(Function),
+            readAfterTranscript: expect.any(Function),
+          },
+          externalSessionTakeover: { resolveLaunch: expect.any(Function) },
+          externalSessionHooks: {
+            installationVariants: codexExternalSessionHooksContribution.installationVariants,
+            resolveInstallation: expect.any(Function),
+            mapHookEvent: expect.any(Function),
+          },
+          externalSessionObservation: {
+            describeResource: expect.any(Function),
+            observeResource: expect.any(Function),
+            reconcileResource: expect.any(Function),
+          },
         }),
+      );
+      expect(agent?.providerBinding).not.toBe(CODEX_PROVIDER_BINDING_ADAPTER_V1);
+      expect(agent?.externalSessions).not.toBe(codexExternalSessionsContribution);
+      expect(agent?.externalSessionTakeover).not.toBe(
+        codexExternalSessionTakeoverContribution,
+      );
+      expect(agent?.externalSessionHooks).not.toBe(codexExternalSessionHooksContribution);
+      const prepareInput = {
+        v: 1 as const,
+        agentTargetKey: 'backend:codex:built_in',
+        connectionId: 'pc_codex_activation_test',
+      };
+      expect(agent?.providerBinding?.prepare(prepareInput)).toEqual(
+        CODEX_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput),
       );
       expect(Object.keys(agent?.externalSessions ?? {}).sort()).toEqual([
         'listCandidates',
@@ -71,26 +105,16 @@ describe('activate', () => {
         'reconcileResource',
       ]);
       expect(activation.registrations()).toEqual(expect.arrayContaining([
-        { family: 'mcp.discoveryProviders', localId: 'config' },
+        { family: 'connectedAccountDescriptors', localId: 'openai-codex' },
+        { family: 'mcp.discoverySources', localId: 'config' },
         { family: 'hooks', localId: 'resolve-prerequisites' },
         { family: 'hooks', localId: 'augment-spawn-env' },
       ]));
-      const discovery = activation.registration('mcp.discoveryProviders', 'config');
+      const discovery = activation.registration('mcp.discoverySources', 'config');
       if (!discovery) throw new Error('Missing Codex MCP discovery registration');
       await expect(Reflect.apply(discovery, undefined, [{}])).resolves.toEqual({
         items: [],
-        servers: [{
-          id: 'codex.config.docs',
-          name: 'docs',
-          transport: {
-            kind: 'stdio',
-            launch: {
-              kind: 'binary',
-              executablePath: 'codex-mcp',
-              args: ['--project', 'docs'],
-            },
-          },
-        }],
+        endpoints: [],
         warnings: [],
       });
     } finally {

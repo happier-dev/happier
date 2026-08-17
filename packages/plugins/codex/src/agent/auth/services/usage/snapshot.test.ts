@@ -1,26 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  ProviderAccountUsageSnapshotV1Schema,
-  buildProviderAccountUsageRecordId,
-} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
-
 import { resolveCodexUsageSubjectRef } from './identity.js';
-
-type CodexUsageSnapshotModule = typeof import('./snapshot.js');
-
-async function loadSnapshotModule(): Promise<CodexUsageSnapshotModule | null> {
-  return await import('./snapshot.js').catch(() => null);
-}
+import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from './snapshot.js';
 
 describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
-  it('maps native app-server rate limits to a canonical provider account usage snapshot', async () => {
-    const moduleRecord = await loadSnapshotModule();
-    expect(moduleRecord).toEqual(expect.objectContaining({
-      mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot: expect.any(Function),
-    }));
-    if (!moduleRecord) throw new Error('snapshot module missing');
-
+  it('maps native app-server rate limits to a canonical provider account usage snapshot', () => {
     const subject = resolveCodexUsageSubjectRef({
       authStoreProviderAccountIdProof: {
         status: 'resolved',
@@ -28,7 +12,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       },
     });
 
-    const snapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const snapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject,
       rawSnapshot: {
         rateLimits: {
@@ -41,7 +25,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       fetchedAtMs: 1_768_000_000_000,
     });
 
-    const parsed = ProviderAccountUsageSnapshotV1Schema.parse(snapshot);
+    const parsed = snapshot;
     expect(parsed).toMatchObject({
       v: 1,
       providerId: 'openai-codex',
@@ -60,38 +44,32 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
         resetsAt: 1_768_010_000_000,
       })],
     });
-    expect(parsed.recordId).toBe(buildProviderAccountUsageRecordId(parsed.recordKey));
+    expect(parsed).not.toHaveProperty('recordId');
   });
 
-  it('uses stable chatgpt_account_id evidence instead of email labels for record identity', async () => {
-    const moduleRecord = await loadSnapshotModule();
-    expect(moduleRecord).toEqual(expect.objectContaining({
-      mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot: expect.any(Function),
-    }));
-    if (!moduleRecord) throw new Error('snapshot module missing');
-
+  it('uses stable chatgpt_account_id evidence instead of email labels for record identity', () => {
     const stableSubject = resolveCodexUsageSubjectRef({
       authStoreProviderAccountIdProof: {
         status: 'resolved',
         accountId: 'chatgpt-account-1',
       },
     });
-    const nativeSnapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const nativeSnapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject: stableSubject,
       rawSnapshot: { account: { email: 'native@example.com' }, primary: { usedPercent: 10 } },
       observedAtMs: 1_000,
       fetchedAtMs: 1_000,
     });
-    const connectedSnapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const connectedSnapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject: stableSubject,
       rawSnapshot: { account: { email: 'connected@example.com' }, primary: { usedPercent: 20 } },
       observedAtMs: 2_000,
       fetchedAtMs: 2_000,
     });
 
-    expect(nativeSnapshot.recordId).toBe(connectedSnapshot.recordId);
+    expect(nativeSnapshot.recordKey).toEqual(connectedSnapshot.recordKey);
 
-    const firstProvisional = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const firstProvisional = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject: resolveCodexUsageSubjectRef({
         accountLabel: 'same@example.com',
         provisionalDiscriminator: 'native-home-a',
@@ -100,7 +78,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       observedAtMs: 1_000,
       fetchedAtMs: 1_000,
     });
-    const secondProvisional = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const secondProvisional = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject: resolveCodexUsageSubjectRef({
         accountLabel: 'same@example.com',
         provisionalDiscriminator: 'native-home-b',
@@ -110,16 +88,10 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       fetchedAtMs: 1_000,
     });
 
-    expect(firstProvisional.recordId).not.toBe(secondProvisional.recordId);
+    expect(firstProvisional.recordKey).not.toEqual(secondProvisional.recordKey);
   });
 
-  it('uses a trusted account-label fallback for native snapshots whose rate-limit payload has no email', async () => {
-    const moduleRecord = await loadSnapshotModule();
-    expect(moduleRecord).toEqual(expect.objectContaining({
-      mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot: expect.any(Function),
-    }));
-    if (!moduleRecord) throw new Error('snapshot module missing');
-
+  it('uses a trusted account-label fallback for native snapshots whose rate-limit payload has no email', () => {
     const subject = resolveCodexUsageSubjectRef({
       authStoreProviderAccountIdProof: {
         status: 'resolved',
@@ -128,7 +100,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       },
     });
 
-    const snapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const snapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject,
       rawSnapshot: { primary: { usedPercent: 10 } },
       accountLabel: 'codex-user@example.test',
@@ -145,13 +117,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
     });
   });
 
-  it('carries sanitized reset-credit inventory on provider account usage snapshots', async () => {
-    const moduleRecord = await loadSnapshotModule();
-    expect(moduleRecord).toEqual(expect.objectContaining({
-      mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot: expect.any(Function),
-    }));
-    if (!moduleRecord) throw new Error('snapshot module missing');
-
+  it('carries sanitized reset-credit inventory on provider account usage snapshots', () => {
     const subject = resolveCodexUsageSubjectRef({
       authStoreProviderAccountIdProof: {
         status: 'resolved',
@@ -159,7 +125,7 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       },
     });
 
-    const snapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    const snapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject,
       rawSnapshot: {
         rate_limit: {

@@ -1,8 +1,7 @@
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   HookHandler,
-  PluginMcpDiscoveryResult,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/hooks';
 
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
@@ -18,39 +17,18 @@ import {
 import { openAiCodexConnectedAccountRuntime } from './connectedAccounts/openAiCodexRuntime.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
-type CodexMcpServerSpec = NonNullable<PluginMcpDiscoveryResult['servers']>[number];
-
 const resolveCodexDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
   resolveCodexDaemonSpawnPrerequisites(event, context);
 
 const augmentCodexDaemonSpawnEnvHook: HookHandler = (event) =>
   augmentCodexDaemonSpawnEnv(event);
 
-function toCodexMcpServerSpec(
-  server: Awaited<ReturnType<typeof readCodexMcpConfigServers>>['servers'][number],
-): CodexMcpServerSpec | null {
-  if (server.enabled === false) return null;
-  if (server.transport !== 'stdio' || !server.stdio) return null;
-  return {
-    id: `codex.config.${server.name}`,
-    name: server.name,
-    transport: {
-      kind: 'stdio',
-      launch: {
-        kind: 'binary',
-        executablePath: server.stdio.command,
-        args: server.stdio.args,
-      },
-    },
-  };
-}
-
-function readCodexConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.mcp.discoveryProviders[number] {
-  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'config');
-  if (!provider) {
-    throw new Error('Codex plugin manifest must declare codex.config MCP discovery provider');
+function readCodexConfigDiscoverySource(): typeof PLUGIN_MANIFEST.contributes.mcp.discoverySources[number] {
+  const source = PLUGIN_MANIFEST.contributes.mcp.discoverySources.find((entry) => entry.id === 'config');
+  if (!source) {
+    throw new Error('Codex plugin manifest must declare codex.config MCP discovery source');
   }
-  return provider;
+  return source;
 }
 
 export function activate(api: PluginApi): void {
@@ -67,7 +45,15 @@ export function activate(api: PluginApi): void {
   api.agents.register(
     'codex',
     createCodexAgentRuntime,
-    { providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1 },
+    {
+      providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
+      sessionRunnerFactory: {
+        module: './agent/runtime/engine',
+        export: 'createCodexAgentRuntime',
+        runtimeApiVersion: 1,
+        externalSessionsExport: 'codexExternalSessionsContribution',
+      },
+    },
   );
   api.agents.registerExternalSessions('codex', codexExternalSessionsContribution);
   api.agents.registerExternalSessionTakeover(
@@ -81,14 +67,12 @@ export function activate(api: PluginApi): void {
   );
   api.hooks.register('resolve-prerequisites', resolveCodexDaemonSpawnPrerequisitesHook);
   api.hooks.register('augment-spawn-env', augmentCodexDaemonSpawnEnvHook);
-  const configDiscoveryProvider = readCodexConfigDiscoveryProvider();
-  api.mcp.registerDiscoveryProvider(configDiscoveryProvider.id, async () => {
+  const configDiscoverySource = readCodexConfigDiscoverySource();
+  api.mcp.registerDiscoverySource(configDiscoverySource.id, async () => {
       const detected = await readCodexMcpConfigServers({});
       return {
         items: [],
-        servers: detected.servers
-          .map(toCodexMcpServerSpec)
-          .filter((server): server is CodexMcpServerSpec => server !== null),
+        endpoints: [],
         warnings: detected.warnings,
       };
   });

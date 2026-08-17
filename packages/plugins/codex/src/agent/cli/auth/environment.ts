@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import { expandHomePath } from '@happier-dev/plugin-sdk/fs';
 
 type CodexEnvironmentEnv = Readonly<Record<string, string | undefined>>;
 

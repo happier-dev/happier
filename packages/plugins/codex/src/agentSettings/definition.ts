@@ -1,4 +1,4 @@
-import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
 const CODEX_BACKEND_MODE_VALUES = ['acp', 'appServer', 'mcp', 'mcp_resume'] as const;
 const CODEX_BACKEND_MODE_UI_VALUES = ['appServer', 'acp'] as const;
@@ -19,7 +19,7 @@ export const CODEX_AGENT_SETTINGS_CONTRIBUTION = {
   version: 1,
   title: { key: 'settingsAgents.plugins.codex.title', fallback: 'Codex' },
   target: { kind: 'agent', agent: 'codex' },
-  scope: 'synced',
+  scope: 'account',
   fields: [
     {
       id: 'codexBackendMode',

@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { AgentSessionProviderBindingV1Schema } from '@happier-dev/protocol';
+import { AgentSessionProviderBindingV1Schema } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
   normalizeProviderCredentialHeaderName,
   ProviderEndpointUrlSyntaxSchema,
   ProviderPublicHeadersV1Schema,
-} from '@happier-dev/plugin-sdk/experimental/providers';
+} from '@happier-dev/plugin-sdk/providers';
 
 const CODEX_PROVIDER_SECRET_ENV_KEY = 'HAPPIER_CODEX_PROVIDER_API_KEY';
 const CODEX_MODEL_REASONING_EFFORT_KEY = 'model_reasoning_effort';

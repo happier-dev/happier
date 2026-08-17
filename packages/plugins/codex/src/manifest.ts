@@ -1,7 +1,9 @@
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { CODEX_UI_TRANSLATIONS } from './ui/translations.js';
 import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSIONS } from './agent/runtime/appServer/realtimeSupport.js';
 
 const CODEX_REALTIME_VOICE_PRIVACY_DISCLOSURE = Object.freeze({
   key: 'settingsVoice.realtimeProviders.codex.privacyDisclosure',
@@ -42,7 +44,7 @@ export const PLUGIN_MANIFEST = {
       reason: 'Exchange and refresh OpenAI Codex OAuth credentials for the exact Connected Account.',
       scope: {
         targets: [
-          { kind: 'fixedOrigin', origin: 'https://auth.openai.com' },
+          { kind: 'fixedOrigin', origin: OPENAI_CODEX_OAUTH_PROFILE.authBaseUrl },
           { kind: 'connectedAccountOrigin', service: 'openai-codex' },
         ],
         methods: ['POST'],
@@ -70,8 +72,13 @@ export const PLUGIN_MANIFEST = {
         modes: [{
           id: 'oauth',
           kind: 'oauthAuthorizationCode',
-          scopes: ['openid', 'profile', 'email', 'offline_access'],
+          scopes: [...OPENAI_CODEX_OAUTH_PROFILE.scopes],
           pkce: 'required',
+          outcomeReconciliation: 'none',
+        }, {
+          id: 'device',
+          kind: 'oauthDeviceCode',
+          scopes: [...OPENAI_CODEX_OAUTH_PROFILE.scopes],
           outcomeReconciliation: 'none',
         }],
       },
@@ -92,6 +99,53 @@ export const PLUGIN_MANIFEST = {
             kind: 'github_release_binary',
             githubRepo: 'openai/codex',
             binaryName: 'codex',
+            assetNameByPlatform: {
+              darwin: {
+                arm64: 'codex-package-aarch64-apple-darwin.tar.gz',
+                x64: 'codex-package-x86_64-apple-darwin.tar.gz',
+              },
+              linux: {
+                arm64: 'codex-package-aarch64-unknown-linux-musl.tar.gz',
+                x64: 'codex-package-x86_64-unknown-linux-musl.tar.gz',
+              },
+              win32: {
+                arm64: 'codex-package-aarch64-pc-windows-msvc.tar.gz',
+                x64: 'codex-package-x86_64-pc-windows-msvc.tar.gz',
+              },
+            },
+            // OpenAI Codex rust-v0.147.0's canonical package layout. Keep this
+            // an explicit runtime allowlist: package metadata, rg, and other
+            // bundled files are not part of Happier's managed installation.
+            archiveEntriesByPlatform: {
+              darwin: [
+                { archivePath: 'bin/codex', destinationPath: 'bin/codex' },
+                { archivePath: 'bin/codex-code-mode-host', destinationPath: 'bin/codex-code-mode-host' },
+              ],
+              linux: [
+                { archivePath: 'bin/codex', destinationPath: 'bin/codex' },
+                { archivePath: 'bin/codex-code-mode-host', destinationPath: 'bin/codex-code-mode-host' },
+              ],
+              win32: [
+                { archivePath: 'bin/codex.exe', destinationPath: 'bin/codex.exe' },
+                { archivePath: 'bin/codex-code-mode-host.exe', destinationPath: 'bin/codex-code-mode-host.exe' },
+                {
+                  archivePath: 'codex-resources/codex-command-runner.exe',
+                  destinationPath: 'codex-resources/codex-command-runner.exe',
+                },
+                {
+                  archivePath: 'codex-resources/codex-windows-sandbox-setup.exe',
+                  destinationPath: 'codex-resources/codex-windows-sandbox-setup.exe',
+                },
+              ],
+            },
+            // OpenAI Codex rust-v0.147.0's checksum-pinned x64 Windows package
+            // expands to 370,442,135 bytes, including one 298,668,336-byte
+            // executable. The 384 MiB ceilings retain bounded headroom without
+            // weakening the shared archive, path, or compression-ratio guards.
+            archiveExtractionLimits: {
+              maxFileBytes: 384 * 1024 * 1024,
+              maxExpandedBytes: 384 * 1024 * 1024,
+            },
           },
           manual: { kind: 'command' },
           recommendationOrder: 20,
@@ -181,7 +235,6 @@ export const PLUGIN_MANIFEST = {
         sources: [{
         sourceKind: 'codexHome',
         schema: {
-          passthrough: true,
           fields: [
             { name: 'kind', kind: 'literal', value: 'codexHome' },
             { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
@@ -227,14 +280,14 @@ export const PLUGIN_MANIFEST = {
         'realtime_conversation',
         'turn_control',
       ],
-      platforms: ['web'],
+      platforms: ['web', 'ios', 'android'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: false, bargeIn: false },
       },
       execution: {
         kind: 'experimental_agent_session_realtime',
         agent: CODEX_AGENT_CONTRIBUTION_IDENTITY,
+        supportedRuntimeVersions: [...CODEX_REALTIME_CONVERSATION_SUPPORTED_CLI_VERSIONS],
       },
       settings: {
         schemaVersion: 2,
@@ -265,7 +318,7 @@ export const PLUGIN_MANIFEST = {
     ],
     mcp: {
       servers: [],
-      discoveryProviders: [{ id: 'config', title: 'Codex MCP configuration', metadata: { agentId: 'codex' } }],
+      discoverySources: [{ id: 'config', title: 'Codex MCP configuration', metadata: { agentId: 'codex' } }],
     },
     ui: {
       translations: [{ locale: 'en', messages: CODEX_UI_TRANSLATIONS.en }],

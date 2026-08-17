@@ -1,9 +1,11 @@
 import {
-    readHappierStructuredInputV1FromMeta,
-} from '@happier-dev/protocol/runtime';
+    normalizeSessionAttachmentUploadPath,
+    readStructuredInputMentionSourcesV1,
+    sanitizeHappierStructuredInputV1,
+    type HappierStructuredInputV1,
+} from '@happier-dev/plugin-sdk/sessions';
 
 type MetadataRecord = Record<string, unknown>;
-type CodexStructuredInput = ReturnType<typeof readHappierStructuredInputV1FromMeta>;
 
 export type CodexAppServerTurnInputItem =
     | Readonly<{ type: 'text'; text: string }>
@@ -26,31 +28,43 @@ function readString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeAttachmentPath(value: unknown): string | null {
-    const rawPath = readString(value);
-    return rawPath ? rawPath.replace(/[\\]+/g, '/') : null;
-}
-
-function collectTrustedLocalImagePaths(
-    explicitPaths: ReadonlySet<string> | undefined,
-): ReadonlySet<string> | undefined {
-    const trusted = new Set<string>();
-    for (const localPath of explicitPaths ?? []) {
-        const normalizedPath = normalizeAttachmentPath(localPath);
-        if (normalizedPath) trusted.add(normalizedPath);
+/**
+ * The host verifies uploaded attachment bytes (digest and size) before a structured input envelope
+ * can reach a plugin runtime: `sessionUserMessageSend` resolves the trusted upload paths at
+ * admission, and the session queue re-reads the envelope through the canonical meta reader. A
+ * plugin runtime cannot reach that verifier, so the envelope's own declared upload paths are the
+ * trust basis here. Sanitization still enforces the upload-path shape and the upload provenance
+ * stamp, so a crafted envelope cannot promote an arbitrary local file to an image item.
+ */
+function readHostVerifiedLocalImagePaths(envelope: MetadataRecord): ReadonlySet<string> {
+    const paths = new Set<string>();
+    for (const entry of [
+        ...asRecordArray(envelope.imageInputs),
+        ...asRecordArray(envelope.attachments),
+    ]) {
+        const uploadPath = normalizeSessionAttachmentUploadPath(entry.path ?? entry.localPath);
+        if (uploadPath) paths.add(uploadPath);
     }
-    return trusted.size > 0 ? trusted : undefined;
+    return paths;
 }
 
-function readVendorPluginMentions(structuredInput: CodexStructuredInput): MetadataRecord[] {
-    return asRecordArray(structuredInput?.vendorPluginMentions);
+function readStructuredInput(value: unknown): HappierStructuredInputV1 | null {
+    const envelope = asRecord(value);
+    if (!envelope) return null;
+    try {
+        return sanitizeHappierStructuredInputV1(envelope, {
+            allowedLocalImagePaths: readHostVerifiedLocalImagePaths(envelope),
+        });
+    } catch {
+        // `AgentSessionInput.structuredInput` also carries execution-run intent payloads
+        // (see the review plugins' `request.input.structuredInput` readers), which are not Happier
+        // structured input. A payload that is not a structured input envelope contributes no turn
+        // items instead of failing the turn.
+        return null;
+    }
 }
 
-function readSkillMentions(structuredInput: CodexStructuredInput): MetadataRecord[] {
-    return asRecordArray(structuredInput?.skillMentions);
-}
-
-function readImageInputs(structuredInput: CodexStructuredInput): CodexAppServerTurnInputItem[] {
+function readImageInputs(structuredInput: HappierStructuredInputV1 | null): CodexAppServerTurnInputItem[] {
     const imageInputs = asRecordArray(structuredInput?.imageInputs);
     const items: CodexAppServerTurnInputItem[] = [];
     for (const imageInput of imageInputs) {
@@ -70,19 +84,17 @@ function readImageInputs(structuredInput: CodexStructuredInput): CodexAppServerT
 
 export function buildCodexAppServerTurnInput(params: Readonly<{
     text: string;
-    metadata?: unknown;
-    trustedLocalImagePaths?: ReadonlySet<string>;
+    structuredInput?: unknown;
 }>): CodexAppServerTurnInputItem[] {
-    const metadataRecord = asRecord(params.metadata);
-    const trustedLocalImagePaths = collectTrustedLocalImagePaths(params.trustedLocalImagePaths);
-    const structuredInput = metadataRecord
-        ? readHappierStructuredInputV1FromMeta(metadataRecord, {
-            allowedLocalImagePaths: trustedLocalImagePaths,
-        })
-        : null;
+    const structuredInput = readStructuredInput(params.structuredInput);
+    // D-4: `mentions[]` is the authoritative reference enumeration when present, so a
+    // dual-written envelope can never produce a second turn item for the same reference.
+    // The host resolver reconstructs provider context into the per-kind arrays before
+    // dispatch (D-3/INV-9); an unresolved `mentions[]` contributes no native item here.
+    const mentionSources = readStructuredInputMentionSourcesV1(structuredInput);
     const input: CodexAppServerTurnInputItem[] = [{ type: 'text', text: params.text }];
 
-    for (const mention of readVendorPluginMentions(structuredInput)) {
+    for (const mention of asRecordArray(mentionSources.vendorPluginMentions)) {
         const mentionPath = readString(mention.vendorPluginRef ?? mention.mentionPath ?? mention.path);
         if (!mentionPath) continue;
         input.push({
@@ -92,7 +104,7 @@ export function buildCodexAppServerTurnInput(params: Readonly<{
         });
     }
 
-    for (const skill of readSkillMentions(structuredInput)) {
+    for (const skill of asRecordArray(mentionSources.skillMentions)) {
         const path = readString(skill.path);
         const name = readString(skill.name ?? skill.displayName);
         if (!path || !name) continue;

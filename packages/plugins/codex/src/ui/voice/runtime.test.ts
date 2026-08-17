@@ -1,20 +1,24 @@
 import type {
-  PluginVoiceProviderRuntimeRegistration,
-  PluginVoiceRealtimeConnection,
-} from '@happier-dev/plugin-sdk/runtime';
+  VoiceCredentialAccess,
+  VoiceCredentialAccessPhase,
+} from '@happier-dev/plugin-sdk/voice';
+import type {
+  RealtimeVoiceProviderRuntime,
+  VoiceRealtimeConnection,
+} from '@happier-dev/plugin-sdk/voice/client';
 import type {
   AgentSessionRealtimeHandle,
   AgentSessionRealtimeLifecycleEvent,
   AgentSessionRealtimeStartResult,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   activate,
-  createCodexRealtimeVoiceProviderRuntimeRegistration,
-} from './createRuntimeContribution.js';
+  createCodexRealtimeVoiceProviderRuntime,
+} from './runtime.js';
 
-function createConnection(): PluginVoiceRealtimeConnection {
+function createConnection(): VoiceRealtimeConnection {
   return {
     kind: 'webrtc',
     connect: async () => {},
@@ -41,7 +45,7 @@ function createHandle(): AgentSessionRealtimeHandle {
 }
 
 function preparedSession(
-  runtime: PluginVoiceProviderRuntimeRegistration,
+  runtime: RealtimeVoiceProviderRuntime,
   signal: AbortSignal,
   attemptId = 1,
 ) {
@@ -52,18 +56,49 @@ function preparedSession(
     request: {},
     platform: 'web',
     providerConfig: {},
-    accountOperations: {
-      request: async () => {
-        throw new Error('Codex realtime must not request a second credential');
-      },
-    },
+    credentials: credentialAccess('prepare'),
     providerConversation: null,
     hostedConversation: null,
     signal,
   });
 }
 
+function credentialAccess<P extends VoiceCredentialAccessPhase>(
+  phase: P,
+): VoiceCredentialAccess<P> {
+  return Object.freeze({ phase, mediated: null, raw: null });
+}
+
 describe('Codex Agent-session realtime Voice leaf', () => {
+  it.each(['web', 'ios', 'android'] as const)(
+    'admits the same public runtime on %s',
+    async (platform) => {
+      const runtime = createCodexRealtimeVoiceProviderRuntime();
+      const signal = new AbortController().signal;
+
+      await expect(runtime.protocol.preflight?.({
+        controlSessionId: 'voice-global',
+        attemptId: 1,
+        request: {},
+        platform,
+        providerConfig: {},
+        signal,
+      })).resolves.toEqual({ kind: 'ready' });
+      await expect(runtime.protocol.prepare({
+        controlSessionId: 'voice-global',
+        attemptId: 1,
+        reason: 'initial',
+        request: {},
+        platform,
+        providerConfig: {},
+        credentials: credentialAccess('prepare'),
+        providerConversation: null,
+        hostedConversation: null,
+        signal,
+      })).resolves.toMatchObject({ kind: 'prepared' });
+    },
+  );
+
   it('registers the same runtime through normal activation without a private host', () => {
     const register = vi.fn();
 
@@ -72,13 +107,16 @@ describe('Codex Agent-session realtime Voice leaf', () => {
     expect(register).toHaveBeenCalledTimes(1);
     expect(register).toHaveBeenCalledWith(
       'realtime-codex',
-      expect.objectContaining({ requiresMicForConnection: true }),
+      expect.objectContaining({
+        kind: 'conversation',
+        microphoneMode: 'host_webrtc',
+      }),
     );
     expect(register.mock.calls[0]?.[1]?.beforeInterrupt).toBeUndefined();
   });
 
   it('uses only the bound execution service for WebRTC offer exchange', async () => {
-    const runtime = createCodexRealtimeVoiceProviderRuntimeRegistration();
+    const runtime = createCodexRealtimeVoiceProviderRuntime();
     const signal = new AbortController().signal;
     await expect(runtime.protocol.preflight?.({
       controlSessionId: 'voice-global',
@@ -93,7 +131,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       kind: 'prepared',
       session: {
         config: {},
-        safeMetadata: { providerId: 'realtime_codex' },
+        safeMetadata: {},
       },
     });
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -126,6 +164,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       tools: [],
       ui: {} as never,
       signal,
+      credentials: credentialAccess('connection'),
       execution: {
         kind: 'experimental_agent_session_realtime',
         agentSessionRealtime: {
@@ -176,7 +215,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
   });
 
   it('settles a started zero-final attempt through releasePrepared exactly once', async () => {
-    const runtime = createCodexRealtimeVoiceProviderRuntimeRegistration();
+    const runtime = createCodexRealtimeVoiceProviderRuntime();
     const signal = new AbortController().signal;
     const diagnostic = vi.fn();
     const createWebRtcConnection = vi.fn(() => createConnection());
@@ -195,6 +234,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       },
       tools: [],
       signal,
+      credentials: credentialAccess('connection'),
       execution: {
         kind: 'experimental_agent_session_realtime',
         agentSessionRealtime: {
@@ -225,6 +265,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       tools: [],
       ui: { diagnostic } as never,
       signal,
+      credentials: credentialAccess('connection'),
       execution: {
         kind: 'experimental_agent_session_realtime',
         agentSessionRealtime: {
@@ -272,7 +313,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
   });
 
   it('does not classify release before upstream start as transcript unavailable', async () => {
-    const runtime = createCodexRealtimeVoiceProviderRuntimeRegistration();
+    const runtime = createCodexRealtimeVoiceProviderRuntime();
     const signal = new AbortController().signal;
     const prepared = await preparedSession(runtime, signal, 9);
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -292,6 +333,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       tools: [],
       ui: { diagnostic } as never,
       signal,
+      credentials: credentialAccess('connection'),
       execution: {
         kind: 'experimental_agent_session_realtime',
         agentSessionRealtime: {
@@ -314,7 +356,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
   });
 
   it('fails closed when the host supplies the wrong execution authority', async () => {
-    const runtime = createCodexRealtimeVoiceProviderRuntimeRegistration();
+    const runtime = createCodexRealtimeVoiceProviderRuntime();
     const signal = new AbortController().signal;
     const prepared = await preparedSession(runtime, signal);
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -329,6 +371,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       tools: [],
       ui: {} as never,
       signal,
+      credentials: credentialAccess('connection'),
       execution: { kind: 'direct_media' },
     })).rejects.toThrow('voice_agent_realtime_execution_authority_required');
   });
@@ -340,7 +383,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
     'update_required',
     'feature_unavailable',
   ] as const)('preserves the typed %s readiness reason for the host policy owner', async (reason) => {
-    const runtime = createCodexRealtimeVoiceProviderRuntimeRegistration();
+    const runtime = createCodexRealtimeVoiceProviderRuntime();
     const signal = new AbortController().signal;
     const prepared = await preparedSession(runtime, signal, 2);
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -355,6 +398,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       tools: [],
       ui: {} as never,
       signal,
+      credentials: credentialAccess('connection'),
       execution: {
         kind: 'experimental_agent_session_realtime',
         agentSessionRealtime: {
@@ -425,7 +469,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
         'voice_agent_realtime_failed:codex_realtime_agent_session_disposed',
     },
     {
-      label: 'non-retry session remediation after the same-thread retry fence',
+      label: 'retains retry-unavailable diagnostic after the same-thread retry fence',
       result: {
         status: 'unavailable' as const,
         diagnostic: {
@@ -433,9 +477,22 @@ describe('Codex Agent-session realtime Voice leaf', () => {
           severity: 'error' as const,
         },
       },
-      expectedCode: 'session_unavailable',
+      expectedCode: 'codex_realtime_retry_unavailable',
       expectedMessage:
         'voice_agent_realtime_unavailable:codex_realtime_retry_unavailable',
+    },
+    {
+      label: 'retains runtime-restart-required diagnostic after an ambiguous admission',
+      result: {
+        status: 'failed' as const,
+        diagnostic: {
+          code: 'codex_realtime_runtime_restart_required',
+          severity: 'error' as const,
+        },
+      },
+      expectedCode: 'codex_realtime_runtime_restart_required',
+      expectedMessage:
+        'voice_agent_realtime_failed:codex_realtime_runtime_restart_required',
     },
     {
       label: 'runtime-update remediation after V3 notification races',
@@ -491,7 +548,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
     expectedCode,
     expectedMessage,
   }) => {
-    const runtime = createCodexRealtimeVoiceProviderRuntimeRegistration();
+    const runtime = createCodexRealtimeVoiceProviderRuntime();
     const signal = new AbortController().signal;
     const prepared = await preparedSession(runtime, signal, 2);
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -511,6 +568,7 @@ describe('Codex Agent-session realtime Voice leaf', () => {
       tools: [],
       ui: {} as never,
       signal,
+      credentials: credentialAccess('connection'),
       execution: {
         kind: 'experimental_agent_session_realtime',
         agentSessionRealtime: {

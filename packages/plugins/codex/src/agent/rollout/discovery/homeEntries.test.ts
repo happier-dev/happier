@@ -23,6 +23,23 @@ describe('Codex external session home entries', () => {
     })).toBe(resolve('/tmp/codex-user', '.codex'));
   });
 
+  it('uses the caller environment home for a user-source scan without CODEX_HOME', async () => {
+    const entries = await homeEntries({
+      source: { kind: 'codexHome', home: 'user' },
+      activeServerDir: '/tmp/happier-active-server',
+      env: { HOME: '/tmp/codex-user-scan' },
+    });
+
+    expect(entries).toEqual([{
+      codexHome: resolve('/tmp/codex-user-scan', '.codex'),
+      source: {
+        kind: 'codexHome',
+        home: 'user',
+        homePath: resolve('/tmp/codex-user-scan', '.codex'),
+      },
+    }]);
+  });
+
   it('uses an exact connected-service group homePath', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-group-home-'));
     const activeServerDir = join(root, 'servers', 'cloud');

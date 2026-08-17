@@ -4,12 +4,11 @@ import { join } from 'node:path';
 import type {
   AgentExternalSessionObservationContribution,
   AgentExternalSessionsResolvedIdentity,
-  ExternalAgentObservationLinkEvidenceBatchV1,
-  ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+  AgentExternalSessionObservationLinkEvidenceBatchV1,
+} from '@happier-dev/plugin-sdk/sessions/external';
 import {
   deriveExternalSessionActivity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   resolveConfiguredCodexHomePath,
@@ -23,6 +22,10 @@ import {
   inferCodexExternalSessionsActiveServerDir,
   validateCodexExternalSessionsSourcePolicy,
 } from './sourceValidation.js';
+import {
+  projectAgentExternalSessionSourceToCodex,
+  type CodexExternalSessionSource,
+} from './models.js';
 
 const RESOURCE_KEY_PREFIX = 'codex-rollout-set-resource-v1:';
 const LINK_KEY_PREFIX = 'codex-rollout-set-link-v1:';
@@ -34,11 +37,11 @@ type ResolvedCodexObservationIdentity = Readonly<{
   activeServerDir: string;
   codexHome: string;
   remoteSessionId: string;
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
 }>;
 
 type ExternalAgentObservationLeafFact =
-  ExternalAgentObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
+  AgentExternalSessionObservationLinkEvidenceBatchV1['items'][number]['facts'][number];
 
 function readOptionalString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0
@@ -51,34 +54,12 @@ function isSafeConnectedServiceId(raw: unknown): raw is string {
     && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(raw.trim());
 }
 
-function toLegacyCodexSource(
+function toCodexExternalSessionSource(
   identity: AgentExternalSessionsResolvedIdentity,
-): ExternalSessionsSource {
-  if (identity.source.kind !== 'codexHome') {
-    throw new Error('provider/source mismatch');
-  }
-  const home = identity.source.home;
-  if (home !== 'user' && home !== 'connectedService') {
-    throw new Error('Codex observation requires a qualified home');
-  }
-  const homePath = readOptionalString(identity.source.homePath);
-  const connectedServiceId = readOptionalString(
-    identity.source.connectedServiceId,
-  );
-  const connectedServiceProfileId = readOptionalString(
-    identity.source.connectedServiceProfileId,
-  );
-  const connectedServiceGroupId = readOptionalString(
-    identity.source.connectedServiceGroupId,
-  );
-  return {
-    kind: 'codexHome',
-    home,
-    ...(homePath ? { homePath } : {}),
-    ...(connectedServiceId ? { connectedServiceId } : {}),
-    ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
-    ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
-  };
+): CodexExternalSessionSource {
+  const source = projectAgentExternalSessionSourceToCodex(identity.source);
+  if (!source) throw new Error('provider/source mismatch');
+  return source;
 }
 
 function resolveIdentity(
@@ -92,7 +73,7 @@ function resolveIdentity(
   ) {
     throw new Error('Codex observation requires a bounded native session id');
   }
-  const requestedSource = toLegacyCodexSource(identity);
+  const requestedSource = toCodexExternalSessionSource(identity);
   const configuredCodexHomePath = resolveConfiguredCodexHomePath(env);
   const validation = validateCodexExternalSessionsSourcePolicy({
     source: requestedSource,

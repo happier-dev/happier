@@ -4,11 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
-  PluginExecService,
+  ExecService } from '@happier-dev/plugin-sdk/exec';
+import type {
   PluginJsonRpcClient,
   PluginProtocolClientHandle,
   PluginProtocolClientSpec,
-} from '@happier-dev/plugin-sdk/runtime';
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import * as sessionControls from './sessionControls';
 
@@ -92,7 +93,7 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
           return handle;
         },
       },
-    } as unknown as PluginExecService;
+    } as unknown as ExecService;
 
     return {
       exec,

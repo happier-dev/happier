@@ -3,7 +3,7 @@ import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingMaterializeInput,
   AgentProviderBindingPrepareInput,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import {

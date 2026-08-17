@@ -1,23 +1,34 @@
 import { describe, expect, it } from 'vitest';
 
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 import {
-  BUNDLED_VOICE_UI_ENTRIES,
+  VOICE_PROVIDER_PRESENTATIONS,
 } from './index.js';
 
 describe('Codex bundled Voice projection', () => {
-  it('normalizes the manifest execution reference to the exact Agent identity', () => {
-    const expectedAgent = {
-      pluginId: 'happier.agent.codex',
-      localId: 'codex',
-    };
+  it('keeps the strict manifest declaration authoritative and adds presentation only', () => {
+    const entry = VOICE_PROVIDER_PRESENTATIONS[0];
 
-    expect(BUNDLED_VOICE_UI_ENTRIES[0]?.declaration?.execution).toEqual({
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.execution).toEqual({
       kind: 'experimental_agent_session_realtime',
-      agent: expectedAgent,
+      agent: 'codex',
+      supportedRuntimeVersions: ['0.145.0', '0.146.0'],
     });
-    expect(
-      BUNDLED_VOICE_UI_ENTRIES[0]
-        ?.internal.resolveSurfaceCapabilities?.({}),
-    ).not.toHaveProperty('agentRuntime');
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.settings?.connectedServicesBinding).toMatchObject({
+      agent: 'codex',
+      serviceIds: ['openai-codex'],
+    });
+    expect(entry?.selectionOptions).toEqual([
+      expect.objectContaining({
+        id: 'experimental',
+        modeId: 'experimental',
+      }),
+    ]);
+    expect(entry?.providerId).toBe('happier.agent.codex/realtime-codex');
+    expect(entry).not.toHaveProperty('passiveSetup');
+    expect(entry).not.toHaveProperty('declaration');
+    expect(entry).not.toHaveProperty('roles');
+    expect(entry).not.toHaveProperty('requirements');
+    expect(entry).not.toHaveProperty('supportedPlatforms');
   });
 });

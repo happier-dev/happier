@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    readCodexAppServerRealtimeStartTimeoutMs,
     readCodexAppServerRequestTimeoutMs,
     readCodexAppServerResumeRecoveryTimeoutMs,
     readCodexAppServerRpcTimeoutMs,
@@ -28,6 +29,24 @@ describe('codex app-server RPC timeout policy', () => {
         expect(readCodexAppServerRequestTimeoutMs('thread/start', env)).toBe(20_000);
         expect(readCodexAppServerRequestTimeoutMs('thread/resume', env)).toBe(20_000);
         expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);
+    });
+
+    it('gives native fork requests a dedicated five-minute window without inflating ordinary RPCs', () => {
+        const env = {
+            HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '1200',
+        };
+
+        expect(readCodexAppServerRequestTimeoutMs('thread/fork', env)).toBe(5 * 60_000);
+        expect(readCodexAppServerRequestTimeoutMs('conversation/fork', env)).toBe(5 * 60_000);
+        expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);
+    });
+
+    it('uses the evidence-backed 45s timeout for realtime start admission and settlement', () => {
+        const settlementTimeoutMs = readCodexAppServerRealtimeStartTimeoutMs({});
+
+        expect(settlementTimeoutMs).toBe(45_000);
+        expect(readCodexAppServerRequestTimeoutMs('thread/realtime/start', {}))
+            .toBe(settlementTimeoutMs);
     });
 
     it('ensures startup timeout is never lower than the base timeout', () => {

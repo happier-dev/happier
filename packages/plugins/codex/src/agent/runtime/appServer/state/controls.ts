@@ -1,10 +1,4 @@
 import {
-    SESSION_CONFIG_OPTIONS_STATE_KEY,
-    SESSION_MODELS_STATE_KEY,
-    SESSION_MODES_STATE_KEY,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-
-import {
     CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
     CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
 } from './configOptionIds.js';
@@ -42,35 +36,6 @@ export type CodexAppServerSessionControlsSnapshot = Readonly<{
     availableModels: SessionModelOption[];
     currentModelId: string | null;
     configOptions: SessionConfigOption[];
-}>;
-
-export type CodexAppServerSessionModesState = Readonly<{
-    v: 1;
-    provider: string;
-    updatedAt: number;
-    currentModeId: string;
-    availableModes: SessionControlOption[];
-}>;
-
-export type CodexAppServerSessionModelsState = Readonly<{
-    v: 1;
-    provider: string;
-    updatedAt: number;
-    currentModelId: string;
-    availableModels: SessionModelOption[];
-}>;
-
-export type CodexAppServerSessionConfigOptionsState = Readonly<{
-    v: 1;
-    provider: string;
-    updatedAt: number;
-    configOptions: SessionConfigOption[];
-}>;
-
-export type CodexAppServerSessionControlsMetadataStates = Readonly<{
-    sessionModesState: CodexAppServerSessionModesState;
-    sessionModelsState: CodexAppServerSessionModelsState;
-    sessionConfigOptionsState: CodexAppServerSessionConfigOptionsState;
 }>;
 
 type CollaborationModeSelection = Readonly<{
@@ -421,41 +386,6 @@ function resolveCodexCurrentCollaborationModeId(
     return availableModes[0]?.id ?? null;
 }
 
-function hasGenericSessionModesState(value: unknown, provider: string): value is CodexAppServerSessionModesState {
-    const record = asRecord(value);
-    if (!record) return false;
-    if (record.v !== 1) return false;
-    if (record.provider !== provider) return false;
-    if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
-    if (typeof record.currentModeId !== 'string') return false;
-    if (!Array.isArray(record.availableModes)) return false;
-    return true;
-}
-
-function hasGenericSessionModelsState(value: unknown, provider: string): value is CodexAppServerSessionModelsState {
-    const record = asRecord(value);
-    if (!record) return false;
-    if (record.v !== 1) return false;
-    if (record.provider !== provider) return false;
-    if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
-    if (typeof record.currentModelId !== 'string') return false;
-    if (!Array.isArray(record.availableModels)) return false;
-    return true;
-}
-
-function hasGenericSessionConfigOptionsState(
-    value: unknown,
-    provider: string,
-): value is CodexAppServerSessionConfigOptionsState {
-    const record = asRecord(value);
-    if (!record) return false;
-    if (record.v !== 1) return false;
-    if (record.provider !== provider) return false;
-    if (!(typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt))) return false;
-    if (!Array.isArray(record.configOptions)) return false;
-    return true;
-}
-
 export function resolveCodexAppServerCollaborationModeSelection(params: Readonly<{
     modesResponse: unknown;
     modelsResponse?: unknown;
@@ -530,85 +460,5 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
         availableModels,
         currentModelId,
         configOptions: [],
-    };
-}
-
-export function buildCodexAppServerSessionControlsMetadataStates(params: Readonly<{
-    snapshot: CodexAppServerSessionControlsSnapshot;
-    metadataSnapshot?: unknown;
-    provider?: string;
-    updatedAt?: number;
-    currentModeId?: string | null;
-    currentModelId?: string | null;
-}>): CodexAppServerSessionControlsMetadataStates {
-    const provider = normalizeString(params.provider) ?? 'codex';
-    const updatedAt = typeof params.updatedAt === 'number' && Number.isFinite(params.updatedAt)
-        ? Math.trunc(params.updatedAt)
-        : Date.now();
-    const metadataRecord = asRecord(params.metadataSnapshot) ?? {};
-
-    const sessionModesState = (() => {
-        const existing = metadataRecord[SESSION_MODES_STATE_KEY];
-        if (!(params.snapshot.availableModes.length > 0)) {
-            if (hasGenericSessionModesState(existing, provider)) return existing;
-            return {
-                v: 1 as const,
-                provider,
-                updatedAt,
-                currentModeId: normalizeString(params.currentModeId) ?? 'default',
-                availableModes: [],
-            };
-        }
-        return {
-            v: 1 as const,
-            provider,
-            updatedAt,
-            currentModeId: params.snapshot.currentModeId ?? normalizeString(params.currentModeId) ?? 'default',
-            availableModes: params.snapshot.availableModes,
-        };
-    })();
-    const sessionModelsState = (() => {
-        const existing = metadataRecord[SESSION_MODELS_STATE_KEY];
-        if (!(params.snapshot.availableModels.length > 0)) {
-            if (hasGenericSessionModelsState(existing, provider)) return existing;
-            return {
-                v: 1 as const,
-                provider,
-                updatedAt,
-                currentModelId: normalizeString(params.currentModelId) ?? 'default',
-                availableModels: [],
-            };
-        }
-        return {
-            v: 1 as const,
-            provider,
-            updatedAt,
-            currentModelId: params.snapshot.currentModelId ?? normalizeString(params.currentModelId) ?? 'default',
-            availableModels: params.snapshot.availableModels,
-        };
-    })();
-    const sessionConfigOptionsState = (() => {
-        const existing = metadataRecord[SESSION_CONFIG_OPTIONS_STATE_KEY];
-        if (!(params.snapshot.availableModels.length > 0)) {
-            if (hasGenericSessionConfigOptionsState(existing, provider)) return existing;
-            return {
-                v: 1 as const,
-                provider,
-                updatedAt,
-                configOptions: [],
-            };
-        }
-        return {
-            v: 1 as const,
-            provider,
-            updatedAt,
-            configOptions: params.snapshot.configOptions,
-        };
-    })();
-
-    return {
-        sessionModesState,
-        sessionModelsState,
-        sessionConfigOptionsState,
     };
 }

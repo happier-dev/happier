@@ -1,11 +1,23 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { CodexRolloutAction } from './actions.js';
 import { projectCodexRolloutActions } from './messages.js';
 
+type CodexRolloutExternalMessageCandidate = Pick<
+  AgentExternalSessionTranscriptItem,
+  'id' | 'localId' | 'createdAtMs' | 'messageRole'
+> & Readonly<{ raw: AgentExternalSessionTranscriptItem['raw'] }>;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function projectJsonValue(value: unknown): JsonValue {
+  const parsed = AgentRuntimeJsonValueSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 function shouldFilterHarnessBlob(text: string): boolean {
@@ -43,7 +55,7 @@ export function mapCodexRolloutLineToExternalMessages(params: Readonly<{
   lineValue: unknown;
   actions: ReadonlyArray<CodexRolloutAction>;
   sidechainId?: string | null;
-}>): ExternalSessionTranscriptRawMessageV1[] {
+}>): CodexRolloutExternalMessageCandidate[] {
   const createdAtMs = extractEnvelopeTimestampMs(params.lineValue);
   // External transcript rendering should include "debug-only" tool calls (e.g., Codex-internal read/write tools),
   // but must still filter harness/system blobs that Codex sometimes embeds as user messages.
@@ -52,7 +64,7 @@ export function mapCodexRolloutLineToExternalMessages(params: Readonly<{
     { sidechainId: params.sidechainId ?? null },
   );
 
-  const out: ExternalSessionTranscriptRawMessageV1[] = [];
+  const out: CodexRolloutExternalMessageCandidate[] = [];
   for (let i = 0; i < projected.length; i++) {
     const action = projected[i]!;
     const idPrefix = `codex:${params.fileRelPath}`;
@@ -105,7 +117,7 @@ export function mapCodexRolloutLineToExternalMessages(params: Readonly<{
               type: 'tool-call',
               callId: action.callId,
               name: action.name,
-              input: action.input,
+              input: projectJsonValue(action.input),
               id: stableId,
               ...(action.sidechainId ? { sidechainId: action.sidechainId } : {}),
             },
@@ -127,10 +139,10 @@ export function mapCodexRolloutLineToExternalMessages(params: Readonly<{
             data: {
               type: 'tool-call-result',
               callId: action.callId,
-              output: action.output,
+              output: projectJsonValue(action.output),
               id: stableId,
               ...(action.sidechainId ? { sidechainId: action.sidechainId } : {}),
-              ...(action.isError ? { isError: action.isError } : {}),
+              ...(action.isError === undefined ? {} : { isError: action.isError }),
             },
           },
         },

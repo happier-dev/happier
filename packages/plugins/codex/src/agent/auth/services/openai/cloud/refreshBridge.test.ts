@@ -83,6 +83,28 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
     });
   });
 
+  it('consumes the typed binding projected from legacy Codex runtime descriptors by the host', () => {
+    expect(resolveCodexChatGptRefreshSelectionFromMetadata({
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'legacy-profile',
+          },
+        },
+      },
+    })).toEqual({
+      selection: {
+        kind: 'profile',
+        serviceId: 'openai-codex',
+        profileId: 'legacy-profile',
+      },
+      recoveryGroupId: null,
+    });
+  });
+
   it('builds refresh failure classification from profile and group bridge selections', () => {
     const resolution = resolveCodexChatGptRefreshSelectionFromChildSelection({
       kind: 'group',

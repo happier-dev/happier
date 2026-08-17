@@ -58,5 +58,3 @@ export * from './auth/services/home/sync/settings.js';
 export * from './auth/services/state/sharing/switchContinuity.js';
 export * from './runtime/terminal/invocation.js';
 export * from './runtime/core/abortHandler.js';
-export * from './runtime/core/projectedToolEvent.js';
-export * from './runtime/core/terminationHandler.js';

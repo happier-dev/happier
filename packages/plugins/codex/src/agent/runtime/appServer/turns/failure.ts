@@ -1,5 +1,5 @@
-import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
+import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { classifyCodexConnectedServiceAuthFailure } from '../../../auth/services/runtime/auth/failure.js';
 import {

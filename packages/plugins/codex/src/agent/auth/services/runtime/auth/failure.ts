@@ -1,10 +1,10 @@
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import {
-  classifyProviderLimitEvidence,
-  ConnectedServiceCredentialRevisionV1Schema,
-  type ConnectedServiceId,
-  type ConnectedServiceLimitCategoryV1,
-  type ConnectedServiceProfileId,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    classifyProviderLimitEvidence,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+    type ProviderLimitCategory,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export type CodexConnectedServiceRuntimeFailureKind =
   | 'usage_limit'
@@ -19,9 +19,9 @@ export type CodexConnectedServiceRuntimeFailureKind =
 
 export type CodexConnectedServiceRuntimeFailureClassification = Readonly<{
   kind: CodexConnectedServiceRuntimeFailureKind;
-  limitCategory?: ConnectedServiceLimitCategoryV1;
-  serviceId: ConnectedServiceId;
-  profileId: ConnectedServiceProfileId | null;
+  limitCategory?: ProviderLimitCategory;
+  serviceId: string;
+  profileId: string | null;
   groupId: string | null;
   resetsAtMs: number | null;
   retryAfterMs: number | null;
@@ -52,8 +52,8 @@ export type CodexConnectedServiceGenericRuntimeIssueSource =
 export type ClassifyCodexConnectedServiceAuthFailureInput = Readonly<{
   providerErrorPath: boolean;
   error: unknown;
-  serviceId: ConnectedServiceId;
-  profileId: ConnectedServiceProfileId | null;
+  serviceId: string;
+  profileId: string | null;
   groupId: string | null;
   nowMs?: number | null;
   genericRuntimeIssueSource?: CodexConnectedServiceGenericRuntimeIssueSource;
@@ -146,6 +146,10 @@ function containsRefreshTokenFailureMessage(text: string): boolean {
     || /\brefresh\s+token\s+(?:(?:has\s+been|was)\s+)?(?:invalidated|revoked)\b/iu.test(text);
 }
 
+function containsChatGptAccountModelIncompatibility(text: string): boolean {
+  return /\bmodel\b[\s\S]{0,180}\bnot supported\b[\s\S]{0,180}\busing Codex with a ChatGPT account\b/iu.test(text);
+}
+
 function containsTemporaryThrottleMessage(text: string): boolean {
   return /\btemporar(?:y|ily)\s+limiting\s+requests\b/iu.test(text)
     && /\bnot\s+your\s+usage\s+limit\b/iu.test(text);
@@ -157,9 +161,7 @@ function containsStableUsageLimitMessage(text: string): boolean {
 }
 
 function readResetAtMs(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-    return Math.trunc(value < 10_000_000_000 ? value * 1000 : value);
-  }
+  if (typeof value === 'number') return parseTimestampMs(value);
   const text = readString(value);
   if (!text) return null;
   const parsed = Date.parse(text);
@@ -231,10 +233,11 @@ function buildClassification(
     ? readCredentialFingerprint(input.sourceAccountIdentity?.credentialFingerprint)
     : null;
   const groupGeneration = readNonNegativeInteger(input.sourceAccountIdentity?.groupGeneration);
-  const parsedCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
-    input.sourceAccountIdentity?.credentialRevision,
-  );
-  const expectedCredentialRevision = parsedCredentialRevision.success ? parsedCredentialRevision.data : null;
+  const rawCredentialRevision = input.sourceAccountIdentity?.credentialRevision;
+  const expectedCredentialRevision = typeof rawCredentialRevision === 'string'
+    && /^csr_[A-Za-z0-9_-]{22,64}$/u.test(rawCredentialRevision)
+    ? rawCredentialRevision
+    : null;
   return {
     kind: params.kind,
     ...(params.limitCategory ? { limitCategory: params.limitCategory } : {}),
@@ -282,6 +285,14 @@ export function classifyCodexConnectedServiceAuthFailure(
   }
 
   const text = readErrorText(input.error);
+  if (input.providerErrorPath && containsChatGptAccountModelIncompatibility(text)) {
+    return buildClassification(input, {
+      kind: 'permission_denied',
+      limitCategory: 'plan_invalid',
+      source: record ? 'structured_provider_error' : 'stable_provider_message',
+    });
+  }
+
   if (input.providerErrorPath && containsTemporaryThrottleMessage(text)) {
     return buildClassification(input, {
       kind: 'temporary_throttle',

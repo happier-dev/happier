@@ -1,8 +1,8 @@
-import {
-  ProviderAccountUsageSnapshotV1Schema,
-  buildProviderAccountUsageRecordId,
-  type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
+import type {
+  AgentAccountUsageMeter,
+  AgentAccountUsageRecoveryCredits,
+  AgentAccountUsageSnapshot,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS,
@@ -24,6 +24,17 @@ export type MapCodexRateLimitSnapshotToProviderAccountUsageSnapshotInput = Reado
   staleAfterMs?: number;
 }>;
 
+export type MapCodexProviderHttpUsageSnapshotInput = Readonly<{
+  subject: CodexUsageSubjectRef;
+  observedAtMs: number;
+  fetchedAtMs: number;
+  staleAfterMs: number;
+  planLabel?: string | null;
+  accountLabel?: string | null;
+  recoveryCredits?: AgentAccountUsageRecoveryCredits;
+  meters: readonly AgentAccountUsageMeter[];
+}>;
+
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -32,7 +43,7 @@ function normalizeTimestampMs(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
-function buildRecordKey(subject: CodexUsageSubjectRef): ProviderAccountUsageSnapshotV1['recordKey'] {
+function buildRecordKey(subject: CodexUsageSubjectRef): AgentAccountUsageSnapshot['recordKey'] {
   return {
     providerId: 'openai-codex',
     accountSubjectId: subject.accountSubjectId,
@@ -41,18 +52,51 @@ function buildRecordKey(subject: CodexUsageSubjectRef): ProviderAccountUsageSnap
   };
 }
 
+/**
+ * Maps a Codex-owned provider HTTP observation to the public Agent usage
+ * contract. The CLI host subsequently owns persistence identity and projection.
+ */
+export function mapCodexProviderHttpUsageSnapshot(
+  params: MapCodexProviderHttpUsageSnapshotInput,
+): AgentAccountUsageSnapshot {
+  const recordKey = buildRecordKey(params.subject);
+  return {
+    v: 1,
+    recordKey,
+    providerId: 'openai-codex',
+    accountSubject: {
+      kind: params.subject.kind,
+      id: params.subject.accountSubjectId,
+    },
+    observedAtMs: normalizeTimestampMs(params.observedAtMs),
+    fetchedAtMs: normalizeTimestampMs(params.fetchedAtMs),
+    staleAfterMs: params.staleAfterMs,
+    source: 'providerHttp',
+    confidence: params.subject.kind === 'providerSubject' ? 'confirmed' : 'unknown',
+    state: params.meters.length > 0 ? 'loaded_data' : 'loaded_empty',
+    planLabel: params.planLabel ?? null,
+    accountLabel: params.accountLabel ?? null,
+    ...(params.recoveryCredits
+      ? { recoveryCredits: { ...params.recoveryCredits, credits: [...params.recoveryCredits.credits] } }
+      : {}),
+    meters: [...params.meters],
+  };
+}
+
 export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
   params: MapCodexRateLimitSnapshotToProviderAccountUsageSnapshotInput,
-): ProviderAccountUsageSnapshotV1 {
+): AgentAccountUsageSnapshot {
   const recordKey = buildRecordKey(params.subject);
   const state = resolveCodexRuntimeRateLimitsState(params.rawSnapshot).status;
   const recoveryCredits = mapCodexRateLimitResetCredits({
     rawUsage: params.rawSnapshot,
     rawResetCredits: params.rawResetCredits,
   });
-  return ProviderAccountUsageSnapshotV1Schema.parse({
+  const agentRecoveryCredits = recoveryCredits
+    ? { ...recoveryCredits, credits: [...recoveryCredits.credits] }
+    : undefined;
+  return {
     v: 1,
-    recordId: buildProviderAccountUsageRecordId(recordKey),
     recordKey,
     providerId: 'openai-codex',
     accountSubject: {
@@ -67,9 +111,9 @@ export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
     state,
     planLabel: readCodexRateLimitSnapshotPlanLabel(params.rawSnapshot),
     accountLabel: readCodexRateLimitSnapshotAccountLabel(params.rawSnapshot) ?? readString(params.accountLabel),
-    ...(recoveryCredits ? { recoveryCredits } : {}),
+    ...(agentRecoveryCredits ? { recoveryCredits: agentRecoveryCredits } : {}),
     meters: state === 'loaded_data'
-      ? mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot)
+      ? [...mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot)]
       : [],
-  });
+  };
 }

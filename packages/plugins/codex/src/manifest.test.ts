@@ -1,4 +1,5 @@
 import {
+  derivePluginDaemonContributionRegistrationRights,
   ingestPluginManifestV2,
   resolvePluginManifestSetReferencesV2,
 } from '@happier-dev/protocol';
@@ -57,9 +58,20 @@ describe('Codex plugin manifest', () => {
           scopes: ['openid', 'profile', 'email', 'offline_access'],
           pkce: 'required',
           outcomeReconciliation: 'none',
+        }, {
+          id: 'device',
+          kind: 'oauthDeviceCode',
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+          outcomeReconciliation: 'none',
         }],
       },
     }]);
+    expect(derivePluginDaemonContributionRegistrationRights(
+      result.manifest.contributes,
+    )).toContainEqual(expect.objectContaining({
+      family: 'connectedAccountDescriptors',
+      localId: 'openai-codex',
+    }));
     expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual(expect.objectContaining({
       id: 'openai-codex-oauth',
       capability: 'network',
@@ -101,14 +113,14 @@ describe('Codex plugin manifest', () => {
         'realtime_conversation',
         'turn_control',
       ],
-      platforms: ['web'],
+      platforms: ['web', 'ios', 'android'],
       capabilities: {
-        readiness: { requirements: [] },
         turn: { cancelResponse: false, bargeIn: false },
       },
       execution: {
         kind: 'experimental_agent_session_realtime',
         agent: 'codex',
+        supportedRuntimeVersions: ['0.145.0', '0.146.0'],
       },
       settings: {
         schemaVersion: 2,

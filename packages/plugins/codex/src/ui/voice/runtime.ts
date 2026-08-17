@@ -1,29 +1,31 @@
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
-  PluginVoiceProviderProtocol,
-  PluginVoiceProviderRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/runtime';
+  RealtimeVoiceProviderProtocol,
+  RealtimeVoiceProviderRuntime,
+  VoiceProviderExecutionAuthority } from '@happier-dev/plugin-sdk/voice/client';
 import type {
-  AgentSessionRealtimeStartResult,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
-import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+  VoiceRealtimeJsonValue,
+} from '@happier-dev/plugin-sdk/voice';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import {
   createCodexV3ControlDecoder,
   type CodexV3ControlDecoder,
-} from './codexV3ControlCodec.js';
+} from './control.js';
 
-const PROVIDER_ID = 'realtime_codex';
 const CONTROL_CHANNEL_LABEL = 'oai-events';
 const EMPTY_CONTROLS = Object.freeze([]) as readonly VoiceRealtimeJsonValue[];
+type AgentSessionRealtimeStartResult = Awaited<ReturnType<
+  Extract<
+    VoiceProviderExecutionAuthority,
+    Readonly<{ kind: 'experimental_agent_session_realtime' }>
+  >['agentSessionRealtime']['start']
+>>;
 const START_REMEDIATION_BY_DIAGNOSTIC_CODE = Object.freeze({
   codex_realtime_authentication_required: 'authentication_required',
   codex_realtime_agent_session_disposed: 'session_unavailable',
   codex_realtime_session_disposed: 'session_unavailable',
   codex_realtime_runtime_exited: 'session_unavailable',
-  codex_realtime_runtime_restart_required: 'session_unavailable',
-  codex_realtime_retry_unavailable: 'session_unavailable',
   codex_realtime_thread_unavailable: 'session_unavailable',
   codex_realtime_thread_changed: 'session_unavailable',
   codex_realtime_runtime_unavailable: 'unsupported_runtime',
@@ -57,31 +59,24 @@ function startFailureCode(
   return `voice_agent_realtime_${result.status}`;
 }
 
-export function createCodexRealtimeVoiceProviderRuntimeRegistration():
-  PluginVoiceProviderRuntimeRegistration {
+export function createCodexRealtimeVoiceProviderRuntime(): RealtimeVoiceProviderRuntime {
   const activeAttemptsById = new Map<number, Readonly<{
     attemptId: number;
     decoder: CodexV3ControlDecoder;
   }>>();
   let currentAttemptId: number | null = null;
 
-  const protocol: PluginVoiceProviderProtocol = Object.freeze({
-    async preflight({ platform, signal }) {
-      if (platform !== 'web') {
-        return { kind: 'declined', code: 'voice_agent_realtime_unsupported_platform' };
-      }
+  const protocol: RealtimeVoiceProviderProtocol = Object.freeze({
+    async preflight({ signal }) {
       return signal.aborted ? { kind: 'aborted' } : { kind: 'ready' };
     },
-    async prepare({ platform, signal }) {
-      if (platform !== 'web') {
-        return { kind: 'declined', code: 'voice_agent_realtime_unsupported_platform' };
-      }
+    async prepare({ signal }) {
       if (signal.aborted) return { kind: 'aborted' };
       return {
         kind: 'prepared',
         session: {
           config: {},
-          safeMetadata: { providerId: PROVIDER_ID },
+          safeMetadata: {},
         },
       };
     },
@@ -99,10 +94,11 @@ export function createCodexRealtimeVoiceProviderRuntimeRegistration():
       attempt.decoder.finalize();
     },
   });
-  const registration: PluginVoiceProviderRuntimeRegistration = {
+  const runtime: RealtimeVoiceProviderRuntime = {
+    kind: 'conversation',
     protocol,
+    microphoneMode: 'host_webrtc',
     outputLevelMeter: 'unavailable',
-    requiresMicForConnection: true,
     async createConnection({ attemptId, media, signal, execution, ui }) {
       if (execution.kind !== 'experimental_agent_session_realtime') {
         throw new Error('voice_agent_realtime_execution_authority_required');
@@ -154,12 +150,12 @@ export function createCodexRealtimeVoiceProviderRuntimeRegistration():
     encodeContextUpdate: () => EMPTY_CONTROLS,
     encodeTextTurn: () => EMPTY_CONTROLS,
   };
-  return Object.freeze(registration);
+  return Object.freeze(runtime);
 }
 
 export function activate(api: Pick<PluginApi, 'voiceProviders'>): void {
   api.voiceProviders.register(
     PLUGIN_MANIFEST.contributes.voiceProviders[0].id,
-    createCodexRealtimeVoiceProviderRuntimeRegistration(),
+    createCodexRealtimeVoiceProviderRuntime(),
   );
 }

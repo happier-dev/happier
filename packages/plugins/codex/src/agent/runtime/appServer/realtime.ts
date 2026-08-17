@@ -2,7 +2,7 @@ import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import {
   AgentSessionRealtimeStartRequestV1Schema,
   AgentSessionRealtimeStartResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   AgentSessionRealtimeAvailability,
   AgentSessionRealtimeConversation,
@@ -11,19 +11,19 @@ import type {
   AgentSessionRealtimeStartInput,
   AgentSessionRealtimeStartResult,
   AgentSessionRealtimeStopResult,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { classifyCodexConnectedServiceAuthFailure } from '../../auth/services/runtime/auth/failure.js';
 import {
   isCodexRealtimeEnabledAppServerLaunchUnavailableError,
   type DisposableCodexAppServerClient,
 } from './client.js';
+import { readCodexAppServerRealtimeStartTimeoutMs } from './client/timeout.js';
 import { isCodexAppServerApplicationRejectionForMethod } from './compatibility.js';
 
 const REALTIME_FEATURE = 'realtime_conversation';
 const FEATURE_PAGE_LIMIT = 100;
 const MAX_FEATURE_PAGES = 100;
-const DEFAULT_SETTLEMENT_TIMEOUT_MS = 15_000;
 
 type CodexAppServerRealtimeConversation = AgentSessionRealtimeConversation & Readonly<{
   isActive(): boolean;
@@ -925,7 +925,9 @@ export function createCodexAppServerRealtimeConversation(params: Readonly<{
 
       const settlementTimeoutMs = Math.max(
         250,
-        Math.trunc(params.settlementTimeoutMs ?? DEFAULT_SETTLEMENT_TIMEOUT_MS),
+        Math.trunc(
+          params.settlementTimeoutMs ?? readCodexAppServerRealtimeStartTimeoutMs(),
+        ),
       );
       target.timer = setTimeout(() => {
         failNegotiation(

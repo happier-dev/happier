@@ -1,10 +1,10 @@
+/** Codex V3 realtime control decoding and canonical event projection. */
 import type {
-  PluginVoiceRealtimeCanonicalEvent,
-} from '@happier-dev/plugin-sdk/runtime';
-import {
-  VoiceTranscriptCanonicalEventV1Schema,
-  type VoiceRealtimeJsonValue,
-} from '@happier-dev/protocol';
+  VoiceRealtimeCanonicalEvent } from '@happier-dev/plugin-sdk/voice/client';
+import type {
+  VoiceRealtimeJsonValue,
+} from '@happier-dev/plugin-sdk/voice';
+import { VoiceTranscriptCanonicalEventV1Schema } from '@happier-dev/plugin-sdk/voice/client';
 
 const PROVIDER_NAMESPACE = 'codex-v3';
 const MAX_UPSTREAM_TURN_ID_CODE_UNITS = 192;
@@ -24,7 +24,7 @@ export type CodexV3ControlDiagnosticCode =
 
 export type CodexV3ControlDecoder = ((
   value: VoiceRealtimeJsonValue,
-) => readonly PluginVoiceRealtimeCanonicalEvent[]) & Readonly<{
+) => readonly VoiceRealtimeCanonicalEvent[]) & Readonly<{
   /**
    * Arms whole-attempt finalization only after the upstream Agent realtime
    * attachment has actually started. A pre-start abort has no conversation
@@ -105,7 +105,7 @@ export function createCodexV3ControlDecoder(input: Readonly<{
     input.diagnostic?.(code);
   };
 
-  const decode = (value: VoiceRealtimeJsonValue): readonly PluginVoiceRealtimeCanonicalEvent[] => {
+  const decode = (value: VoiceRealtimeJsonValue): readonly VoiceRealtimeCanonicalEvent[] => {
     if (attemptIdentity === null || terminal) return Object.freeze([]);
     const event = record(value);
     if (!event || typeof event.type !== 'string') {

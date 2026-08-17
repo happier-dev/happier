@@ -1,4 +1,4 @@
-import { getProviderConnectedServicesAdapter } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { AGENT_DEFINITION } from '../../../../definition.js';
 
 export type CodexConnectedServiceSwitchContinuityUnsupportedResult = Readonly<{
   mode: 'unsupported';
@@ -17,20 +17,11 @@ export const codexConnectedServiceSharedStateRequiredResult = {
   reason: 'codex_shared_state_required',
 } as const;
 
-function readSupportedConnectedServiceIds(value: unknown): readonly string[] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
-  const supportedServiceIds = (value as Readonly<{ supportedServiceIds?: unknown }>).supportedServiceIds;
-  if (!Array.isArray(supportedServiceIds)) return [];
-  return supportedServiceIds.filter((serviceId): serviceId is string => typeof serviceId === 'string');
-}
-
 export function resolveCodexConnectedServiceSwitchServiceSupport(
   serviceId: string,
 ): CodexConnectedServiceSwitchServiceSupport {
-  const supportedServiceIds = readSupportedConnectedServiceIds(
-    getProviderConnectedServicesAdapter('codex')?.connectedServices,
-  );
-  const supportsService = supportedServiceIds?.includes(serviceId) === true;
+  const supportsService = AGENT_DEFINITION.core.connectedServices.supportedServiceIds
+    .some((supportedServiceId) => supportedServiceId === serviceId);
   if (!supportsService) {
     return {
       supported: false,

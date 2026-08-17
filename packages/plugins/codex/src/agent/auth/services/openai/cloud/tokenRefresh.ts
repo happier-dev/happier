@@ -1,7 +1,7 @@
 import {
-  ConnectedServiceCredentialRecordV1Schema,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+    parseCredentialRecord,
+    type OauthCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export type CodexChatGptTokensRefreshBridgeResponse = Readonly<{
   accessToken: string;
@@ -22,7 +22,7 @@ export type RefreshCodexOauthTokens = (params: Readonly<{
   now: number;
 }>) => Promise<ConnectedAccountOauthRefreshResult>;
 
-function requireCodexOauthCredentialRecord(record: ConnectedServiceCredentialRecordV1): Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }> {
+function requireCodexOauthCredentialRecord(record: OauthCredentialRecord): OauthCredentialRecord {
   if (record.kind !== 'oauth') {
     throw new Error(`Expected openai-codex OAuth credential record, got ${record.kind}`);
   }
@@ -33,14 +33,14 @@ function requireCodexOauthCredentialRecord(record: ConnectedServiceCredentialRec
 }
 
 export async function refreshCodexChatGptTokensForBridge(params: Readonly<{
-  record: ConnectedServiceCredentialRecordV1;
+  record: OauthCredentialRecord;
   chatgptPlanType: string | null;
   now: number;
   refreshOauthTokens: RefreshCodexOauthTokens;
-  persistUpdatedRecord?: (record: ConnectedServiceCredentialRecordV1) => Promise<void>;
+  persistUpdatedRecord?: (record: OauthCredentialRecord) => Promise<void>;
 }>): Promise<Readonly<{
   codexResponse: CodexChatGptTokensRefreshBridgeResponse;
-  updatedRecord: ConnectedServiceCredentialRecordV1;
+  updatedRecord: OauthCredentialRecord;
 }>> {
   const record = requireCodexOauthCredentialRecord(params.record);
   const refreshed = await params.refreshOauthTokens({
@@ -48,7 +48,7 @@ export async function refreshCodexChatGptTokensForBridge(params: Readonly<{
     refreshToken: record.oauth.refreshToken,
     now: params.now,
   });
-  const updatedRecord = ConnectedServiceCredentialRecordV1Schema.parse({
+  const updatedRecord = parseCredentialRecord({
     ...record,
     updatedAt: Math.max(0, Math.trunc(params.now)),
     expiresAt: refreshed.expiresAt,
@@ -59,6 +59,9 @@ export async function refreshCodexChatGptTokensForBridge(params: Readonly<{
       idToken: refreshed.idToken,
     },
   });
+  if (!updatedRecord || updatedRecord.kind !== 'oauth') {
+    throw new Error('Codex OAuth credential refresh produced an invalid record');
+  }
   await params.persistUpdatedRecord?.(updatedRecord);
   return {
     codexResponse: {

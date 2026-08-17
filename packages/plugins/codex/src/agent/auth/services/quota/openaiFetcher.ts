@@ -1,12 +1,15 @@
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
 import type {
-  ConnectedServiceCredentialRecordV1,
-  ConnectedServiceId,
-  ConnectedServiceQuotaMeterV1,
-  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
-  ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-import type { PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';
-import type { CodexRuntimeFetch } from '../runtimeFetch.js';
+  AgentAccountUsageMeter,
+  AgentAccountUsageRecoveryCredits,
+  AgentAccountUsageSnapshot,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  OauthCredentialRecord,
+  TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
 import {
@@ -15,6 +18,8 @@ import {
   consumeCodexRateLimitResetCredit,
   fetchCodexRateLimitResetCredits,
 } from './rateLimitResetCreditsClient.js';
+import { resolveCodexUsageSubjectRef } from '../usage/identity.js';
+import { mapCodexProviderHttpUsageSnapshot } from '../usage/snapshot.js';
 
 export const OPENAI_CODEX_DEFAULT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
@@ -33,7 +38,11 @@ function normalizePct(value: unknown): number | null {
 }
 
 function normalizeResetAtMs(value: unknown): number | null {
-  const num = typeof value === 'number' ? value : Number(value);
+  if (typeof value === 'number') {
+    const parsed = parseTimestampMs(value);
+    return parsed !== null && parsed > 0 ? parsed : null;
+  }
+  const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
   return num > 1_000_000_000_000 ? Math.trunc(num) : Math.trunc(num * 1000);
 }
@@ -62,27 +71,33 @@ export function parseOpenAiCodexConnectedAccountQuotaLimits(
   });
 }
 
-function resolveConnectedServiceQuotaAccountLabel(record: ConnectedServiceCredentialRecordV1): string | null {
+function resolveConnectedServiceQuotaAccountLabel(record: OauthCredentialRecord | TokenCredentialRecord): string | null {
   if (record.kind !== 'oauth') return null;
   return normalizeNonEmptyString(record.oauth.providerEmail)
     ?? normalizeNonEmptyString(record.oauth.providerAccountId);
 }
 
 export type CodexQuotaFetcher = Readonly<{
-  serviceId: ConnectedServiceId;
+  serviceId: string;
   loadQuota: (params: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
     now: number;
     signal: AbortSignal;
-  }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
+  }>) => Promise<AgentAccountUsageSnapshot | null>;
   consumeRecoveryCredit?: (params: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
     now: number;
     idempotencyKey: string;
     providerCreditId?: string;
     signal: AbortSignal;
-  }>) => Promise<Exclude<ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1, 'unknown_after_timeout'>>;
+  }>) => Promise<CodexQuotaRecoveryCreditConsumeOutcome>;
 }>;
+
+type CodexQuotaRecoveryCreditConsumeOutcome =
+  | 'consumed'
+  | 'already_consumed'
+  | 'not_available'
+  | 'nothing_to_reset';
 
 export type CodexQuotaFetcherDescriptor = Readonly<{
   id: string;
@@ -102,46 +117,34 @@ function headersToRecord(headers: Headers | undefined): Readonly<Record<string, 
   return record;
 }
 
-function toRequestBody(value: unknown): BodyInit | null | undefined {
-  if (value === undefined || value === null) return value;
-  if (
-    typeof value === 'string'
-    || value instanceof URLSearchParams
-    || value instanceof ArrayBuffer
-    || value instanceof Blob
-    || value instanceof FormData
-    || value instanceof ReadableStream
-  ) {
-    return value;
-  }
-  return JSON.stringify(value);
-}
-
-function defaultRuntimeFetch(): CodexRuntimeFetch {
-  return async ({ url, method, headers, body, signal }) => {
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: toRequestBody(body),
-      signal,
-    });
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      headers: headersToRecord(response.headers),
-      text: async () => await response.text(),
-      json: async () => await response.json(),
-      arrayBuffer: async () => await response.arrayBuffer(),
-    };
-  };
+function defaultRuntimeFetch(): Pick<HttpService, 'request'> {
+  return Object.freeze({
+    async request(
+      request: Parameters<HttpService['request']>[0],
+      options: Parameters<HttpService['request']>[1] = {},
+    ) {
+      const response = await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body as BodyInit | undefined,
+        signal: options.signal,
+        redirect: request.redirect,
+      });
+      return {
+        status: response.status,
+        finalUrl: response.url || request.url,
+        headers: headersToRecord(response.headers),
+        body: new Uint8Array(await response.arrayBuffer()),
+      };
+    },
+  });
 }
 
 /**
  * Builds a quota-unknown meter placeholder for the given meterId.
  * Used when the private endpoint is disabled via the kill switch.
  */
-function buildQuotaUnknownMeter(meterId: string, label: string): ConnectedServiceQuotaMeterV1 {
+function buildQuotaUnknownMeter(meterId: string, label: string): AgentAccountUsageMeter {
   return {
     meterId,
     label,
@@ -151,8 +154,33 @@ function buildQuotaUnknownMeter(meterId: string, label: string): ConnectedServic
     utilizationPct: null,
     resetsAt: null,
     status: 'unavailable',
+    source: 'provider_api',
+    scope: meterId === 'session' ? 'session' : 'weekly',
+    limitScope: 'account',
+    confidence: 'unknown',
     details: { code: 'quota_unknown' },
   };
+}
+
+function buildCodexProviderHttpQuotaSnapshot(input: Readonly<{
+  record: OauthCredentialRecord | TokenCredentialRecord;
+  now: number;
+  staleAfterMs: number;
+  planLabel?: string | null;
+  accountLabel?: string | null;
+  recoveryCredits?: AgentAccountUsageRecoveryCredits;
+  meters: readonly AgentAccountUsageMeter[];
+}>): AgentAccountUsageSnapshot {
+  return mapCodexProviderHttpUsageSnapshot({
+    subject: resolveCodexUsageSubjectRef({ connectedServiceRecord: input.record }),
+    observedAtMs: input.now,
+    fetchedAtMs: input.now,
+    staleAfterMs: input.staleAfterMs,
+    planLabel: input.planLabel,
+    accountLabel: input.accountLabel,
+    ...(input.recoveryCredits ? { recoveryCredits: input.recoveryCredits } : {}),
+    meters: input.meters,
+  });
 }
 
 export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
@@ -168,7 +196,7 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
    * The usageUrl override (if set) takes precedence over this flag.
    */
   disablePrivateEndpoint?: boolean;
-  runtimeFetch?: CodexRuntimeFetch;
+  runtimeFetch?: Pick<HttpService, 'request'>;
 }>): CodexQuotaFetcher {
   const usageUrl = typeof params?.usageUrl === 'string' && params.usageUrl.trim().length > 0
     ? params.usageUrl.trim()
@@ -230,12 +258,9 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
       // non-default URL) takes precedence — it is the documented escape hatch and
       // indicates the caller wants a specific endpoint probed.
       if (disablePrivateEndpoint) {
-        return {
-          v: 1,
-          serviceId: record.serviceId,
-          profileId: record.profileId,
-          ...(record.oauth.providerAccountId ? { activeAccountId: record.oauth.providerAccountId } : {}),
-          fetchedAt: now,
+        return buildCodexProviderHttpQuotaSnapshot({
+          record,
+          now,
           staleAfterMs,
           planLabel: null,
           accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
@@ -243,10 +268,10 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
             buildQuotaUnknownMeter('session', 'Session'),
             buildQuotaUnknownMeter('weekly', 'Weekly'),
           ],
-        };
+        });
       }
 
-      const response = await runtimeFetch({
+      const response = await runtimeFetch.request({
         url: usageUrl,
         method: 'GET',
         headers: {
@@ -255,14 +280,14 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
           'Accept': 'application/json',
           'User-Agent': userAgent,
         },
-        signal,
-      });
+        redirect: 'error',
+      }, { signal });
 
-      if (!response.ok) {
-        throw new Error(`OpenAI usage fetch failed (${response.status}): ${response.statusText || 'HTTP error'}`);
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`OpenAI usage fetch failed (${response.status}): HTTP error`);
       }
 
-      const json: unknown = await response.json();
+      const json: unknown = JSON.parse(new TextDecoder().decode(response.body));
       const data = isRecord(json) ? json : {};
       let rawResetCredits: unknown;
       if (resetCreditsUrl) {
@@ -287,12 +312,9 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
       const planLabel = normalizeNonEmptyString(data.plan_type);
       const connectedAccountLimits = parseOpenAiCodexConnectedAccountQuotaLimits(data);
 
-      return {
-        v: 1,
-        serviceId: record.serviceId,
-        profileId: record.profileId,
-        ...(record.oauth.providerAccountId ? { activeAccountId: record.oauth.providerAccountId } : {}),
-        fetchedAt: now,
+      return buildCodexProviderHttpQuotaSnapshot({
+        record,
+        now,
         staleAfterMs,
         planLabel,
         accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
@@ -304,11 +326,17 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
           limit: null,
           unit: 'unknown',
           utilizationPct: limit.used ?? null,
+          remainingPct: limit.remaining ?? null,
           resetsAt: limit.resetsAtMs ?? null,
+          resetAtMs: limit.resetsAtMs ?? null,
           status: limit.used === undefined ? 'unavailable' : 'ok',
+          source: 'provider_api',
+          scope: limit.id === 'session' ? 'session' : 'weekly',
+          limitScope: 'account',
+          confidence: limit.used === undefined ? 'unknown' : 'exact',
           details: {},
         })),
-      };
+      });
     },
   };
 }

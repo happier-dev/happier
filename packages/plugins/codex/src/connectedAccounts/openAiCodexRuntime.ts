@@ -1,17 +1,19 @@
-import type {
-  PluginConnectedAccountAuthenticationContext,
-  PluginConnectedAccountCredentialReader,
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+import {
+  OPENAI_CODEX_OAUTH_PROFILE,
+  type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+  type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { buildCodexCloudAuthFile } from '../agent/auth/services/openai/cloud/authFile.js';
 import {
   buildCodexAuthorizationUrl,
   extractOpenAiAccountIdFromIdToken,
-  OPENAI_CODEX_AUTH_BASE_URL,
-  OPENAI_CODEX_CLIENT_ID,
 } from '../agent/auth/services/openai/cloud/oauth.js';
+import {
+  beginCodexDeviceAuthorization,
+  pollCodexDeviceAuthorization,
+} from '../agent/auth/services/openai/cloud/device.js';
 import {
   OPENAI_CODEX_DEFAULT_USAGE_URL,
   parseOpenAiCodexConnectedAccountQuotaLimits,
@@ -23,10 +25,14 @@ const ID_TOKEN_KEY = 'idToken';
 const PROVIDER_ACCOUNT_ID_KEY = 'providerAccountId';
 const EXPIRES_AT_MS_KEY = 'expiresAtMs';
 const LAST_REFRESH_AT_MS_KEY = 'lastRefreshAtMs';
+const DEVICE_AUTH_ID_KEY = 'deviceAuthId';
+const DEVICE_USER_CODE_KEY = 'deviceUserCode';
+const DEVICE_POLL_INTERVAL_MS_KEY = 'devicePollIntervalMs';
 const CODEX_AUTH_FILE_ID = 'auth.json';
+const OPENAI_CODEX_OAUTH_TOKEN_ENV_KEY = 'OPENAI_CODEX_OAUTH_TOKEN';
 const OPENAI_API_ORIGIN = 'https://api.openai.com';
 const CHATGPT_API_ORIGIN = 'https://chatgpt.com';
-const CODEX_SCOPES = Object.freeze(['openid', 'profile', 'email', 'offline_access']);
+const CODEX_SCOPES = OPENAI_CODEX_OAUTH_PROFILE.scopes;
 
 type CodexTokens = Readonly<{
   accessToken: string;
@@ -36,6 +42,8 @@ type CodexTokens = Readonly<{
   expiresAtMs: number | null;
 }>;
 type CredentialStore = PluginConnectedAccountAuthenticationContext['attemptCredentials'];
+type ConnectedAccountCredentialReader =
+  Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
 function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
@@ -91,7 +99,7 @@ async function writeTokens(
 }
 
 async function readCredential(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
   key: string,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<string> {
@@ -112,10 +120,10 @@ async function exchangeTokens(
   | Readonly<{ status: 'rejected' | 'unavailable' | 'outcomeUnknown'; diagnostic: ReturnType<typeof diagnostic> }>
 > {
   const signal = options?.signal ?? context.signal;
-  let response: Awaited<ReturnType<typeof context.services.fetch.request>>;
+  let response: Awaited<ReturnType<typeof context.services.http.request>>;
   try {
-    response = await context.services.fetch.request({
-      url: `${OPENAI_CODEX_AUTH_BASE_URL}/oauth/token`,
+    response = await context.services.http.request({
+      url: OPENAI_CODEX_OAUTH_PROFILE.tokenUrl,
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new TextEncoder().encode(params.body.toString()),
@@ -197,7 +205,7 @@ function connectedResult(tokens: CodexTokens) {
 }
 
 async function readHealth(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<PluginConnectedAccountHealthResult> {
   const accessToken = await readCredential(credentials, ACCESS_TOKEN_KEY, options);
@@ -230,6 +238,21 @@ async function readHealth(
   };
 }
 
+async function readCurrentAccessToken(
+  credentials: ConnectedAccountCredentialReader,
+  options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<string> {
+  const accessToken = await readCredential(credentials, ACCESS_TOKEN_KEY, options);
+  const expiresAt = Number(await readCredential(credentials, EXPIRES_AT_MS_KEY, options));
+  if (
+    !accessToken
+    || (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now())
+  ) {
+    throw new Error('OpenAI Codex connected-account credentials are unavailable');
+  }
+  return accessToken;
+}
+
 const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
     modes: {
@@ -249,7 +272,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
           const exchanged = await exchangeTokens({
             body: new URLSearchParams({
               grant_type: 'authorization_code',
-              client_id: OPENAI_CODEX_CLIENT_ID,
+              client_id: OPENAI_CODEX_OAUTH_PROFILE.clientId,
               code: input.code,
               code_verifier: input.pkceVerifier,
               redirect_uri: input.callbackUrl,
@@ -258,6 +281,84 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
           if (exchanged.status !== 'success') return exchanged;
           await writeTokens(context.attemptCredentials, exchanged.tokens, options);
           return connectedResult(exchanged.tokens);
+        },
+        async cancel() {},
+      },
+      device: {
+        kind: 'oauthDeviceCode',
+        async begin(context, options) {
+          const signal = options?.signal ?? context.signal;
+          const authorization = await beginCodexDeviceAuthorization({
+            http: context.services.http,
+            now: Date.now(),
+            signal,
+          });
+          await context.attemptCredentials.set(
+            DEVICE_AUTH_ID_KEY,
+            authorization.deviceAuthId,
+            options,
+          );
+          await context.attemptCredentials.set(
+            DEVICE_USER_CODE_KEY,
+            authorization.userCode,
+            options,
+          );
+          await context.attemptCredentials.set(
+            DEVICE_POLL_INTERVAL_MS_KEY,
+            String(authorization.pollIntervalMs),
+            options,
+          );
+          return {
+            status: 'awaitingDeviceAuthorization',
+            verificationUri: authorization.verificationUrl,
+            userCode: authorization.userCode,
+            expiresAtMs: authorization.expiresAtMs,
+            pollIntervalMs: authorization.pollIntervalMs,
+          };
+        },
+        async poll(context, options) {
+          const deviceAuthId = await readCredential(
+            context.attemptCredentials,
+            DEVICE_AUTH_ID_KEY,
+            options,
+          );
+          const userCode = await readCredential(
+            context.attemptCredentials,
+            DEVICE_USER_CODE_KEY,
+            options,
+          );
+          const pollIntervalMs = Number(await readCredential(
+            context.attemptCredentials,
+            DEVICE_POLL_INTERVAL_MS_KEY,
+            options,
+          ));
+          if (!deviceAuthId || !userCode || !Number.isFinite(pollIntervalMs)) {
+            return {
+              status: 'unavailable',
+              diagnostic: diagnostic(
+                'openai_codex_device_transaction_unavailable',
+                'The OpenAI Codex device authorization attempt is unavailable.',
+              ),
+            };
+          }
+          const result = await pollCodexDeviceAuthorization({
+            http: context.services.http,
+            now: Date.now(),
+            signal: options?.signal ?? context.signal,
+            deviceAuthId,
+            userCode,
+            pollIntervalMs,
+          });
+          if (result.status === 'pending') return result;
+          const tokens: CodexTokens = {
+            accessToken: result.tokens.access_token,
+            refreshToken: result.tokens.refresh_token,
+            idToken: result.tokens.id_token,
+            providerAccountId: result.tokens.account_id,
+            expiresAtMs: result.tokens.expires_at ?? null,
+          };
+          await writeTokens(context.attemptCredentials, tokens, options);
+          return connectedResult(tokens);
         },
         async cancel() {},
       },
@@ -283,7 +384,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     const exchanged = await exchangeTokens({
       body: new URLSearchParams({
         grant_type: 'refresh_token',
-        client_id: OPENAI_CODEX_CLIENT_ID,
+        client_id: OPENAI_CODEX_OAUTH_PROFILE.clientId,
         refresh_token: refreshToken,
       }),
       fallbackRefreshToken: refreshToken,
@@ -321,7 +422,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
       PROVIDER_ACCOUNT_ID_KEY,
       options,
     );
-    const response = await context.services.fetch.request({
+    const response = await context.services.http.request({
       url: OPENAI_CODEX_DEFAULT_USAGE_URL,
       method: 'GET',
       headers: {
@@ -344,6 +445,16 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
     };
   },
   async materialize(request, context, options) {
+    if (request.kind === 'environment') {
+      const env: Record<string, string> = {};
+      if (request.keys.includes(OPENAI_CODEX_OAUTH_TOKEN_ENV_KEY)) {
+        env[OPENAI_CODEX_OAUTH_TOKEN_ENV_KEY] = await readCurrentAccessToken(
+          context.credentials,
+          options,
+        );
+      }
+      return { kind: 'environment', env };
+    }
     if (request.kind === 'httpHeaders') {
       if (
         !isExactOrigin(request.origin, OPENAI_API_ORIGIN)
@@ -351,16 +462,7 @@ const openAiCodexRuntimeDefinition: PluginConnectedAccountRuntime = {
       ) {
         throw new Error('OpenAI Codex connected accounts cannot materialize credentials for this origin');
       }
-      const accessToken = await readCredential(context.credentials, ACCESS_TOKEN_KEY, options);
-      const expiresAt = Number(
-        await readCredential(context.credentials, EXPIRES_AT_MS_KEY, options),
-      );
-      if (
-        !accessToken
-        || (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt <= Date.now())
-      ) {
-        throw new Error('OpenAI Codex connected-account credentials are unavailable');
-      }
+      const accessToken = await readCurrentAccessToken(context.credentials, options);
       const requestedNames = new Set(
         request.headerNames.map((name) => name.toLowerCase()),
       );

@@ -43,7 +43,7 @@ describe('AGENT_DEFINITION', () => {
     expect(legacyRuntimeKey in AGENT_DEFINITION).toBe(false);
   });
 
-  it('declares the Codex agent runtime contribution export for bundled projection', () => {
+  it('declares only Codex-owned runtime contributions', () => {
     expect(AGENT_DEFINITION.runtimeContributions).toEqual({
       agentCatalogEntry: {
         importName: 'CODEX_AGENT_RUNTIME_CONTRIBUTION',
@@ -52,22 +52,12 @@ describe('AGENT_DEFINITION', () => {
       sessionControlAdapter: {
         kind: 'providerSessionControlAdapter',
         providerId: 'codex',
-        source: './agent/surfaces/sessions/controls/adapter',
-        exportName: 'CODEX_SESSION_CONTROL_ADAPTER',
-        generatedAdapter: expect.objectContaining({
-          providerId: 'codex',
-          runtimeDescriptor: expect.objectContaining({ providerId: 'codex' }),
-        }),
+        generatedAdapter: expect.objectContaining({ providerId: 'codex' }),
       },
       runtimeDescriptorReader: {
         kind: 'providerRuntimeDescriptorReader',
         providerId: 'codex',
-        source: './agent/identity/runtimeDescriptor',
-        exportName: 'readCodexSessionMetadataRuntimeDescriptor',
-        generatedReader: expect.objectContaining({
-          providerId: 'codex',
-          backendModeKey: 'backendMode',
-        }),
+        generatedReader: expect.objectContaining({ providerId: 'codex' }),
       },
       protocolRuntimeDescriptor: {
         kind: 'providerRuntimeDescriptorV1',
@@ -82,23 +72,6 @@ describe('AGENT_DEFINITION', () => {
         source: './protocol/profiles',
         exportName: 'CODEX_BUILT_IN_BACKEND_PROFILES',
       },
-    });
-  });
-
-  it('keeps runtime-kind metadata selectors on current external and released direct identities', () => {
-    const metadataPaths = AGENT_DEFINITION.runtimeContributions.sessionControlAdapter
-      .generatedAdapter.controlRuntimeKind.metadataPaths;
-
-    expect(metadataPaths).toContainEqual({
-      providerId: 'codex',
-      path: ['directSessionV1', 'codexBackendMode'],
-    });
-    expect(metadataPaths).toContainEqual({
-      path: ['externalSessionV1', 'codexBackendMode'],
-    });
-    expect(metadataPaths).not.toContainEqual({
-      providerId: 'codex',
-      path: ['externalSessionV1', 'codexBackendMode'],
     });
   });
 

@@ -1,15 +1,16 @@
-import type { CodexRuntimeFetch } from '../../runtimeFetch.js';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   assertNonEmptyString,
   buildSafeOauthProviderFailureMessage,
   extractOpenAiAccountIdFromIdToken,
-  OPENAI_CODEX_AUTH_BASE_URL,
-  OPENAI_CODEX_CLIENT_ID,
 } from './oauth.js';
 import type { CodexAuthTokens } from './types.js';
 
-export { buildCodexAuthorizationUrl, OPENAI_CODEX_AUTH_BASE_URL, OPENAI_CODEX_CLIENT_ID } from './oauth.js';
+export {
+  buildCodexAuthorizationUrl,
+} from './oauth.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -20,34 +21,35 @@ export async function exchangeCodexAuthorizationCodeForAuthTokens(params: Readon
   verifier: string;
   redirectUri: string;
   now: number;
-  runtimeFetch: CodexRuntimeFetch;
+  runtimeFetch: Pick<HttpService, 'request'>;
 }>): Promise<CodexAuthTokens> {
-  const response = await params.runtimeFetch({
-    url: `${OPENAI_CODEX_AUTH_BASE_URL}/oauth/token`,
+  const response = await params.runtimeFetch.request({
+    url: OPENAI_CODEX_OAUTH_PROFILE.tokenUrl,
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({
+    body: new TextEncoder().encode(new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: OPENAI_CODEX_CLIENT_ID,
+      client_id: OPENAI_CODEX_OAUTH_PROFILE.clientId,
       code: params.code,
       code_verifier: params.verifier,
       redirect_uri: params.redirectUri,
-    }),
+    }).toString()),
+    redirect: 'error',
   });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
+  const body = new TextDecoder().decode(response.body);
+  if (response.status < 200 || response.status >= 300) {
     throw new Error(buildSafeOauthProviderFailureMessage({
       operation: 'Token exchange',
       status: response.status,
-      statusText: response.statusText,
+      statusText: undefined,
       body,
     }));
   }
 
-  const data = await response.json();
+  const data: unknown = JSON.parse(body);
   const record = isRecord(data) ? data : {};
   const idToken = assertNonEmptyString(record.id_token, 'id_token');
   const refreshToken = assertNonEmptyString(record.refresh_token, 'refresh_token');
@@ -71,7 +73,7 @@ export async function exchangeCodexAuthorizationCodeForTokens(params: Readonly<{
   verifier: string;
   redirectUri: string;
   now: number;
-  runtimeFetch: CodexRuntimeFetch;
+  runtimeFetch: Pick<HttpService, 'request'>;
 }>): Promise<Readonly<{
   accessToken: string;
   refreshToken: string;

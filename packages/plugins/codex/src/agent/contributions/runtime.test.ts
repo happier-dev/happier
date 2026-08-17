@@ -41,25 +41,6 @@ type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
     }>;
     runtimeControl?: unknown;
   }>;
-  CODEX_SESSION_CONTROL_ADAPTER: Readonly<{
-    normalizeRuntimeKindOverride?: (value: unknown) => unknown;
-    applyRuntimeKindOverrideToAccountSettings?: (
-      accountSettings: Record<string, unknown> | null,
-      runtimeKind: 'acp' | 'appServer' | 'mcp',
-    ) => Record<string, unknown> | null;
-    resolveConfiguredRuntimeKind?: (accountSettings?: Record<string, unknown> | null) => unknown;
-    resolvePersistedSessionRuntimeKind?: (metadata: unknown) => unknown;
-    resolveVendorResumeId?: (metadata: unknown) => unknown;
-    isExperimentalVendorResumeEnabled?: (input: Readonly<{
-      metadata: unknown;
-      accountSettings: Record<string, unknown> | null;
-    }>) => boolean;
-    isExperimentalVendorHandoffEnabled?: (input: Readonly<{
-      metadata: unknown;
-      accountSettings: Record<string, unknown> | null;
-    }>) => boolean;
-  }>;
-  readCodexSessionMetadataRuntimeDescriptor: (metadata: Record<string, unknown>) => unknown;
   buildCodexAgentRuntimeDescriptorV1: (params: Readonly<{
     backendMode: 'acp' | 'appServer';
     providerSessionId?: string | null;
@@ -246,6 +227,7 @@ describe('Codex runtime contribution leaves', () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-auth-materialize-'));
     try {
       await runtimeContribution.materializeCodexAuthEnvironment({
+        connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
         rootDir: codexHome,
         openaiCodex: {
           kind: 'oauth',
@@ -279,6 +261,7 @@ describe('Codex runtime contribution leaves', () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-dual-auth-materialize-'));
     try {
       const result = await runtimeContribution.materializeCodexAuthEnvironment({
+        connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
         rootDir: codexHome,
         openaiCodex: {
           kind: 'oauth',
@@ -315,30 +298,60 @@ describe('Codex runtime contribution leaves', () => {
     try {
       const result = await runtimeContribution.materializeCodexAuthEnvironment({
         rootDir: codexHome,
-        qualifiedPurposeMaterialization: true,
-        openaiCodex: {
-          kind: 'oauth',
-          serviceId: 'openai-codex',
-          oauth: {
-            accessToken: 'legacy-coding-access',
-            refreshToken: 'legacy-coding-refresh',
-            idToken: 'legacy-coding-id',
-            providerAccountId: 'legacy-coding-account',
-          },
-        },
-        openai: {
-          kind: 'token',
-          serviceId: 'openai',
-          token: {
-            token: 'legacy-realtime-key',
-          },
-        },
+        connectedAccountMaterializationAuthority: 'qualified',
       });
 
       expect(result.env).toEqual({ CODEX_HOME: codexHome });
       await expect(readFile(join(codexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
         code: 'ENOENT',
       });
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when the host omits or malforms connected-account materialization authority', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-missing-authority-'));
+    try {
+      for (const authority of [undefined, 'unqualified'] as const) {
+        await expect(runtimeContribution.materializeCodexAuthEnvironment({
+          ...(authority === undefined
+            ? {}
+            : { connectedAccountMaterializationAuthority: authority }),
+          rootDir: codexHome,
+          openai: {
+            kind: 'token',
+            serviceId: 'openai',
+            token: {
+              token: 'must-not-reach-codex',
+            },
+          },
+        })).rejects.toThrow(/materialization authority/i);
+      }
+
+      await expect(readFile(join(codexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects request-auth input on the exact legacy one-shot authority', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-legacy-request-auth-'));
+    try {
+      await expect(runtimeContribution.materializeCodexAuthEnvironment({
+        connectedAccountMaterializationAuthority: 'legacy_unfenced_one_shot',
+        requestAuth: { purposeBindings: [] },
+        rootDir: codexHome,
+        openai: {
+          kind: 'token',
+          serviceId: 'openai',
+          token: {
+            token: 'must-not-reach-codex',
+          },
+        },
+      })).rejects.toThrow(/request auth/i);
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }
@@ -373,106 +386,9 @@ describe('Codex runtime contribution leaves', () => {
     });
   });
 
-  it('exports plugin-owned session-control behavior for generated projection', () => {
-    const adapter = moduleWithA16y3Exports.CODEX_SESSION_CONTROL_ADAPTER;
-
-    expect(adapter?.normalizeRuntimeKindOverride?.('mcp')).toBe('appServer');
-    expect(adapter?.normalizeRuntimeKindOverride?.('mcp_resume')).toBe('acp');
-    expect(adapter?.applyRuntimeKindOverrideToAccountSettings?.({ keep: true }, 'acp')).toEqual({
-      keep: true,
-      codexBackendMode: 'acp',
-    });
-    expect(adapter?.applyRuntimeKindOverrideToAccountSettings?.({ keep: true }, 'server' as never)).toEqual({
-      keep: true,
-    });
-    expect(adapter?.resolveConfiguredRuntimeKind?.({ experimentalCodexAcp: true })).toBe('appServer');
-    expect(adapter?.resolveConfiguredRuntimeKind?.({ codexBackendMode: 'acp' })).toBe('acp');
-    expect(adapter?.resolveConfiguredRuntimeKind?.({ codexBackendMode: 'mcp' })).toBe('appServer');
-    expect(adapter?.resolvePersistedSessionRuntimeKind?.({
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          providerSessionId: 'thread-1',
-        },
-      },
-    })).toBe('appServer');
-    expect(adapter?.resolveVendorResumeId?.({
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          vendorSessionId: 'legacy-thread',
-        },
-      },
-    })).toBe('legacy-thread');
-    expect(adapter?.isExperimentalVendorResumeEnabled?.({
-      metadata: {},
-      accountSettings: { codexBackendMode: 'appServer' },
-    })).toBe(true);
-    expect(adapter?.isExperimentalVendorResumeEnabled?.({
-      metadata: { codexBackendMode: 'mcp', codexSessionId: 'thread-1' },
-      accountSettings: { codexBackendMode: 'appServer' },
-    })).toBe(false);
-    expect(adapter?.isExperimentalVendorResumeEnabled?.({
-      metadata: {
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          agentId: 'codex',
-          provider: {
-            backendMode: 'mcp',
-            providerSessionId: 'thread-1',
-          },
-        },
-      },
-      accountSettings: { codexBackendMode: 'appServer' },
-    })).toBe(false);
-    expect(adapter?.isExperimentalVendorHandoffEnabled?.({
-      metadata: { codexBackendMode: 'appServer' },
-      accountSettings: null,
-    })).toBe(true);
-    expect(adapter?.isExperimentalVendorHandoffEnabled?.({
-      metadata: { codexRuntimeDescriptorV1: { v: 1, backendMode: 'mcp' } },
-      accountSettings: { codexBackendMode: 'appServer' },
-    })).toBe(false);
-    expect(adapter?.isExperimentalVendorHandoffEnabled?.({
-      metadata: {
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          agentId: 'codex',
-          provider: {
-            backendMode: 'mcp',
-            providerSessionId: 'thread-1',
-          },
-        },
-      },
-      accountSettings: { codexBackendMode: 'appServer' },
-    })).toBe(false);
-  });
-
-  it('exports plugin-owned metadata reader behavior for generated projection', () => {
-    expect(moduleWithA16y3Exports.readCodexSessionMetadataRuntimeDescriptor?.({
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        agentId: 'codex',
-        provider: {
-          backendMode: 'appServer',
-          providerSessionId: 'thread-1',
-          home: 'connectedService',
-          connectedServiceId: 'openai-codex',
-          connectedServiceGroupId: 'group-1',
-        },
-      },
-    })).toMatchObject({
-      agentId: 'codex',
-      runtimeKind: 'appServer',
-      backendMode: 'appServer',
-      providerSessionId: 'thread-1',
-      connectedServiceId: 'openai-codex',
-      connectedServiceGroupId: 'group-1',
-    });
+  it('does not export retired raw Session metadata owners', () => {
+    expect(moduleWithA16y3Exports).not.toHaveProperty('CODEX_SESSION_CONTROL_ADAPTER');
+    expect(moduleWithA16y3Exports).not.toHaveProperty('readCodexSessionMetadataRuntimeDescriptor');
   });
 
   it('does not retain the superseded internal external-session carrier', () => {

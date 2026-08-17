@@ -1,14 +1,22 @@
 import type { Dirent } from 'node:fs';
 import { lstat, readdir, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
-import { expandHomePath, readTrimmedString as readEnvString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import {
+  expandHomePath,
+  resolveHomeDirFromEnvironment,
+} from '@happier-dev/plugin-sdk/fs';
+import { readTrimmedString as readEnvString } from '@happier-dev/plugin-sdk';
+
+import {
+  throwIfCodexExternalSessionInvocationStopped,
+  type CodexExternalSessionInvocationBounds,
+} from '../../surfaces/sessions/external/invocationBounds.js';
+import type { CodexExternalSessionSource } from '../../surfaces/sessions/external/models.js';
 
 export type CodexExternalSessionHomeEntry = Readonly<{
   codexHome: string;
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
 }>;
 
 function isSafeConnectedServiceId(raw: unknown): raw is string {
@@ -45,10 +53,6 @@ function normalizeHomePath(raw: string): string {
   return resolve(raw.trim());
 }
 
-function resolveHomeDirFromEnvironment(env: Readonly<Record<string, string | undefined>>): string {
-  return readEnvString(env.HOME) ?? readEnvString(env.USERPROFILE) ?? homedir();
-}
-
 function expandHomeDirPath(value: string, env: Readonly<Record<string, string | undefined>>): string {
   const trimmed = value.trim();
   if (!trimmed) return '';
@@ -63,7 +67,7 @@ export function resolveConfiguredCodexHomePath(env: Readonly<Record<string, stri
 export function resolveDefaultCodexHomePath(codexHome?: string | null): string {
   return typeof codexHome === 'string' && codexHome.trim().length > 0
     ? normalizeHomePath(codexHome)
-    : normalizeHomePath(join(homedir(), '.codex'));
+    : normalizeHomePath(join(resolveHomeDirFromEnvironment(), '.codex'));
 }
 
 function buildConnectedServiceCodexHome(activeServerDir: string, connectedServiceId: string, connectedServiceProfileId: string): string {
@@ -74,21 +78,31 @@ function buildConnectedServiceGroupCodexHome(activeServerDir: string, connectedS
   return join(activeServerDir, 'daemon', 'connected-services', 'homes', connectedServiceId, '__groups', connectedServiceGroupId, 'codex', 'codex-home');
 }
 
-async function resolveVerifiedCodexHomePath(expectedPath: string, exactHomePath: string | null): Promise<string | null> {
+async function resolveVerifiedCodexHomePath(
+  expectedPath: string,
+  exactHomePath: string | null,
+  bounds: CodexExternalSessionInvocationBounds,
+): Promise<string | null> {
+  throwIfCodexExternalSessionInvocationStopped(bounds);
   const targetPath = exactHomePath ?? expectedPath;
   try {
     const linkStats = await lstat(targetPath);
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     if (linkStats.isSymbolicLink()) {
       return null;
     }
     const real = await realpath(targetPath);
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     const expectedReal = await realpath(expectedPath).catch(() => null);
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     if (!expectedReal || real !== expectedReal) {
       return null;
     }
     const stats = await stat(real);
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     return stats.isDirectory() ? real : null;
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     return null;
   }
 }
@@ -96,7 +110,7 @@ async function resolveVerifiedCodexHomePath(expectedPath: string, exactHomePath:
 export function inferCodexExternalSessionsSourceFromHome(params: Readonly<{
   codexHome?: string | null;
   activeServerDir?: string | null;
-}>): ExternalSessionsSource {
+}>): CodexExternalSessionSource {
   const codexHome = resolveDefaultCodexHomePath(params.codexHome);
   const activeServerDir = typeof params.activeServerDir === 'string' && params.activeServerDir.trim().length > 0
     ? resolve(params.activeServerDir.trim())
@@ -151,18 +165,17 @@ export function inferCodexExternalSessionsSourceFromHome(params: Readonly<{
 }
 
 export async function homeEntries(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
-}>): Promise<CodexExternalSessionHomeEntry[]> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexExternalSessionHomeEntry[]> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   if (params.source.kind !== 'codexHome') return [];
 
   if (params.source.home === 'user') {
     const codexHome = typeof params.source.homePath === 'string' && params.source.homePath.trim().length > 0
       ? normalizeHomePath(params.source.homePath)
-      : typeof params.env.CODEX_HOME === 'string' && params.env.CODEX_HOME.trim().length > 0
-        ? normalizeHomePath(params.env.CODEX_HOME)
-        : normalizeHomePath(join(homedir(), '.codex'));
+      : resolveConfiguredCodexHomePath(params.env);
     return [{ codexHome, source: { kind: 'codexHome', home: 'user', homePath: codexHome } }];
   }
 
@@ -177,7 +190,7 @@ export async function homeEntries(params: Readonly<{
 
   if (connectedServiceProfileId) {
     const codexHome = buildConnectedServiceCodexHome(params.activeServerDir, connectedServiceId, connectedServiceProfileId);
-    const verifiedHome = await resolveVerifiedCodexHomePath(codexHome, exactHomePath);
+    const verifiedHome = await resolveVerifiedCodexHomePath(codexHome, exactHomePath, params);
     if (!verifiedHome) {
       return [];
     }
@@ -195,7 +208,7 @@ export async function homeEntries(params: Readonly<{
 
   if (connectedServiceGroupId) {
     const codexHome = buildConnectedServiceGroupCodexHome(params.activeServerDir, connectedServiceId, connectedServiceGroupId);
-    const verifiedHome = await resolveVerifiedCodexHomePath(codexHome, exactHomePath);
+    const verifiedHome = await resolveVerifiedCodexHomePath(codexHome, exactHomePath, params);
     if (!verifiedHome) {
       return [];
     }
@@ -224,7 +237,7 @@ export async function homeEntries(params: Readonly<{
     const expectedPath = inferredGroupId
       ? buildConnectedServiceGroupCodexHome(params.activeServerDir, connectedServiceId, inferredGroupId)
       : buildConnectedServiceCodexHome(params.activeServerDir, connectedServiceId, inferredProfileId as string);
-    const verifiedHome = await resolveVerifiedCodexHomePath(expectedPath, exactHomePath);
+    const verifiedHome = await resolveVerifiedCodexHomePath(expectedPath, exactHomePath, params);
     if (!verifiedHome) {
       return [];
     }
@@ -246,10 +259,13 @@ export async function homeEntries(params: Readonly<{
   try {
     profiles = await readdir(base, { withFileTypes: true });
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(params);
     return [];
   }
+  throwIfCodexExternalSessionInvocationStopped(params);
 
   for (const entry of profiles) {
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (entry.name === '__groups') continue;
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     const profileId = normalizeConnectedServiceProfileId(entry.name);
@@ -257,6 +273,7 @@ export async function homeEntries(params: Readonly<{
     const codexHome = buildConnectedServiceCodexHome(params.activeServerDir, connectedServiceId, profileId);
     try {
       const s = await stat(codexHome);
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (s.isDirectory()) {
         entries.push({
           codexHome,
@@ -270,6 +287,7 @@ export async function homeEntries(params: Readonly<{
         });
       }
     } catch {
+      throwIfCodexExternalSessionInvocationStopped(params);
       // ignore missing
     }
   }
@@ -279,15 +297,19 @@ export async function homeEntries(params: Readonly<{
   try {
     groups = await readdir(groupsBase, { withFileTypes: true });
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(params);
     return entries;
   }
+  throwIfCodexExternalSessionInvocationStopped(params);
   for (const entry of groups) {
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     const groupId = normalizeConnectedServiceGroupId(entry.name);
     if (!groupId) continue;
     const codexHome = buildConnectedServiceGroupCodexHome(params.activeServerDir, connectedServiceId, groupId);
     try {
       const s = await stat(codexHome);
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (s.isDirectory()) {
         entries.push({
           codexHome,
@@ -301,6 +323,7 @@ export async function homeEntries(params: Readonly<{
         });
       }
     } catch {
+      throwIfCodexExternalSessionInvocationStopped(params);
       // ignore missing
     }
   }

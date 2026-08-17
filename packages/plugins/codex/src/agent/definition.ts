@@ -18,9 +18,7 @@ const CODEX_RUNTIME_CONTROL_KIND_ALIASES = [
 const CODEX_RUNTIME_DESCRIPTOR_READER_PROJECTION = {
   providerId: 'codex',
   backendModeKey: 'backendMode',
-  runtimeKind: {
-    aliases: CODEX_RUNTIME_KIND_ALIASES,
-  },
+  runtimeKind: { aliases: CODEX_RUNTIME_KIND_ALIASES },
   fields: [
     { key: 'backendMode', kind: 'runtimeKind', runtimeHandle: 'whenPresent' },
     { key: 'providerSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
@@ -64,7 +62,6 @@ const CODEX_SESSION_CONTROL_ADAPTER_PROJECTION = {
       { providerId: 'codex', path: ['agent', 'agentExtra', 'runtimeHandle', 'backendMode'] },
       { providerId: 'codex', path: ['agent', 'agentExtra', 'runtimeAffinity', 'backendMode'] },
       { providerId: 'codex', path: ['agent', 'backendMode'] },
-      // legacy `provider` payload-key read-compat (pre-rename persisted metadata)
       { providerId: 'codex', path: ['provider', 'providerExtra', 'runtimeHandle', 'backendMode'] },
       { providerId: 'codex', path: ['provider', 'providerExtra', 'runtimeAffinity', 'backendMode'] },
       { providerId: 'codex', path: ['provider', 'backendMode'] },
@@ -204,15 +201,11 @@ export const AGENT_DEFINITION = Object.freeze({
     sessionControlAdapter: {
       kind: 'providerSessionControlAdapter',
       providerId: 'codex',
-      source: './agent/surfaces/sessions/controls/adapter',
-      exportName: 'CODEX_SESSION_CONTROL_ADAPTER',
       generatedAdapter: CODEX_SESSION_CONTROL_ADAPTER_PROJECTION,
     },
     runtimeDescriptorReader: {
       kind: 'providerRuntimeDescriptorReader',
       providerId: 'codex',
-      source: './agent/identity/runtimeDescriptor',
-      exportName: 'readCodexSessionMetadataRuntimeDescriptor',
       generatedReader: CODEX_RUNTIME_DESCRIPTOR_READER_PROJECTION,
     },
     protocolRuntimeDescriptor: {

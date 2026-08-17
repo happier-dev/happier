@@ -1,13 +1,13 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { CodexExternalSessionSource } from './models.js';
 
 export type CodexExternalSessionWorkingDirectoryStoreKey = Readonly<{
   agentId: 'codex';
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
   remoteSessionId: string;
 }>;
 
 export function resolveCodexExternalSessionWorkingDirectoryStoreKey(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
   remoteSessionId: string;
 }>): CodexExternalSessionWorkingDirectoryStoreKey {
   return {

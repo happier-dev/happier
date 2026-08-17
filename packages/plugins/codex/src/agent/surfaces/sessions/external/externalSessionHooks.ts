@@ -10,7 +10,7 @@ import type {
   AgentExternalSessionHooksContribution,
   AgentExternalSessionsFailureCode,
   AgentExternalSessionsResult,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   createCodexNativeAppServerClient,

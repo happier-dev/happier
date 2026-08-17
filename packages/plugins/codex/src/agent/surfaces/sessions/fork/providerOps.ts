@@ -1,15 +1,14 @@
-import {
-  readSessionMetadataRuntimeDescriptor,
-  resolveVendorResumeIdFromSessionMetadata,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
 import type {
   ForkRequestV1,
   ForkResultV1,
   ForkSurfaceV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { resolvePersistedCodexRuntimeIdentity } from '../../../identity/runtimeDescriptor.js';
-import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
+import {
+  buildCodexAgentRuntimeDescriptor,
+  normalizeCodexBackendMode,
+  type CodexBackendMode,
+} from '../../../../protocol/runtimeDescriptorV1.js';
 import type { CodexAppServerNativeForkResult } from './native.js';
 
 export type CodexAppServerForkProcessEnv = Record<string, string | undefined>;
@@ -46,6 +45,20 @@ export type CodexAppServerForkDiagnosticEvent =
   | Readonly<{ type: 'empty'; diagnostic: CodexAppServerForkDiagnosticBase }>
   | Readonly<{ type: 'succeeded'; diagnostic: CodexAppServerForkDiagnosticBase }>;
 
+function buildCodexForkRuntimeDescriptor(params: ForkRequestV1, backendMode: CodexBackendMode, providerSessionId: string) {
+  return buildCodexAgentRuntimeDescriptor({
+    backendMode,
+    providerSessionId,
+    home: params.parentMetadata.codexHome ?? null,
+    connectedServiceId: params.parentMetadata.codexConnectedServiceId ?? null,
+    connectedServiceProfileId: params.parentMetadata.codexConnectedServiceProfileId ?? null,
+    connectedServiceGroupId: params.parentMetadata.codexConnectedServiceGroupId ?? null,
+    homePath: backendMode === 'appServer' && params.parentMetadata.codexHome === 'connectedService'
+      ? null
+      : params.parentMetadata.codexHomePath ?? null,
+  });
+}
+
 export function createCodexForkSurface(deps: Readonly<{
   forkNative: CodexAppServerNativeForkRunner;
   baseProcessEnv?: CodexAppServerForkProcessEnv;
@@ -67,19 +80,19 @@ async function forkCodexAppServerLatest(
     onDiagnostic?: (event: CodexAppServerForkDiagnosticEvent) => void;
   }>,
 ): Promise<ForkResultV1 | null> {
-  const runtimeIdentity = readSessionMetadataRuntimeDescriptor(params.parentMetadata, 'codex');
-  const backendMode = runtimeIdentity?.backendMode
-    ?? resolvePersistedCodexRuntimeIdentity(params.parentMetadata)?.backendMode
-    ?? null;
-  const providerSessionIdRaw = resolveVendorResumeIdFromSessionMetadata('codex', params.parentMetadata) ?? '';
+  const backendMode = normalizeCodexBackendMode(params.parentMetadata.codexBackendMode);
+  const providerSessionIdRaw = params.parentMetadata.codexSessionId?.trim()
+    || params.parentMetadata.providerSessionId?.trim()
+    || '';
+  const codexHomePath = params.parentMetadata.codexHomePath?.trim() ?? '';
   const diagnostic: CodexAppServerForkDiagnosticBase = {
     agentId: 'codex',
     parentSessionId: params.parentSessionId,
     backendMode,
     forkPointKind: params.forkPoint.kind,
-    hasRuntimeDescriptor: Boolean(runtimeIdentity),
+    hasRuntimeDescriptor: backendMode !== null,
     hasProviderSessionId: providerSessionIdRaw.trim().length > 0,
-    hasRuntimeHomePath: typeof runtimeIdentity?.homePath === 'string' && runtimeIdentity.homePath.trim().length > 0,
+    hasRuntimeHomePath: codexHomePath.length > 0,
   };
 
   const skipReason = (() => {
@@ -93,8 +106,8 @@ async function forkCodexAppServerLatest(
     return null;
   }
 
-  const processEnv = runtimeIdentity?.homePath
-    ? { ...(deps.baseProcessEnv ?? {}), CODEX_HOME: runtimeIdentity.homePath }
+  const processEnv = codexHomePath
+    ? { ...(deps.baseProcessEnv ?? {}), CODEX_HOME: codexHomePath }
     : deps.baseProcessEnv;
 
   deps.onDiagnostic?.({ type: 'attempt', diagnostic });
@@ -124,29 +137,17 @@ async function forkCodexAppServerLatest(
 
   deps.onDiagnostic?.({ type: 'succeeded', diagnostic });
 
-  const runtimeDescriptor = runtimeIdentity
-    ? buildCodexAgentRuntimeDescriptor({
-      backendMode: 'appServer',
-      providerSessionId,
-      home: runtimeIdentity.home,
-      connectedServiceId: runtimeIdentity.connectedServiceId,
-      connectedServiceProfileId: runtimeIdentity.connectedServiceProfileId,
-      connectedServiceGroupId: runtimeIdentity.connectedServiceGroupId,
-      homePath: runtimeIdentity.home === 'connectedService' ? null : runtimeIdentity.homePath,
-    })
-    : null;
+  const runtimeDescriptor = buildCodexForkRuntimeDescriptor(params, 'appServer', providerSessionId);
 
   return {
     providerSessionId,
     launch: {
-      ...(runtimeIdentity?.homePath ? { environmentVariables: { CODEX_HOME: runtimeIdentity.homePath } } : {}),
+      ...(codexHomePath ? { environmentVariables: { CODEX_HOME: codexHomePath } } : {}),
       sessionStateUpdates: [
-        ...(runtimeDescriptor
-          ? [{
-            fieldId: 'identity.runtimeDescriptor' as const,
-            value: runtimeDescriptor,
-          }]
-          : []),
+        {
+          fieldId: 'identity.runtimeDescriptor' as const,
+          value: runtimeDescriptor,
+        },
         {
           fieldId: 'identity.providerSessionId' as const,
           value: providerSessionId,
@@ -159,13 +160,12 @@ async function forkCodexAppServerLatest(
 async function forkCodexAcpLatest(params: ForkRequestV1): Promise<ForkResultV1 | null> {
   if (params.forkPoint.kind !== 'latest') return null;
 
-  const runtimeIdentity = readSessionMetadataRuntimeDescriptor(params.parentMetadata, 'codex');
-  const backendMode = runtimeIdentity?.backendMode
-    ?? resolvePersistedCodexRuntimeIdentity(params.parentMetadata)?.backendMode
-    ?? null;
+  const backendMode = normalizeCodexBackendMode(params.parentMetadata.codexBackendMode);
   if (backendMode !== 'acp') return null;
 
-  const sourceProviderSessionId = resolveVendorResumeIdFromSessionMetadata('codex', params.parentMetadata)?.trim() ?? '';
+  const sourceProviderSessionId = params.parentMetadata.codexSessionId?.trim()
+    || params.parentMetadata.providerSessionId?.trim()
+    || '';
   if (!sourceProviderSessionId || !params.acp) return null;
 
   const loaded = await params.acp.loadSession({
@@ -187,26 +187,15 @@ async function forkCodexAcpLatest(params: ForkRequestV1): Promise<ForkResultV1 |
     : '';
   if (!providerSessionId) return null;
 
-  const runtimeDescriptor = runtimeIdentity
-    ? buildCodexAgentRuntimeDescriptor({
-      backendMode: 'acp',
-      providerSessionId,
-      home: runtimeIdentity.home,
-      connectedServiceId: runtimeIdentity.connectedServiceId,
-      connectedServiceProfileId: runtimeIdentity.connectedServiceProfileId,
-      connectedServiceGroupId: runtimeIdentity.connectedServiceGroupId,
-      homePath: runtimeIdentity.homePath,
-    })
-    : null;
+  const runtimeDescriptor = buildCodexForkRuntimeDescriptor(params, 'acp', providerSessionId);
+
   const sessionStateUpdates = forked.value.sessionStateUpdates && forked.value.sessionStateUpdates.length > 0
     ? [...forked.value.sessionStateUpdates]
     : [
-      ...(runtimeDescriptor
-        ? [{
-          fieldId: 'identity.runtimeDescriptor' as const,
-          value: runtimeDescriptor,
-        }]
-        : []),
+      {
+        fieldId: 'identity.runtimeDescriptor' as const,
+        value: runtimeDescriptor,
+      },
       {
         fieldId: 'identity.providerSessionId' as const,
         value: providerSessionId,

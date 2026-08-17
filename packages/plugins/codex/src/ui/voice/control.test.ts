@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { VoiceTranscriptCanonicalEventV1Schema } from '@happier-dev/protocol';
 
-import { createCodexV3ControlDecoder } from './codexV3ControlCodec.js';
+import { createCodexV3ControlDecoder } from './control.js';
 
 function asAttemptDecoder(
   decoder: ReturnType<typeof createCodexV3ControlDecoder>,

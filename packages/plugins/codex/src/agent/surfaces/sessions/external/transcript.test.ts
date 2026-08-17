@@ -1,4 +1,3 @@
-import type { ExternalSessionCandidateV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,6 +6,7 @@ import {
   mapCodexExternalSessionAppServerCandidateToMetadata,
   mapCodexExternalSessionAppServerPreviewToMessage,
 } from './transcript.js';
+import type { CodexExternalSessionCandidate } from './models.js';
 
 describe('Codex external-session transcript helpers', () => {
   it('round-trips the anchored generation-fenced rollout stream vector cursor', () => {
@@ -151,7 +151,7 @@ describe('Codex external-session transcript helpers', () => {
         details: {
           cwd: '  /repo/from-app-server  ',
         },
-      } satisfies ExternalSessionCandidateV1,
+      } satisfies CodexExternalSessionCandidate,
     })).toEqual({
       updatedAtMs: 1_736_000_100_999,
       previewText: 'App server preview',
@@ -167,7 +167,7 @@ describe('Codex external-session transcript helpers', () => {
         updatedAtMs: -1,
         activity: 'idle',
         archived: false,
-      } satisfies ExternalSessionCandidateV1,
+      } satisfies CodexExternalSessionCandidate,
     })).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
-import type { ManagedDependencyDescriptor } from '@happier-dev/plugin-sdk/experimental/managedDependencies';
-import { ManagedDependencyDescriptorSchema } from '@happier-dev/plugin-sdk/experimental/managedDependencies';
+import type { ManagedDependencyDescriptor } from '@happier-dev/plugin-sdk/managed-services';
+import { ManagedDependencyDescriptorSchema } from '@happier-dev/plugin-sdk/managed-services';
 
 import {
   resolveCodexAcpSpawnWithOptions,

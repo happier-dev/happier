@@ -123,6 +123,7 @@ describe('Codex External Sessions takeover launch derivation', () => {
           },
           codexBackendMode: 'acp',
         },
+        targetDirectory: '/local/selected/workspace',
         linkedDirectory: '/repo/project',
       }),
     )).resolves.toEqual({
@@ -152,6 +153,7 @@ describe('Codex External Sessions takeover launch derivation', () => {
         home: 'user',
         homePath: '/home/user/.codex-current',
       },
+      targetDirectory: '/local/selected/workspace',
     } as const;
 
     await expect(Promise.resolve(

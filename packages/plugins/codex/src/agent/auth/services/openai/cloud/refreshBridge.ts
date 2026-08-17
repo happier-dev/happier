@@ -1,25 +1,30 @@
-import {
-  ConnectedServiceBindingsV1Schema,
-  ConnectedServiceAuthGroupIdSchema,
-  ConnectedServiceProfileIdSchema,
-  readSessionMetadataConnectedServiceBindings,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { z } from 'zod';
 
 import type { CodexConnectedServiceRuntimeFailureClassification } from '../../runtime/auth/failure.js';
+
+const connectedServiceProfileIdSchema = z.string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$/u, 'Invalid profile id');
+const connectedServiceAuthGroupIdSchema = z.string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u, 'Invalid connected service account group id');
 
 export const CodexChatGptAuthTokensRefreshSelectionSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('profile'),
     serviceId: z.literal('openai-codex'),
-    profileId: ConnectedServiceProfileIdSchema,
+    profileId: connectedServiceProfileIdSchema,
   }),
   z.object({
     kind: z.literal('group'),
     serviceId: z.literal('openai-codex'),
-    groupId: ConnectedServiceAuthGroupIdSchema,
-    activeProfileId: ConnectedServiceProfileIdSchema,
-    fallbackProfileId: ConnectedServiceProfileIdSchema,
+    groupId: connectedServiceAuthGroupIdSchema,
+    activeProfileId: connectedServiceProfileIdSchema,
+    fallbackProfileId: connectedServiceProfileIdSchema,
     generation: z.number().int().nonnegative(),
   }),
 ]);
@@ -47,6 +52,10 @@ type CodexChatGptMetadataBinding = Readonly<
   | { source: 'connected'; selection: 'group'; groupId: string; profileId?: string }
 >;
 
+export type CodexChatGptRefreshSessionFacts = Readonly<{
+  connectedServices?: JsonValue;
+}>;
+
 type CodexChatGptRefreshChildSelection = Readonly<
   | {
       kind: 'profile';
@@ -67,39 +76,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readDirectMetadataBinding(metadata: unknown): CodexChatGptMetadataBinding | null {
-  if (!isRecord(metadata)) return null;
-  const parsed = ConnectedServiceBindingsV1Schema.safeParse(metadata.connectedServices);
-  const binding = parsed.success ? parsed.data.bindingsByServiceId['openai-codex'] : null;
+function readDirectMetadataBinding(facts: CodexChatGptRefreshSessionFacts): CodexChatGptMetadataBinding | null {
+  const connectedServices = isRecord(facts.connectedServices) ? facts.connectedServices : null;
+  const bindingsByServiceId = connectedServices && isRecord(connectedServices.bindingsByServiceId)
+    ? connectedServices.bindingsByServiceId
+    : null;
+  const binding = bindingsByServiceId && isRecord(bindingsByServiceId['openai-codex'])
+    ? bindingsByServiceId['openai-codex']
+    : null;
   if (binding?.source === 'connected' && binding.selection === 'group') {
+    const groupId = connectedServiceAuthGroupIdSchema.safeParse(binding.groupId);
+    if (!groupId.success) return null;
+    let profileId: string | undefined;
+    if (binding.profileId !== undefined) {
+      const parsedProfileId = connectedServiceProfileIdSchema.safeParse(binding.profileId);
+      if (!parsedProfileId.success) return null;
+      profileId = parsedProfileId.data;
+    }
     return {
       source: 'connected',
       selection: 'group',
-      groupId: binding.groupId,
-      ...(binding.profileId ? { profileId: binding.profileId } : {}),
+      groupId: groupId.data,
+      ...(profileId ? { profileId } : {}),
     };
   }
   if (binding?.source === 'connected') {
+    const profileId = connectedServiceProfileIdSchema.safeParse(binding.profileId);
+    if (!profileId.success) return null;
     return {
       source: 'connected',
       selection: 'profile',
-      profileId: binding.profileId,
+      profileId: profileId.data,
     };
   }
   if (binding?.source === 'native') return { source: 'native' };
   return null;
 }
 
-function readCodexChatGptMetadataBinding(metadata: unknown): CodexChatGptMetadataBinding | null {
-  return readDirectMetadataBinding(metadata)
-    ?? readSessionMetadataConnectedServiceBindings(metadata, 'codex')['openai-codex']
-    ?? null;
+function readCodexChatGptMetadataBinding(facts: CodexChatGptRefreshSessionFacts): CodexChatGptMetadataBinding | null {
+  return readDirectMetadataBinding(facts);
 }
 
 export function resolveCodexChatGptRefreshSelectionFromMetadata(
-  metadata: unknown,
+  facts: CodexChatGptRefreshSessionFacts,
 ): CodexChatGptRefreshSelectionResolution | null {
-  const binding = readCodexChatGptMetadataBinding(metadata);
+  const binding = readCodexChatGptMetadataBinding(facts);
   if (!binding || binding.source !== 'connected') return null;
   if (binding.selection === 'group') {
     if (!binding.profileId) return null;

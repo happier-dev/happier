@@ -364,6 +364,34 @@ describe('mapCodexRolloutEventToActions', () => {
         expect(actions).toEqual([{ type: 'tool-result', callId: 'call_3', output: { ok: true } }]);
     });
 
+    it.each([
+        { resultType: 'function_call_output', success: false, expectedIsError: true },
+        { resultType: 'function_call_output', success: true, expectedIsError: false },
+        { resultType: 'custom_tool_call_output', success: false, expectedIsError: true },
+    ])('maps authoritative $resultType success=$success to isError=$expectedIsError', ({ resultType, success, expectedIsError }) => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: resultType,
+                    call_id: 'call_result_1',
+                    output: {
+                        body: 'command output',
+                        success,
+                    },
+                },
+            },
+            { debug: false },
+        );
+
+        expect(actions).toEqual([{
+            type: 'tool-result',
+            callId: 'call_result_1',
+            output: { body: 'command output', success },
+            isError: expectedIsError,
+        }]);
+    });
+
     it('emits debug action for unhandled payload type when debug is enabled', () => {
         const actions = mapCodexRolloutEventToActions(
             {
@@ -380,6 +408,24 @@ describe('mapCodexRolloutEventToActions', () => {
                 type: 'debug',
                 message: 'unhandled rollout payload type: unknown_payload_type',
                 value: { type: 'unknown_payload_type' },
+            },
+        ]);
+    });
+
+    it('keeps malformed response-item debug projection separate from strict admission', () => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {},
+            },
+            { debug: true },
+        );
+
+        expect(actions).toEqual([
+            {
+                type: 'debug',
+                message: 'unhandled rollout payload type: ',
+                value: {},
             },
         ]);
     });

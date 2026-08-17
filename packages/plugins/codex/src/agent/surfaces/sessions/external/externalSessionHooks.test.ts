@@ -8,7 +8,7 @@ import {
   validateAgentExternalSessionHooksContribution,
   type AgentExternalSessionHookMapEventRequest,
   type AgentExternalSessionHookResolveInstallationRequest,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import type {
   PluginInvocationContext,
   PluginServices,

@@ -1,4 +1,4 @@
-import type { PluginExecService } from '@happier-dev/plugin-sdk/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { readCodexEnvironmentAuthState, type CodexEnvironmentAuthMethod } from '../../cli/auth/environment.js';
 import { createCodexNativeAppServerClient } from '../../runtime/appServer/client.js';
@@ -16,7 +16,7 @@ export type CodexPreflightSessionControlsPolicy = Readonly<{
 }>;
 
 export type CodexPreflightSessionControlsProbeParams = Readonly<{
-  exec: PluginExecService;
+  exec: ExecService;
   cwd: string;
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -74,7 +74,7 @@ export function resolveCodexPreflightSessionControlsProbeVariant(params: Readonl
   env?: NodeJS.ProcessEnv;
 }>): string {
   const backendMode =
-    resolveCodexSessionBackendMode({ metadata: null, accountSettings: params.accountSettings ?? null }) ?? 'appServer';
+    resolveCodexSessionBackendMode({ accountSettings: params.accountSettings ?? null }) ?? 'appServer';
   return `codex:${backendMode}`;
 }
 
@@ -100,6 +100,7 @@ export async function probeCodexPreflightConfigOptionsRaw(
 }
 
 export const codexPreflightSessionControlsProbeConfig = {
+  connectedServiceAuth: 'materialized-env',
   failureCacheStrategy: 'retry',
   needsAccountSettings: true,
   resolveProbeVariant: resolveCodexPreflightSessionControlsProbeVariant,
@@ -114,7 +115,7 @@ export function resolveCodexPreflightSessionControlsPolicy(params: Readonly<{
   env?: NodeJS.ProcessEnv;
 }>): CodexPreflightSessionControlsPolicy | null {
   const backendMode =
-    resolveCodexSessionBackendMode({ metadata: null, accountSettings: params.accountSettings ?? null }) ?? 'appServer';
+    resolveCodexSessionBackendMode({ accountSettings: params.accountSettings ?? null }) ?? 'appServer';
   if (backendMode !== 'appServer') {
     return null;
   }

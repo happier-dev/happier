@@ -1,19 +1,18 @@
 import type {
-  CloudAuthCallbackSessionV1,
-  CloudCustomAuthenticatorContextV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  AuthCallbackSession as CloudAuthCallbackSessionV1,
+  AuthenticatorContext as CloudCustomAuthenticatorContextV1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
-  CodexRuntimeFetchRequest as FetchRuntimeRequestV1,
-  CodexRuntimeFetchResponse as FetchRuntimeResponseV1,
-} from '../../runtimeFetch.js';
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+  HttpService,
+} from '@happier-dev/plugin-sdk/http';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { OPENAI_CODEX_AUTH_BASE_URL } from './exchange.js';
 import { authenticateCodexCloudConnect } from './authenticate.js';
 
 type TestCloudAuthContext = CloudCustomAuthenticatorContextV1 & Readonly<{
-  fetchRequests: FetchRuntimeRequestV1[];
+  fetchRequests: Parameters<HttpService['request']>[0][];
   writtenRecords: ConnectedServiceCredentialRecordV1[];
 }>;
 
@@ -21,16 +20,13 @@ function encodeJwtPayload(payload: Readonly<Record<string, unknown>>): string {
   return `hdr.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.sig`;
 }
 
-function createJsonResponse(json: unknown): FetchRuntimeResponseV1 {
+function createJsonResponse(json: unknown): Awaited<ReturnType<HttpService['request']>> {
   const text = JSON.stringify(json);
   return {
-    ok: true,
     status: 200,
+    finalUrl: OPENAI_CODEX_OAUTH_PROFILE.tokenUrl,
     headers: {},
-    body: json,
-    text: async () => text,
-    json: async () => json,
-    arrayBuffer: async () => Buffer.from(text).buffer,
+    body: new TextEncoder().encode(text),
   };
 }
 
@@ -49,22 +45,24 @@ function createContext(overrides: Partial<CloudCustomAuthenticatorContextV1> = {
     })),
     close: vi.fn(async () => {}),
   };
-  const fetchRequests: FetchRuntimeRequestV1[] = [];
+  const fetchRequests: Parameters<HttpService['request']>[0][] = [];
   const writtenRecords: ConnectedServiceCredentialRecordV1[] = [];
   const base: TestCloudAuthContext = {
     signal: new AbortController().signal,
     now: () => 1_700_000_000_000,
-    fetch: vi.fn(async (request) => {
-      fetchRequests.push(request);
-      return createJsonResponse({
-        id_token: encodeJwtPayload({
-          'https://api.openai.com/auth': { account_id: 'acct_nested' },
-        }),
-        access_token: 'access-token',
-        refresh_token: 'refresh-token',
-        expires_in: 60,
-      });
-    }),
+    fetch: {
+      request: vi.fn(async (request) => {
+        fetchRequests.push(request);
+        return createJsonResponse({
+          id_token: encodeJwtPayload({
+            'https://api.openai.com/auth': { account_id: 'acct_nested' },
+          }),
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_in: 60,
+        });
+      }),
+    },
     browser: {
       open: vi.fn(async () => ({ ok: true })),
     },
@@ -122,8 +120,8 @@ describe('authenticateCodexCloudConnect', () => {
       preferredPort: 1455,
       callbackPath: '/auth/callback',
     });
-    expect(context.browser.open).toHaveBeenCalledWith(expect.stringContaining(`${OPENAI_CODEX_AUTH_BASE_URL}/oauth/authorize`));
-    expect(context.fetchRequests[0]?.url).toBe(`${OPENAI_CODEX_AUTH_BASE_URL}/oauth/token`);
+    expect(context.browser.open).toHaveBeenCalledWith(expect.stringContaining(OPENAI_CODEX_OAUTH_PROFILE.authorizeUrl));
+    expect(context.fetchRequests[0]?.url).toBe(OPENAI_CODEX_OAUTH_PROFILE.tokenUrl);
     expect(context.writtenRecords).toHaveLength(1);
     expect(context.writtenRecords[0]).toMatchObject({
       serviceId: 'openai-codex',

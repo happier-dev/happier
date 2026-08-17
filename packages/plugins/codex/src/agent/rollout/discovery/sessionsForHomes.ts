@@ -1,8 +1,8 @@
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { CodexExternalSessionSource } from '../../surfaces/sessions/external/models.js';
 import { homeEntries } from './homeEntries.js';
 
 export async function homes(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
 }>): Promise<string[]> {

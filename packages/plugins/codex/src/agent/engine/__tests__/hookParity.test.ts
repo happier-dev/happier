@@ -1,7 +1,7 @@
 import {
-  PLUGIN_HOOK_CATALOG_V1,
-  getPluginHookDefinitionV1,
-} from '@happier-dev/plugin-sdk/experimental/hooks';
+  PLUGIN_HOOK_IDS,
+  getPluginHookDefinition,
+} from '@happier-dev/plugin-sdk/hooks';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -45,11 +45,11 @@ describe('Codex B.6 hook parity fixture', () => {
   });
 
   it('verifies catalog-backed hooks against the accepted protocol hook catalog', () => {
-    const catalogIds = new Set(PLUGIN_HOOK_CATALOG_V1.map((entry) => entry.id));
+    const catalogIds = new Set(PLUGIN_HOOK_IDS);
 
     for (const hookId of CODEX_CATALOG_BACKED_HOOK_IDS) {
       expect(catalogIds.has(hookId)).toBe(true);
-      expect(getPluginHookDefinitionV1(hookId)?.id).toBe(hookId);
+      expect(getPluginHookDefinition(hookId)?.id).toBe(hookId);
     }
   });
 
@@ -58,7 +58,7 @@ describe('Codex B.6 hook parity fixture', () => {
 
     for (const row of CODEX_HOOK_PARITY_ROWS) {
       expect(row.catalogStatus).toBe('catalog-backed');
-      expect(getPluginHookDefinitionV1(row.id)?.id).toBe(row.id);
+      expect(getPluginHookDefinition(row.id)?.id).toBe(row.id);
     }
   });
 });

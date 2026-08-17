@@ -4,9 +4,14 @@ import {
     readSync,
     type Dirent,
 } from 'node:fs';
-import { open, readdir, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { open, readdir, realpath, stat } from 'node:fs/promises';
+import { basename, join, posix, win32 } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+
+import {
+    throwIfCodexExternalSessionInvocationStopped,
+    type CodexExternalSessionInvocationBounds,
+} from '../../surfaces/sessions/external/invocationBounds.js';
 
 export type CodexSessionMetaPayload = {
     id?: string;
@@ -65,14 +70,57 @@ function isSessionMetaFreshForStart(opts: { sessionMeta: CodexSessionMetaPayload
     return ts >= opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS;
 }
 
+function isSubagentRollout(sessionMeta: CodexSessionMetaPayload): boolean {
+    const source = sessionMeta.source;
+    return Boolean(
+        source
+        && typeof source === 'object'
+        && !Array.isArray(source)
+        && Object.prototype.hasOwnProperty.call(source, 'subagent'),
+    );
+}
+
+function normalizeCwdForComparison(value: unknown): string | null {
+    if (typeof value !== 'string' || value.trim().length === 0) return null;
+    const pathApi = process.platform === 'win32' ? win32 : posix;
+    const platformPath = process.platform === 'win32'
+        ? value.trim().replaceAll('/', '\\')
+        : value.trim().replaceAll('\\', '/');
+    const normalized = pathApi.resolve(platformPath);
+    return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized;
+}
+
+async function resolveCwdForComparison(value: unknown): Promise<string | null> {
+    const normalized = normalizeCwdForComparison(value);
+    if (!normalized) return null;
+    const physicalPath = await realpath(normalized).catch(() => null);
+    return physicalPath ? normalizeCwdForComparison(physicalPath) : normalized;
+}
+
+async function isOwnedFreshRootRollout(opts: Readonly<{
+    sessionMeta: CodexSessionMetaPayload;
+    startedAtMs: number;
+    expectedCwd: string | null;
+}>): Promise<boolean> {
+    if (!isSessionMetaFreshForStart({
+        sessionMeta: opts.sessionMeta,
+        startedAtMs: opts.startedAtMs,
+    })) {
+        return false;
+    }
+    if (isSubagentRollout(opts.sessionMeta) || !opts.expectedCwd) return false;
+    return await resolveCwdForComparison(opts.sessionMeta.cwd) === opts.expectedCwd;
+}
+
 type RolloutFileEntry = Readonly<{ filePath: string; mtimeMs: number }>;
 
 async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[]> {
     const results: string[] = [];
     const maxDepth = Math.max(0, typeof opts.maxDepth === 'number' ? opts.maxDepth : 10);
+    const scanLimit = Math.max(0, opts.scanLimit);
 
     async function walk(dir: string, depth: number): Promise<void> {
-        if (depth >= maxDepth) return;
+        if (depth >= maxDepth || results.length >= scanLimit) return;
 
         let entries: Dirent[];
         try {
@@ -80,7 +128,9 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
         } catch {
             return;
         }
+        entries.sort((left, right) => String(right.name).localeCompare(String(left.name)));
         for (const entry of entries) {
+            if (results.length >= scanLimit) return;
             const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
             const full = join(dir, name);
             if (entry.isSymbolicLink()) continue;
@@ -96,8 +146,9 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
 
     await walk(opts.sessionsRootDir, 0);
 
-    // Prefer newest by filename timestamp (or filesystem birthtime), but include mtime as a signal so we can
-    // still observe rollouts that Codex continues to append to (the filename timestamp may be very old).
+    // Codex date-partitions rollouts under zero-padded YYYY/MM/DD directories and timestamped filenames.
+    // Traverse those names newest-first and enforce scanLimit before statting. A full stat-and-sort of a
+    // long-lived Codex home can otherwise delay terminal transcript attachment for minutes.
     const withTime: Array<{ filePath: string; sortMs: number; mtimeMs: number }> = [];
     for (const filePath of results) {
         try {
@@ -111,15 +162,20 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
         }
     }
     withTime.sort((a, b) => b.sortMs - a.sortMs || b.mtimeMs - a.mtimeMs);
-    return withTime.slice(0, Math.max(0, opts.scanLimit)).map((x) => ({ filePath: x.filePath, mtimeMs: x.mtimeMs }));
+    return withTime.map((x) => ({ filePath: x.filePath, mtimeMs: x.mtimeMs }));
 }
 
-async function readFirstLine(filePath: string): Promise<string | null> {
+async function readFirstLine(
+    filePath: string,
+    bounds: CodexExternalSessionInvocationBounds,
+): Promise<string | null> {
     const maxProbeBytes = 64 * 1024;
     const chunkBytes = 4 * 1024;
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     try {
         const fh = await open(filePath, 'r');
         try {
+            throwIfCodexExternalSessionInvocationStopped(bounds);
             const decoder = new StringDecoder('utf8');
             const chunk = Buffer.allocUnsafe(chunkBytes);
             let readOffset = 0;
@@ -127,8 +183,10 @@ async function readFirstLine(filePath: string): Promise<string | null> {
             let sawEof = false;
 
             while (readOffset < maxProbeBytes) {
+                throwIfCodexExternalSessionInvocationStopped(bounds);
                 const bytesToRead = Math.min(chunk.byteLength, maxProbeBytes - readOffset);
                 const res = await fh.read(chunk, 0, bytesToRead, readOffset);
+                throwIfCodexExternalSessionInvocationStopped(bounds);
                 if (res.bytesRead <= 0) {
                     sawEof = true;
                     break;
@@ -159,6 +217,7 @@ async function readFirstLine(filePath: string): Promise<string | null> {
             await fh.close();
         }
     } catch {
+        throwIfCodexExternalSessionInvocationStopped(bounds);
         return null;
     }
 }
@@ -242,8 +301,12 @@ export function parseCodexSessionMetaLine(
     }
 }
 
-export async function readCodexSessionMetaFromRollout(filePath: string): Promise<CodexSessionMetaPayload | null> {
-    const line = await readFirstLine(filePath);
+export async function readCodexSessionMetaFromRollout(
+    filePath: string,
+    bounds: CodexExternalSessionInvocationBounds = {},
+): Promise<CodexSessionMetaPayload | null> {
+    const line = await readFirstLine(filePath, bounds);
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     return line ? parseCodexSessionMetaLine(line) : null;
 }
 
@@ -277,10 +340,10 @@ export function scoreCodexRolloutCandidate(opts: {
         score -= 100;
     }
 
-    // Weak signal only.
-    if (typeof opts.sessionMeta.cwd === 'string') {
-        if (opts.sessionMeta.cwd === opts.cwd) score += 20;
-        else if (opts.cwd.startsWith(opts.sessionMeta.cwd)) score += 5;
+    const expectedCwd = normalizeCwdForComparison(opts.cwd);
+    const candidateCwd = normalizeCwdForComparison(opts.sessionMeta.cwd);
+    if (expectedCwd !== null && candidateCwd === expectedCwd) {
+        score += 20;
     }
 
     return score;
@@ -324,16 +387,6 @@ export async function discoverCodexRolloutFileOnce(opts: {
     for (const entry of files) {
         const sessionMeta = await readCodexSessionMetaFromRollout(entry.filePath);
         if (!sessionMeta) {
-            const idFromName = parseResumeIdFromRolloutFilename(entry.filePath);
-            if (!idFromName) continue;
-            if (entry.mtimeMs < opts.startedAtMs - CODEX_SESSION_META_CLOCK_SKEW_MS) continue;
-            const fallbackMeta: CodexSessionMetaPayload = { id: idFromName, timestamp: new Date(entry.mtimeMs).toISOString(), cwd: opts.cwd };
-            const score = scoreCodexRolloutCandidate({
-                sessionMeta: fallbackMeta,
-                startedAtMs: opts.startedAtMs,
-                cwd: opts.cwd,
-            });
-            scored.push({ filePath: entry.filePath, mtimeMs: entry.mtimeMs, sessionMeta: fallbackMeta, score });
             continue;
         }
         const score = scoreCodexRolloutCandidate({
@@ -345,16 +398,22 @@ export async function discoverCodexRolloutFileOnce(opts: {
     }
     scored.sort((a, b) => b.score - a.score);
 
-    // When starting a brand-new Codex session, require the rollout's own start time (session_meta.timestamp,
-    // or the mtime-derived fallback for files whose first line has not flushed yet) to be close to the
-    // launcher's startedAt. A long-running Codex session elsewhere will keep its rollout's mtime fresh while
-    // its session_meta.timestamp stays old — if we also accepted "fresh mtime" here, that unrelated session's
-    // rollout would be picked up and mirrored into this Happy session.
-    const candidates = resumeId
-        ? scored
-        : scored.filter((entry) =>
-            isSessionMetaFreshForStart({ sessionMeta: entry.sessionMeta, startedAtMs: opts.startedAtMs }),
-          );
+    // Fresh discovery has no provider session id, so ownership must come from the rollout's own metadata.
+    // Timestamp and mtime are ordering signals only: concurrent Codex roots and subagents can be equally fresh.
+    const expectedCwd = resumeId ? null : await resolveCwdForComparison(opts.cwd);
+    const candidates = [];
+    for (const entry of scored) {
+        if (
+            resumeId
+            || await isOwnedFreshRootRollout({
+                sessionMeta: entry.sessionMeta,
+                startedAtMs: opts.startedAtMs,
+                expectedCwd,
+            })
+        ) {
+            candidates.push(entry);
+        }
+    }
 
     const best = candidates[0];
     if (!best) return null;

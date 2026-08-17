@@ -1,8 +1,7 @@
-import { getProviderConnectedServicesAdapter } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-
+import { AGENT_DEFINITION } from '../../../../definition.js';
 import { authenticateCodexCloudConnect } from './authenticate.js';
 
-const codexCloudConnect = getProviderConnectedServicesAdapter('codex')?.cloudConnect;
+const codexCloudConnect = AGENT_DEFINITION.core.cloudConnect;
 if (!codexCloudConnect) {
   throw new Error('Codex cloud connect facts are unavailable');
 }

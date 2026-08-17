@@ -4,12 +4,19 @@ import {
   parseCodexRolloutSessionIdFromFilename,
   readCodexSessionMetaFromRollout,
 } from './indexData.js';
+import {
+  throwIfCodexExternalSessionInvocationStopped,
+  type CodexExternalSessionInvocationBounds,
+} from '../../surfaces/sessions/external/invocationBounds.js';
 
 export type CodexRolloutFile = Readonly<{
   filePath: string;
   fileRelPath: string;
   sortMs: number;
   mtimeMs: number;
+  /** Source metadata retained by the root-family inventory for transcript semantics. */
+  sessionId?: string;
+  rootSessionId?: string;
 }>;
 
 type CodexRolloutMembership = 'exact_thread' | 'root_session_family';
@@ -42,6 +49,12 @@ function formatPhysicalGeneration(metadata: CodexPhysicalFileMetadata): string {
     String(metadata.ino),
     String(Math.trunc(metadata.birthtimeMs)),
   ].join(':');
+}
+
+function readNonEmptySessionId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 async function readPathGenerationAsync(path: string): Promise<string> {
@@ -147,25 +160,29 @@ async function collectRolloutMatchesFromFlatDir(params: Readonly<{
   dir: string;
   remoteSessionIds: ReadonlySet<string>;
   membership: CodexRolloutMembership;
-  signal?: AbortSignal;
-}>): Promise<Map<string, CodexRolloutFile[]>> {
+}> & CodexExternalSessionInvocationBounds): Promise<Map<string, CodexRolloutFile[]>> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   let entries: any[];
   try {
     entries = await readdir(params.dir, { withFileTypes: true });
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(params);
     return new Map();
   }
+  throwIfCodexExternalSessionInvocationStopped(params);
 
   const matchesBySessionId = new Map<string, CodexRolloutFile[]>();
   for (const entry of entries) {
-    params.signal?.throwIfAborted();
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (!entry.isFile()) continue;
     const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
     if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
 
     const filePath = join(params.dir, name);
-    const sessionMeta = await readCodexSessionMetaFromRollout(filePath);
-    params.signal?.throwIfAborted();
+    const sessionMeta = await readCodexSessionMetaFromRollout(filePath, params);
+    throwIfCodexExternalSessionInvocationStopped(params);
+    const sessionId = readNonEmptySessionId(sessionMeta?.id);
+    const rootSessionId = readNonEmptySessionId(sessionMeta?.session_id);
     const matchingSessionIds = new Set<string>();
     const filenameSessionId = parseCodexRolloutSessionIdFromFilename(filePath);
     for (const candidate of [
@@ -185,15 +202,22 @@ async function collectRolloutMatchesFromFlatDir(params: Readonly<{
     const match = await describeRolloutFile({
       codexHome: params.codexHome,
       filePath,
+      signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
     });
-    params.signal?.throwIfAborted();
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (!match) continue;
+    const member = {
+      ...match,
+      ...(sessionId ? { sessionId } : {}),
+      ...(rootSessionId ? { rootSessionId } : {}),
+    };
     for (const remoteSessionId of matchingSessionIds) {
       const matches = matchesBySessionId.get(remoteSessionId);
       if (matches) {
-        matches.push(match);
+        matches.push(member);
       } else {
-        matchesBySessionId.set(remoteSessionId, [match]);
+        matchesBySessionId.set(remoteSessionId, [member]);
       }
     }
   }
@@ -205,8 +229,7 @@ async function collectTargetedRolloutMatches(params: Readonly<{
   codexHome: string;
   remoteSessionId: string;
   membership: CodexRolloutMembership;
-  signal?: AbortSignal;
-}>): Promise<CodexRolloutFile[] | null> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutFile[] | null> {
   const likelyDayDirs = buildLikelyRolloutDayDirs({
     codexHome: params.codexHome,
     remoteSessionId: params.remoteSessionId,
@@ -214,7 +237,7 @@ async function collectTargetedRolloutMatches(params: Readonly<{
   });
   if (likelyDayDirs.length === 0) return null;
 
-  params.signal?.throwIfAborted();
+  throwIfCodexExternalSessionInvocationStopped(params);
   const matches = (
     await Promise.all(
       likelyDayDirs.map((dir) => collectRolloutMatchesFromFlatDir({
@@ -223,13 +246,14 @@ async function collectTargetedRolloutMatches(params: Readonly<{
         remoteSessionIds: new Set([params.remoteSessionId]),
         membership: params.membership,
         signal: params.signal,
+        deadlineAtMs: params.deadlineAtMs,
       })),
     )
   ).flatMap(
     (matchesBySessionId) =>
       matchesBySessionId.get(params.remoteSessionId) ?? [],
   );
-  params.signal?.throwIfAborted();
+  throwIfCodexExternalSessionInvocationStopped(params);
   matches.sort((a, b) => a.sortMs - b.sortMs || a.mtimeMs - b.mtimeMs);
   return matches;
 }
@@ -238,7 +262,7 @@ async function collectTargetedRootSessionRolloutMatches(params: Readonly<{
   codexHome: string;
   remoteSessionIds: ReadonlySet<string>;
   signal: AbortSignal;
-}>): Promise<Map<string, CodexRolloutFile[]>> {
+}> & CodexExternalSessionInvocationBounds): Promise<Map<string, CodexRolloutFile[]>> {
   const requestedIdsByDayDir = new Map<string, Set<string>>();
   for (const remoteSessionId of params.remoteSessionIds) {
     for (const dir of buildLikelyRolloutDayDirs({
@@ -255,7 +279,7 @@ async function collectTargetedRootSessionRolloutMatches(params: Readonly<{
     }
   }
 
-  params.signal.throwIfAborted();
+  throwIfCodexExternalSessionInvocationStopped(params);
   const batches = await Promise.all(
     [...requestedIdsByDayDir].map(
       async ([dir, remoteSessionIds]) =>
@@ -265,10 +289,11 @@ async function collectTargetedRootSessionRolloutMatches(params: Readonly<{
           remoteSessionIds,
           membership: 'root_session_family',
           signal: params.signal,
+          deadlineAtMs: params.deadlineAtMs,
         }),
     ),
   );
-  params.signal.throwIfAborted();
+  throwIfCodexExternalSessionInvocationStopped(params);
 
   const matchesBySessionId = new Map<string, CodexRolloutFile[]>();
   for (const batch of batches) {
@@ -290,9 +315,11 @@ async function collectTargetedRootSessionRolloutMatches(params: Readonly<{
 async function describeRolloutFile(params: Readonly<{
   codexHome: string;
   filePath: string;
-}>): Promise<CodexRolloutFile | null> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutFile | null> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   try {
     const s = await stat(params.filePath);
+    throwIfCodexExternalSessionInvocationStopped(params);
     const fromName = parseRolloutTimestampFromFilename(params.filePath);
     const fromBirth = Number.isFinite(s.birthtimeMs) && s.birthtimeMs > 0
       ? s.birthtimeMs
@@ -304,6 +331,7 @@ async function describeRolloutFile(params: Readonly<{
       mtimeMs: s.mtimeMs,
     };
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(params);
     return null;
   }
 }
@@ -313,10 +341,12 @@ async function resolveMatchingRolloutFile(params: Readonly<{
   filePath: string;
   remoteSessionId: string;
   membership: CodexRolloutMembership;
-}>): Promise<CodexRolloutFile | null> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutFile | null> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const matchesByName = parseCodexRolloutSessionIdFromFilename(params.filePath) === params.remoteSessionId;
   if (!matchesByName) {
-    const sessionMeta = await readCodexSessionMetaFromRollout(params.filePath);
+    const sessionMeta = await readCodexSessionMetaFromRollout(params.filePath, params);
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (
       sessionMeta?.id !== params.remoteSessionId
       && (
@@ -335,8 +365,9 @@ export async function describeCodexRolloutFileSetResourceIdentity(
   params: Readonly<{
     codexHome: string;
     files: readonly Pick<CodexRolloutFile, 'filePath' | 'fileRelPath'>[];
-  }>,
+  }> & CodexExternalSessionInvocationBounds,
 ): Promise<CodexSessionRolloutResourceIdentity> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const [codexHomeGeneration, sessionsGeneration, archivedSessionsGeneration, streams] =
     await Promise.all([
       readPathGenerationAsync(params.codexHome),
@@ -347,6 +378,7 @@ export async function describeCodexRolloutFileSetResourceIdentity(
         physicalGeneration: await readPathGenerationAsync(file.filePath),
       }))),
     ]);
+  throwIfCodexExternalSessionInvocationStopped(params);
   return {
     sourceGeneration: [
       codexHomeGeneration,
@@ -363,22 +395,28 @@ async function collectCodexRolloutFilesByMembership(params: Readonly<{
   codexHome: string;
   remoteSessionId: string;
   membership: CodexRolloutMembership;
-}>): Promise<CodexRolloutFile[]> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutFile[]> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const targetedMatches = await collectTargetedRolloutMatches(params);
+  throwIfCodexExternalSessionInvocationStopped(params);
   if (targetedMatches && targetedMatches.length > 0) {
     return targetedMatches;
   }
 
   const matches: CodexRolloutFile[] = [];
   const walk = async (dir: string, depth: number): Promise<void> => {
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (depth > 10) return;
     let entries: any[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
+      throwIfCodexExternalSessionInvocationStopped(params);
       return;
     }
+    throwIfCodexExternalSessionInvocationStopped(params);
     for (const entry of entries) {
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (entry.isSymbolicLink()) continue;
       const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
       const full = join(dir, name);
@@ -393,7 +431,10 @@ async function collectCodexRolloutFilesByMembership(params: Readonly<{
         filePath: full,
         remoteSessionId: params.remoteSessionId,
         membership: params.membership,
+        signal: params.signal,
+        deadlineAtMs: params.deadlineAtMs,
       });
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (match) {
         matches.push(match);
       }
@@ -411,20 +452,26 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
   codexHome: string;
   remoteSessionIds: readonly string[];
   signal: AbortSignal;
-}>): Promise<CodexRootSessionRolloutInventory> {
-  params.signal.throwIfAborted();
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRootSessionRolloutInventory> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const requestedIds = new Set(params.remoteSessionIds);
   const filesByRootSessionId = new Map<string, CodexRolloutFile[]>();
   for (const remoteSessionId of requestedIds) {
     filesByRootSessionId.set(remoteSessionId, []);
   }
 
-  const sourceGeneration = await Promise.all([
-    readPathGenerationAsync(params.codexHome),
-    readPathGenerationAsync(join(params.codexHome, 'sessions')),
-    readPathGenerationAsync(join(params.codexHome, 'archived_sessions')),
-  ]);
-  params.signal.throwIfAborted();
+  const sourceGeneration = [
+    await readPathGenerationAsync(params.codexHome),
+  ];
+  throwIfCodexExternalSessionInvocationStopped(params);
+  sourceGeneration.push(
+    await readPathGenerationAsync(join(params.codexHome, 'sessions')),
+  );
+  throwIfCodexExternalSessionInvocationStopped(params);
+  sourceGeneration.push(
+    await readPathGenerationAsync(join(params.codexHome, 'archived_sessions')),
+  );
+  throwIfCodexExternalSessionInvocationStopped(params);
 
   const knownFilePaths = new Set<string>();
   const targetedMatchesBySessionId =
@@ -432,6 +479,7 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
       codexHome: params.codexHome,
       remoteSessionIds: requestedIds,
       signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
     });
   for (const [remoteSessionId, targetedMatches] of targetedMatchesBySessionId) {
     if (targetedMatches.length > 0) {
@@ -452,7 +500,7 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
 
   const visitedDirectories = new Set<string>();
   const walk = async (dir: string, depth: number): Promise<void> => {
-    params.signal.throwIfAborted();
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (depth > 10) return;
     if (visitedDirectories.has(dir)) return;
     visitedDirectories.add(dir);
@@ -460,11 +508,11 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch (error) {
-      params.signal.throwIfAborted();
+      throwIfCodexExternalSessionInvocationStopped(params);
       return;
     }
     for (const entry of entries) {
-      params.signal.throwIfAborted();
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (entry.isSymbolicLink()) continue;
       const name = typeof entry.name === 'string'
         ? entry.name
@@ -498,7 +546,7 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
           try {
             metadata = await stat(full);
           } catch (error) {
-            params.signal.throwIfAborted();
+            throwIfCodexExternalSessionInvocationStopped(params);
             continue;
           }
           const createdAtMs = (
@@ -516,27 +564,27 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
         }
       }
 
-      const sessionMeta = await readCodexSessionMetaFromRollout(full);
-      params.signal.throwIfAborted();
-      const rootSessionId = (
-        typeof sessionMeta?.session_id === 'string'
-          ? sessionMeta.session_id
-          : typeof sessionMeta?.id === 'string'
-            ? sessionMeta.id
-            : parseCodexRolloutSessionIdFromFilename(full)
-      )?.trim();
-      if (!rootSessionId || !requestedIds.has(rootSessionId)) continue;
+      const sessionMeta = await readCodexSessionMetaFromRollout(full, params);
+      throwIfCodexExternalSessionInvocationStopped(params);
+      const sessionId = readNonEmptySessionId(sessionMeta?.id);
+      const metadataRootSessionId = readNonEmptySessionId(sessionMeta?.session_id);
+      const discoveredRootSessionId = (
+        metadataRootSessionId
+        ?? sessionId
+        ?? parseCodexRolloutSessionIdFromFilename(full)
+      );
+      if (!discoveredRootSessionId || !requestedIds.has(discoveredRootSessionId)) continue;
 
       try {
         metadata ??= await stat(full);
-        params.signal.throwIfAborted();
+        throwIfCodexExternalSessionInvocationStopped(params);
         const fromName = parseRolloutTimestampFromFilename(full);
         const fromBirth = (
           Number.isFinite(metadata.birthtimeMs) && metadata.birthtimeMs > 0
         )
           ? metadata.birthtimeMs
           : null;
-        filesByRootSessionId.get(rootSessionId)?.push({
+        filesByRootSessionId.get(discoveredRootSessionId)?.push({
           filePath: full,
           fileRelPath: relative(params.codexHome, full),
           sortMs: Math.max(
@@ -545,10 +593,12 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
             metadata.mtimeMs,
           ),
           mtimeMs: metadata.mtimeMs,
+          ...(sessionId ? { sessionId } : {}),
+          ...(metadataRootSessionId ? { rootSessionId: metadataRootSessionId } : {}),
         });
         knownFilePaths.add(full);
       } catch (error) {
-        params.signal.throwIfAborted();
+        throwIfCodexExternalSessionInvocationStopped(params);
       }
     }
   };
@@ -557,7 +607,7 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
     await walk(join(params.codexHome, 'sessions'), 0);
     await walk(join(params.codexHome, 'archived_sessions'), 0);
   }
-  params.signal.throwIfAborted();
+  throwIfCodexExternalSessionInvocationStopped(params);
 
   return {
     sourceGeneration,
@@ -574,7 +624,7 @@ export async function inventoryCodexRootSessionRolloutFiles(params: Readonly<{
 }
 
 export async function collectCodexSessionRolloutFiles(
-  params: Readonly<{ codexHome: string; remoteSessionId: string }>,
+  params: Readonly<{ codexHome: string; remoteSessionId: string }> & CodexExternalSessionInvocationBounds,
 ): Promise<CodexRolloutFile[]> {
   return await collectCodexRolloutFilesByMembership({
     ...params,
@@ -583,7 +633,7 @@ export async function collectCodexSessionRolloutFiles(
 }
 
 export async function collectCodexRootSessionRolloutFiles(
-  params: Readonly<{ codexHome: string; remoteSessionId: string }>,
+  params: Readonly<{ codexHome: string; remoteSessionId: string }> & CodexExternalSessionInvocationBounds,
 ): Promise<CodexRolloutFile[]> {
   return await collectCodexRolloutFilesByMembership({
     ...params,

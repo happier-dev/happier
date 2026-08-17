@@ -11,6 +11,38 @@ describe('codex handoff provider surface', () => {
     vi.unstubAllEnvs();
   });
 
+  it('exports the exact host-admitted Session id instead of a stale generic metadata id', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-export-id-'));
+    vi.stubEnv('CODEX_HOME', codexHome);
+    const rolloutDir = join(codexHome, 'sessions', '2026', '06', '22');
+    await mkdir(rolloutDir, { recursive: true });
+    await writeFile(
+      join(rolloutDir, 'rollout-2026-06-22T10-00-00-current-thread.jsonl'),
+      '{"event":"current"}\n',
+      'utf8',
+    );
+
+    const result = await codexHandoffSurface.exportBundle({
+      sessionId: 'current-thread',
+      metadata: {
+        path: '/repo',
+        providerSessionId: 'stale-other-agent-thread',
+        codexBackendMode: 'appServer',
+      },
+      directory: '/active-server',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        bundle: {
+          agentId: 'codex',
+          remoteSessionId: 'current-thread',
+        },
+      },
+    });
+  });
+
   it('emits codexBackendMode as provider-owned resume plan options on import', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-ops-'));
     vi.stubEnv('CODEX_HOME', codexHome);

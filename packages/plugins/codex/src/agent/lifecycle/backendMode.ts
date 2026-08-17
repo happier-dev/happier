@@ -1,19 +1,15 @@
 import {
   type CodexBackendMode,
   normalizeCodexBackendMode,
+  readCanonicalCodexAgentRuntimeDescriptorV1,
 } from '../../protocol/runtimeDescriptorV1.js';
-
-import {
-  readCanonicalCodexRuntimeDescriptorV1,
-  resolvePersistedCodexRuntimeIdentity,
-} from '../identity/runtimeDescriptor.js';
 
 export function resolveCanonicalCodexBackendMode(params: Readonly<{
   backendMode?: unknown;
   codexBackendMode?: unknown;
   runtimeDescriptorV1?: unknown;
 }>): CodexBackendMode | undefined {
-  const runtimeDescriptor = readCanonicalCodexRuntimeDescriptorV1(
+  const runtimeDescriptor = readCanonicalCodexAgentRuntimeDescriptorV1(
     params.runtimeDescriptorV1,
   );
   const runtimeBackendMode = normalizeCodexBackendMode(runtimeDescriptor?.backendMode);
@@ -59,16 +55,8 @@ export function resolveCodexBackendModeForRun(opts: Readonly<{
 }
 
 export function resolveCodexSessionBackendMode(params: Readonly<{
-  metadata: unknown;
   accountSettings?: Readonly<Record<string, unknown>> | null;
 }>): CodexBackendMode | null {
-  const persistedMode = resolvePersistedCodexRuntimeIdentity(params.metadata);
-  if (persistedMode) {
-    return persistedMode.backendMode === 'acp' || persistedMode.backendMode === 'appServer'
-      ? persistedMode.backendMode
-      : null;
-  }
-
   const settings = params.accountSettings ?? {};
   return resolveCodexBackendModeForRun({
     codexBackendMode: settings.codexBackendMode,

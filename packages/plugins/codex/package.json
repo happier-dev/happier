@@ -28,14 +28,6 @@
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
     },
-    "./agent/identity/runtimeDescriptor": {
-      "types": "./dist/agent/identity/runtimeDescriptor.d.ts",
-      "default": "./dist/agent/identity/runtimeDescriptor.js"
-    },
-    "./agent/surfaces/sessions/controls/adapter": {
-      "types": "./dist/agent/surfaces/sessions/controls/adapter.d.ts",
-      "default": "./dist/agent/surfaces/sessions/controls/adapter.js"
-    },
     "./protocol/runtimeDescriptorV1": {
       "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
       "default": "./dist/protocol/runtimeDescriptorV1.js"
@@ -71,10 +63,6 @@
     "./agent/runtime/appServer/projection/assistantReasoning": {
       "types": "./dist/agent/runtime/appServer/projection/assistantReasoning.d.ts",
       "default": "./dist/agent/runtime/appServer/projection/assistantReasoning.js"
-    },
-    "./agent/runtime/appServer/work/state": {
-      "types": "./dist/agent/runtime/appServer/work/state.d.ts",
-      "default": "./dist/agent/runtime/appServer/work/state.js"
     },
     "./agent/runtime/appServer/work/goalControl": {
       "types": "./dist/agent/runtime/appServer/work/goalControl.d.ts",
@@ -127,14 +115,6 @@
     "./agent/runtime/core/abortHandler": {
       "types": "./dist/agent/runtime/core/abortHandler.d.ts",
       "default": "./dist/agent/runtime/core/abortHandler.js"
-    },
-    "./agent/runtime/core/projectedToolEvent": {
-      "types": "./dist/agent/runtime/core/projectedToolEvent.d.ts",
-      "default": "./dist/agent/runtime/core/projectedToolEvent.js"
-    },
-    "./agent/runtime/core/terminationHandler": {
-      "types": "./dist/agent/runtime/core/terminationHandler.d.ts",
-      "default": "./dist/agent/runtime/core/terminationHandler.js"
     },
     "./agent/runtime/core/requestUserInputBridge": {
       "types": "./dist/agent/runtime/core/requestUserInputBridge.d.ts",
@@ -231,10 +211,6 @@
     "./agent/acp/transport": {
       "types": "./dist/agent/acp/transport.d.ts",
       "default": "./dist/agent/acp/transport.js"
-    },
-    "./agent/state/displayTitle": {
-      "types": "./dist/agent/state/displayTitle.d.ts",
-      "default": "./dist/agent/state/displayTitle.js"
     },
     "./agent/rollout/semanticTracker": {
       "types": "./dist/agent/rollout/semanticTracker.d.ts",
@@ -423,27 +399,24 @@
     "./agent/auth/services/state/sharing/switchContinuity": {
       "types": "./dist/agent/auth/services/state/sharing/switchContinuity.d.ts",
       "default": "./dist/agent/auth/services/state/sharing/switchContinuity.js"
-    },
-    "./agent/auth/services/usage/limit/recovery/intent": {
-      "types": "./dist/agent/auth/services/usage/limit/recovery/intent.d.ts",
-      "default": "./dist/agent/auth/services/usage/limit/recovery/intent.js"
     }
   },
   "files": [
     "dist",
+    ".happier-plugin/plugin.json",
     "package.json"
   ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@happier-dev/agents": "0.0.0",
-    "@happier-dev/bundled-voice-runtime-contract": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

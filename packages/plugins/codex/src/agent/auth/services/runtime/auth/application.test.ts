@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import {
     applyCodexConnectedServiceAuthGeneration,

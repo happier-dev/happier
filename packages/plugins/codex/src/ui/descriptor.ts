@@ -113,32 +113,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             legacyModeOutputKey: 'codexBackendMode',
             backendMode: {
               values: ['acp', 'appServer'],
-              aliases: {
-                mcp: 'appServer',
-                mcp_resume: 'acp',
-              },
-              candidatePaths: [
-                ['runtimeDescriptorV1', 'agent', 'agentExtra', 'runtimeHandle', 'backendMode'],
-                ['runtimeDescriptorV1', 'agent', 'backendMode'],
-                // legacy `provider` payload-key read-compat (pre-rename persisted metadata)
-                ['agentRuntimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'backendMode'],
-                ['agentRuntimeDescriptorV1', 'provider', 'backendMode'],
-                ['runtimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'backendMode'],
-                ['runtimeDescriptorV1', 'provider', 'backendMode'],
-                ['codexBackendMode'],
-              ],
             },
-            providerSessionIdPaths: [
-              ['runtimeDescriptorV1', 'agent', 'agentExtra', 'runtimeHandle', 'providerSessionId'],
-              ['runtimeDescriptorV1', 'agent', 'providerSessionId'],
-              // legacy `provider` payload-key read-compat (pre-rename persisted metadata)
-              ['agentRuntimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'providerSessionId'],
-              ['agentRuntimeDescriptorV1', 'provider', 'providerSessionId'],
-              ['runtimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'providerSessionId'],
-              ['runtimeDescriptorV1', 'provider', 'providerSessionId'],
-              ['codexSessionId'],
-              ['vendorSessionId'],
-            ],
             sourceFields: [
               'home',
               'connectedServiceId',
@@ -178,48 +153,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
         modeValues: ['acp', 'appServer'],
         activeModeValues: ['appServer'],
         activeWhenNoPersistedMode: true,
-        aliases: {
-          mcp: 'appServer',
-          mcp_resume: 'acp',
-        },
-        modeCandidates: [
-          {
-            path: ['runtimeDescriptorV1', 'agent', 'agentExtra', 'runtimeHandle', 'backendMode'],
-            required: { path: ['runtimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['runtimeDescriptorV1', 'agent', 'backendMode'],
-            required: { path: ['runtimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            // legacy `provider` payload-key read-compat (pre-rename persisted metadata)
-            path: ['runtimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'backendMode'],
-            required: { path: ['runtimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['runtimeDescriptorV1', 'provider', 'backendMode'],
-            required: { path: ['runtimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['agentRuntimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'backendMode'],
-            required: { path: ['agentRuntimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['agentRuntimeDescriptorV1', 'provider', 'backendMode'],
-            required: { path: ['agentRuntimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          { path: ['codexRuntimeDescriptorV1', 'backendMode'] },
-          { path: ['affinity', 'backendMode'] },
-          { path: ['codexBackendMode'] },
-          {
-            path: ['directSessionV1', 'codexBackendMode'],
-            required: { path: ['directSessionV1', 'providerId'], equals: 'codex' },
-          },
-          {
-            path: ['externalSessionV1', 'codexBackendMode'],
-            required: { path: ['externalSessionV1', 'agentId'], equals: 'codex' },
-          },
-        ],
         persistedGoalSnapshot: {
           path: ['sessionWorkStateV1'],
           itemKind: 'goal',
@@ -277,43 +210,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
         providerId: 'codex',
         outputKey: 'codexBackendMode',
         values: ['acp', 'appServer'],
-        aliases: {
-          mcp: 'appServer',
-          mcp_resume: 'acp',
-        },
-        settingsCandidates: [
-          { path: ['codexBackendMode'] },
-          { path: ['experimentalCodexAcp'], valueWhenTrue: 'acp' },
-        ],
-        metadataCandidates: [
-          {
-            path: ['runtimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'backendMode'],
-            required: { path: ['runtimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['runtimeDescriptorV1', 'provider', 'backendMode'],
-            required: { path: ['runtimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['agentRuntimeDescriptorV1', 'provider', 'providerExtra', 'runtimeHandle', 'backendMode'],
-            required: { path: ['agentRuntimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          {
-            path: ['agentRuntimeDescriptorV1', 'provider', 'backendMode'],
-            required: { path: ['agentRuntimeDescriptorV1', 'agentId'], equals: 'codex' },
-          },
-          { path: ['codexRuntimeDescriptorV1', 'backendMode'] },
-          { path: ['affinity', 'backendMode'] },
-          { path: ['codexBackendMode'] },
-          {
-            path: ['directSessionV1', 'codexBackendMode'],
-            required: { path: ['directSessionV1', 'providerId'], equals: 'codex' },
-          },
-          {
-            path: ['externalSessionV1', 'codexBackendMode'],
-            required: { path: ['externalSessionV1', 'agentId'], equals: 'codex' },
-          },
-        ],
       },
     },
   },

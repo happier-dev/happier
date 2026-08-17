@@ -1,19 +1,11 @@
 import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  readRuntimeDescriptorV1FromMetadata,
-  type ExternalSessionsSource,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
-import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
-
-import {
-  readCanonicalCodexRuntimeDescriptorV1,
-  resolvePersistedCodexRuntimeIdentity,
-  toCanonicalCodexRuntimeBackendMode,
-} from '../../../identity/runtimeDescriptor.js';
+  expandHomePath,
+  resolveHomeDirFromEnvironment,
+} from '@happier-dev/plugin-sdk/fs';
+import type { HandoffExportSessionMetadata } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
 import { collectCodexSessionRolloutFiles } from '../../../rollout/discovery/sessionsForHome.js';
 import { homes } from '../../../rollout/discovery/sessionsForHomes.js';
@@ -21,26 +13,20 @@ import {
   normalizeCodexHandoffBundleRelativePath,
   type CodexSessionHandoffBundle,
 } from './bundle.js';
+import {
+  projectAgentExternalSessionSourceToCodex,
+  projectCodexExternalSessionSourceToHandoff,
+  type CodexExternalSessionSource,
+} from '../external/models.js';
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   const raw = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
-  const homeDir = typeof env.HOME === 'string' && env.HOME.trim().length > 0
-    ? env.HOME.trim()
-    : typeof env.USERPROFILE === 'string' && env.USERPROFILE.trim().length > 0
-      ? env.USERPROFILE.trim()
-      : homedir();
+  const homeDir = resolveHomeDirFromEnvironment(env);
   return raw ? expandHomePath(raw, homeDir) : join(homeDir, '.codex');
 }
 
-function sanitizeExternalCodexSourceForHandoff(source: ExternalSessionsSource | undefined): ExternalSessionsSource | undefined {
-  if (!source || source.kind !== 'codexHome') return source;
-  // Absolute home paths are machine-specific and must not be transported via handoff bundles.
-  const { homePath: _homePath, ...rest } = source as ExternalSessionsSource & { homePath?: string };
-  return rest as ExternalSessionsSource;
-}
-
 async function resolvePreferredCodexHomes(params: Readonly<{
-  metadata: Record<string, unknown>;
+  metadata: HandoffExportSessionMetadata;
   env: NodeJS.ProcessEnv;
   activeServerDir: string;
 }>): Promise<string[]> {
@@ -58,60 +44,37 @@ async function resolvePreferredCodexHomes(params: Readonly<{
   return resolvedHomes.includes(fallbackCodexHome) ? resolvedHomes : [...resolvedHomes, fallbackCodexHome];
 }
 
-function resolveCodexSource(metadata: Record<string, unknown>): ExternalSessionsSource | undefined {
-  const runtimeDescriptor = readCanonicalCodexRuntimeDescriptorV1(
-    readRuntimeDescriptorV1FromMetadata(metadata),
-  );
-  const linkedSession = readLinkedExternalSessionV1FromMetadata(metadata);
-  if (linkedSession?.agentId === 'codex' && linkedSession.source.kind === 'codexHome') {
-    return linkedSession.source;
-  }
+function resolveCodexSource(metadata: HandoffExportSessionMetadata): CodexExternalSessionSource | undefined {
+  return projectAgentExternalSessionSourceToCodex(metadata.externalSessionSource) ?? undefined;
+}
 
-  if (!runtimeDescriptor?.home) {
-    return undefined;
-  }
-
-  const connectedServiceId = typeof runtimeDescriptor.connectedServiceId === 'string' ? runtimeDescriptor.connectedServiceId : undefined;
-  const connectedServiceProfileId = typeof runtimeDescriptor.connectedServiceProfileId === 'string' ? runtimeDescriptor.connectedServiceProfileId : undefined;
-  const connectedServiceGroupId = typeof runtimeDescriptor.connectedServiceGroupId === 'string' ? runtimeDescriptor.connectedServiceGroupId : undefined;
-
-  return runtimeDescriptor.home === 'connectedService'
-    ? {
-      kind: 'codexHome' as const,
-      home: 'connectedService' as const,
-      ...(connectedServiceId ? { connectedServiceId } : {}),
-      ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
-      ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
-    } satisfies ExternalSessionsSource
-    : {
-      kind: 'codexHome' as const,
-      home: 'user' as const,
-    } satisfies ExternalSessionsSource;
+function resolveCanonicalCodexHandoffBackendMode(
+  value: HandoffExportSessionMetadata['codexBackendMode'],
+): 'acp' | 'appServer' | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized === 'acp' || normalized === 'appServer' ? normalized : null;
 }
 
 export async function exportCodexSessionBundle(params: Readonly<{
-  metadata: Record<string, unknown>;
+  metadata: HandoffExportSessionMetadata;
   remoteSessionId: string;
   env: NodeJS.ProcessEnv;
   activeServerDir: string;
 }>): Promise<CodexSessionHandoffBundle> {
-  const runtimeIdentity = resolvePersistedCodexRuntimeIdentity(params.metadata);
-  const backendMode = toCanonicalCodexRuntimeBackendMode(runtimeIdentity?.backendMode);
-  const runtimeDescriptor = readCanonicalCodexRuntimeDescriptorV1(
-    readRuntimeDescriptorV1FromMetadata(params.metadata),
-  );
-  const sanitizedRuntimeDescriptor = runtimeDescriptor?.backendMode
+  const backendMode = resolveCanonicalCodexHandoffBackendMode(params.metadata.codexBackendMode);
+  const codexSource = resolveCodexSource(params.metadata);
+  const source = projectCodexExternalSessionSourceToHandoff(codexSource);
+  const sanitizedRuntimeDescriptor = backendMode
     ? buildCodexAgentRuntimeDescriptor({
-      backendMode: runtimeDescriptor.backendMode,
-      providerSessionId: runtimeDescriptor.providerSessionId,
-      home: runtimeDescriptor.home,
-      connectedServiceId: runtimeDescriptor.connectedServiceId,
-      connectedServiceProfileId: runtimeDescriptor.connectedServiceProfileId,
-      connectedServiceGroupId: runtimeDescriptor.connectedServiceGroupId,
+      backendMode,
+      providerSessionId: params.remoteSessionId,
+      home: source?.home ?? null,
+      connectedServiceId: source?.connectedServiceId ?? null,
+      connectedServiceProfileId: source?.connectedServiceProfileId ?? null,
+      connectedServiceGroupId: source?.connectedServiceGroupId ?? null,
       homePath: null,
     })
     : null;
-  const source = sanitizeExternalCodexSourceForHandoff(resolveCodexSource(params.metadata));
   const candidateHomes = await resolvePreferredCodexHomes(params);
   let rollouts = [] as Awaited<ReturnType<typeof collectCodexSessionRolloutFiles>>;
   for (const codexHome of candidateHomes) {

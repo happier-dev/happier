@@ -3,6 +3,27 @@ import { describe, expect, it } from 'vitest';
 import { classifyCodexConnectedServiceAuthFailure } from './failure.js';
 
 describe('classifyCodexConnectedServiceAuthFailure', () => {
+  it('classifies ChatGPT account model incompatibility as plan-invalid recovery evidence', () => {
+    const result = classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error: {
+        error: {
+          type: 'invalid_request_error',
+          message: "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+        },
+      },
+      serviceId: 'openai-codex',
+      profileId: 'free-account',
+      groupId: 'happier',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'permission_denied',
+      limitCategory: 'plan_invalid',
+      source: 'structured_provider_error',
+    });
+  });
+
   it('recognizes structured usage-limit failures and extracts provider metadata', () => {
     const result = classifyCodexConnectedServiceAuthFailure({
       providerErrorPath: true,
@@ -45,6 +66,24 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       groupGeneration: 42,
       expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
       failingAccessTokenFingerprint: 'sha256:1234abcd',
+    });
+  });
+
+  it('uses the published numeric-epoch threshold for structured reset evidence', () => {
+    expect(classifyCodexConnectedServiceAuthFailure({
+      providerErrorPath: true,
+      error: {
+        error: {
+          codexErrorInfo: 'UsageLimitExceeded',
+          resets_at: 10_000_000_000,
+        },
+      },
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: null,
+    })).toMatchObject({
+      kind: 'usage_limit',
+      resetsAtMs: 10_000_000_000_000,
     });
   });
 

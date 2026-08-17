@@ -1,9 +1,8 @@
-import {
-  ConnectedServiceQuotaRecoveryCreditsV1Schema,
-  type ConnectedServiceQuotaRecoveryCreditStatusV1,
-  type ConnectedServiceQuotaRecoveryCreditV1,
-  type ConnectedServiceQuotaRecoveryCreditsV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
+import type {
+  AgentAccountUsageRecoveryCredit,
+  AgentAccountUsageRecoveryCredits,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -20,7 +19,8 @@ function readNonNegativeInteger(value: unknown): number | null {
 }
 
 function readTimestampMs(value: unknown): number | null {
-  const numeric = typeof value === 'number' ? value : Number(value);
+  if (typeof value === 'number') return parseTimestampMs(value);
+  const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric >= 0) {
     return Math.trunc(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
   }
@@ -30,7 +30,7 @@ function readTimestampMs(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function normalizeStatus(value: unknown): ConnectedServiceQuotaRecoveryCreditStatusV1 {
+function normalizeStatus(value: unknown): AgentAccountUsageRecoveryCredit['status'] {
   const status = readString(value)?.toLowerCase();
   if (status === 'available') return 'available';
   if (status === 'redeeming' || status === 'redeem_started' || status === 'pending') return 'redeeming';
@@ -54,7 +54,7 @@ function readUsageSummaryContainer(rawUsage: unknown): Record<string, unknown> |
   return summary;
 }
 
-function mapCredit(rawCredit: unknown): ConnectedServiceQuotaRecoveryCreditV1 | null {
+function mapCredit(rawCredit: unknown): AgentAccountUsageRecoveryCredit | null {
   const record = isRecord(rawCredit) ? rawCredit : null;
   if (!record) return null;
   const id = readString(record.id);
@@ -79,20 +79,20 @@ function mapCredit(rawCredit: unknown): ConnectedServiceQuotaRecoveryCreditV1 | 
 export function mapCodexRateLimitResetCredits(params: Readonly<{
   rawUsage?: unknown;
   rawResetCredits?: unknown;
-}>): ConnectedServiceQuotaRecoveryCreditsV1 | undefined {
+}>): AgentAccountUsageRecoveryCredits | undefined {
   const resetCredits = readCreditsContainer(params.rawResetCredits);
   const usageSummary = readUsageSummaryContainer(params.rawUsage);
   const rawCredits = Array.isArray(resetCredits?.credits) ? resetCredits.credits : [];
   const credits = rawCredits
     .map((credit) => mapCredit(credit))
-    .filter((credit): credit is ConnectedServiceQuotaRecoveryCreditV1 => credit !== null);
+    .filter((credit): credit is AgentAccountUsageRecoveryCredit => credit !== null);
   const availableCount =
     readNonNegativeInteger(resetCredits?.available_count ?? resetCredits?.availableCount)
     ?? readNonNegativeInteger(usageSummary?.available_count ?? usageSummary?.availableCount)
     ?? (credits.length > 0 ? credits.filter((credit) => credit.status === 'available').length : null);
   if (availableCount === null && credits.length === 0) return undefined;
-  return ConnectedServiceQuotaRecoveryCreditsV1Schema.parse({
+  return {
     availableCount: availableCount ?? 0,
     credits,
-  });
+  };
 }

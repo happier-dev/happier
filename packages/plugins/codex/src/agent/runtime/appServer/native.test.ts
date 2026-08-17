@@ -1,12 +1,13 @@
 import type {
+  AgentRuntimeContext,
   AgentSessionOpenRequest,
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import {
-  assertExperimentalAgentSessionRealtimeRuntime,
+  assertAgentSessionRealtimeRuntime as assertExperimentalAgentSessionRealtimeRuntime,
   type AgentSessionRealtimeConversation,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const runtimeModuleMocks = vi.hoisted(() => ({
@@ -108,6 +109,21 @@ function createConnectedAccountsFixture(input?: Readonly<{
 describe('createCodexNativeAppServerSessionRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('projects the app-server runtime auth facet onto the native session runtime', () => {
+    const appServer = createAppServerSession();
+    const runtimeAuth = {
+      apply: vi.fn(),
+      readIdentity: vi.fn(),
+    } as NonNullable<CodexAppServerSession['runtimeAuth']>;
+
+    const runtime = createCodexNativeAppServerSessionRuntime(
+      { ...appServer.runtime, runtimeAuth },
+      'session-1',
+    );
+
+    expect(runtime.runtimeAuth).toBe(runtimeAuth);
   });
 
   it.each([
@@ -553,12 +569,129 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it('rejects an incomplete group-member account-usage source at the Codex host boundary', async () => {
-    const resolveSourceContext = vi.fn(async () => ({
+  it('omits generated-media publication for a sessionless execution-run context', async () => {
+    const context = {
+      signal: new AbortController().signal,
+      services: {
+        logger: { debug: vi.fn() },
+        sessions: { current: null },
+        interactions: {},
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+    } as unknown as AgentRuntimeContext;
+    const host = createCodexNativeAppServerRuntimeHost({
+      request: { sessionId: 'execution-run-1' } as AgentSessionOpenRequest,
+      context,
+      processEnv: {},
+    });
+
+    expect('publishGeneratedMedia' in host).toBe(false);
+    expect('setTitle' in host).toBe(false);
+    await expect(host.dispose?.()).resolves.toBeUndefined();
+  });
+
+  it('sets the durable title through the host-stamped current Session handle', async () => {
+    const setDisplayTitle = vi.fn(async () => undefined);
+    const controller = new AbortController();
+    const context = {
+      signal: controller.signal,
+      services: {
+        logger: { debug: vi.fn() },
+        sessions: { current: { setDisplayTitle, media: { registerSourceRoot: vi.fn() } } },
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      session: { id: 'session-1', services: {} },
+    } as unknown as AgentSessionRuntimeContext;
+    const host = createCodexNativeAppServerRuntimeHost({
+      request: { sessionId: 'session-1' } as AgentSessionOpenRequest,
+      context,
+      processEnv: {},
+    });
+
+    await host.setTitle?.('Review');
+
+    expect(setDisplayTitle).toHaveBeenCalledWith('Review', { signal: controller.signal });
+  });
+
+  it('refreshes runtime auth through the common Session handle without forwarding Agent identity', async () => {
+    const refreshRuntimeAuth = vi.fn(async () => ({ status: 'refreshed' as const }));
+    const controller = new AbortController();
+    const context = {
+      signal: controller.signal,
+      services: {
+        logger: { debug: vi.fn() },
+        sessions: {
+          current: {
+            auth: { services: { refreshRuntimeAuth } },
+            media: { registerSourceRoot: vi.fn() },
+          },
+        },
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      session: { id: 'session-1', services: {} },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+    } as unknown as AgentSessionRuntimeContext;
+    const host = createCodexNativeAppServerRuntimeHost({
+      request: { sessionId: 'session-1' } as AgentSessionOpenRequest,
+      context,
+      processEnv: {},
+    });
+
+    await expect(host.refreshRuntimeAuth?.({
+      serviceId: 'openai-codex',
+      reason: 'credential_expired',
+    })).resolves.toEqual({ status: 'refreshed' });
+    await expect(host.reportCapacityFailure?.({ kind: 'capacity_exhausted' }))
+      .resolves.toBeUndefined();
+
+    expect(refreshRuntimeAuth).toHaveBeenNthCalledWith(1, {
+      serviceId: 'openai-codex',
+      reason: 'credential_expired',
+    }, { signal: controller.signal });
+    expect(refreshRuntimeAuth).toHaveBeenNthCalledWith(2, {
+      serviceId: 'openai-codex',
+      targetId: 'session-1',
+      classification: { kind: 'capacity_exhausted' },
+      reason: 'provider_session_capacity_failure',
+    }, { signal: controller.signal });
+  });
+
+  it('binds app-server MCP elicitation to the common Session handle', () => {
+    const mcp = { elicit: vi.fn() };
+    const context = {
+      signal: new AbortController().signal,
+      services: {
+        logger: { debug: vi.fn() },
+        sessions: {
+          current: {
+            mcp,
+            media: { registerSourceRoot: vi.fn() },
+          },
+        },
+        connectedAccounts: createConnectedAccountsFixture(),
+      },
+      session: { id: 'session-1', services: {} },
+      ui: { title: { set: vi.fn(async () => undefined) } },
+    } as unknown as AgentSessionRuntimeContext;
+
+    const host = createCodexNativeAppServerRuntimeHost({
+      request: { sessionId: 'session-1' } as AgentSessionOpenRequest,
+      context,
+      processEnv: {},
+    });
+
+    expect(host.mcp).toBe(mcp);
+  });
+
+  it('preserves the canonical group-member account-usage source from the Session owner', async () => {
+    const source = Object.freeze({
       serviceId: 'openai-codex',
       profileId: 'profile-1',
       bindingKind: 'group_member' as const,
-    }));
+      groupId: 'group-1',
+    });
+    const resolveSourceContext = vi.fn(async () => source);
     const context = {
       signal: new AbortController().signal,
       services: {
@@ -586,7 +719,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
 
     await expect(host.accountUsage?.resolveSourceContext({
       serviceId: 'openai-codex',
-    })).rejects.toThrow();
+    })).resolves.toEqual(source);
   });
 
   it('passes the host-frozen raw MCP launch configuration to the native app-server runtime', async () => {

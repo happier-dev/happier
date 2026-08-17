@@ -2,7 +2,16 @@ import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import type {
+  ExecService,
+  PluginProcessResult,
+} from '@happier-dev/plugin-sdk/exec';
+import type {
+  PluginJsonRpcClient,
+  PluginProtocolClientHandle,
+} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import { createCodexExternalSessionsContribution } from './contribution.js';
 
@@ -10,19 +19,133 @@ function jsonl(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
+function processResult(stdout: string): PluginProcessResult {
+  return {
+    termination: {
+      observed: { kind: 'exit', exitCode: 0 },
+      requestedBy: { kind: 'none' },
+    },
+    stdout: new TextEncoder().encode(stdout),
+    stderr: new Uint8Array(),
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+}
+
+function createThreadListingExec(
+  requests: string[],
+  threads: readonly Readonly<{
+    id: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+    cwd: string;
+  }>[] = [{
+    id: '33333333-3333-3333-3333-333333333333',
+    name: 'Native app-server thread',
+    createdAt: 1_768_000_000,
+    updatedAt: 1_768_000_100,
+    cwd: '/repo/native',
+  }],
+): ExecService {
+  const never = new Promise<PluginProcessResult>(() => undefined);
+  const client: PluginJsonRpcClient = {
+    async request(method) {
+      requests.push(method);
+      if (method === 'thread/list') {
+        return { data: threads };
+      }
+      return {};
+    },
+    async notify() {},
+    onNotification: () => ({ dispose: () => undefined }),
+    onRequest: () => ({ dispose: () => undefined }),
+    dispose: async () => undefined,
+  };
+  const handle: PluginProtocolClientHandle<'jsonRpc'> = {
+    client,
+    process: {
+      pid: 123,
+      write: async () => undefined,
+      closeStdin: async () => undefined,
+      wait: () => never,
+      onOutput: () => ({ dispose: () => undefined }),
+      dispose: async () => undefined,
+    },
+    wait: () => never,
+    dispose: async () => undefined,
+  };
+  return {
+    agentCli: { checkReadiness: async () => ({ launchable: [] }) },
+    systemTools: {
+      resolve: async () => ({
+        executable: { kind: 'systemTool', id: 'codex-cli' },
+        executablePath: '/fixture/codex',
+      }),
+    },
+    run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => (
+      request.args?.[0] === '--version'
+        ? processResult('codex-cli 0.145.0\n')
+        : processResult('realtime_conversation                under development  false\n')
+    )),
+    spawn: vi.fn(async () => {
+      throw new Error('The native app-server path must use exec.clients.spawn');
+    }),
+    clients: {
+      spawn: async () => handle,
+    },
+  } as unknown as ExecService;
+}
+
+const emptyThreadListingExec = createThreadListingExec([], []);
+
 function invocation(overrides: Readonly<{
   signal?: AbortSignal;
   deadlineAtMs?: number;
   maxSerializedBytes?: number;
+  exec?: ExecService;
 }> = {}) {
   return {
     signal: overrides.signal ?? new AbortController().signal,
     deadlineAtMs: overrides.deadlineAtMs ?? Date.now() + 30_000,
     maxSerializedBytes: overrides.maxSerializedBytes ?? 64 * 1024,
+    exec: overrides.exec ?? emptyThreadListingExec,
   };
 }
 
 describe('Codex public Agent External Sessions contribution', () => {
+  it('uses the invocation ExecService to list native app-server threads', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-native-threads-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      await mkdir(codexHome, { recursive: true });
+      const requests: string[] = [];
+      const contribution = createCodexExternalSessionsContribution({
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        activeServerDir: join(root, 'active-server'),
+      });
+
+      await expect(contribution.listCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        maxItems: 10,
+        searchMode: 'full',
+        ...invocation({ exec: createThreadListingExec(requests) }),
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          candidates: [{
+            remoteSessionId: '33333333-3333-3333-3333-333333333333',
+            title: 'Native app-server thread',
+          }],
+        },
+      });
+
+      expect(requests.filter((method) => method === 'thread/list')).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['tail', 'a missing source'],
     [
@@ -48,6 +171,87 @@ describe('Codex public Agent External Sessions contribution', () => {
       })).resolves.toEqual({
         ok: true,
         value: { outcome: 'source_unavailable' },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns a typed failure instead of a cursor when a current rollout record is unsupported', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-unsupported-record-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const sessionsDir = join(codexHome, 'sessions', '2026', '07', '23');
+      const remoteSessionId = '11111111-1111-1111-1111-111111111111';
+      const rolloutPath = join(
+        sessionsDir,
+        `rollout-2026-07-23T08-00-00-${remoteSessionId}.jsonl`,
+      );
+      await mkdir(sessionsDir, { recursive: true });
+      await writeFile(rolloutPath, [
+        jsonl({
+          type: 'session_meta',
+          payload: { id: remoteSessionId, cwd: '/repo' },
+        }),
+        jsonl({ type: 'unsupported_record', payload: { ignored: true } }),
+      ].join(''), 'utf8');
+      const contribution = createCodexExternalSessionsContribution({
+        env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        activeServerDir: join(root, 'active-server'),
+      });
+      const source = { kind: 'codexHome', home: 'user', homePath: codexHome } as const;
+
+      await expect(contribution.pageTranscript({
+        source,
+        remoteSessionId,
+        direction: 'older',
+        maxItems: 20,
+        ...invocation(),
+      })).resolves.toMatchObject({
+        ok: false,
+        code: 'agent_error',
+        retryable: false,
+      });
+
+      await writeFile(rolloutPath, [
+        jsonl({
+          type: 'session_meta',
+          payload: { id: remoteSessionId, cwd: '/repo' },
+        }),
+        jsonl({
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'initial item' }],
+          },
+        }),
+      ].join(''), 'utf8');
+      const initial = await contribution.pageTranscript({
+        source,
+        remoteSessionId,
+        direction: 'older',
+        maxItems: 20,
+        ...invocation(),
+      });
+      if (!initial.ok || !initial.value.tailCursor) {
+        throw new Error('Expected a valid Codex transcript cursor');
+      }
+
+      await appendFile(rolloutPath, jsonl({
+        type: 'response_item',
+        payload: { type: 'unrecognized_current_shape' },
+      }));
+      await expect(contribution.readAfterTranscript({
+        source,
+        remoteSessionId,
+        cursor: initial.value.tailCursor,
+        maxItems: 20,
+        ...invocation(),
+      })).resolves.toMatchObject({
+        ok: false,
+        code: 'agent_error',
+        retryable: false,
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -98,6 +302,7 @@ describe('Codex public Agent External Sessions contribution', () => {
         ok: true,
         value: {
           source: { kind: 'codexHome', home: 'user', homePath: codexHome },
+          transcriptMediaReadRoots: [codexHome],
         },
       });
       if (!resolvedSource.ok) throw new Error('Expected resolved Codex source');
@@ -129,6 +334,24 @@ describe('Codex public Agent External Sessions contribution', () => {
         ...invocation(),
       });
       if (!firstCandidate.ok) throw new Error('Expected first Codex candidate');
+
+      const fullSearch = await contribution.listCandidates({
+        source: resolvedSource.value.source,
+        maxItems: 10,
+        searchTerm: 'first public message',
+        searchMode: 'full',
+        ...invocation(),
+      });
+      expect(fullSearch).toMatchObject({
+        ok: true,
+        value: {
+          candidates: [{ remoteSessionId: firstSessionId }],
+          nextCursor: null,
+        },
+      });
+      if (!fullSearch.ok) throw new Error('Expected complete Codex rollout search');
+      expect(fullSearch.value.searchIncomplete).toBeUndefined();
+
       const identity = await contribution.resolveLinkIdentity({
         source: resolvedSource.value.source,
         remoteSessionId: firstSessionId,
@@ -140,6 +363,7 @@ describe('Codex public Agent External Sessions contribution', () => {
         value: {
           source: { kind: 'codexHome', home: 'user', homePath: codexHome },
           remoteSessionId: firstSessionId,
+          transcriptMediaReadRoots: [codexHome],
           linkData: {
             source: { kind: 'codexHome', home: 'user', homePath: codexHome },
           },
@@ -166,8 +390,14 @@ describe('Codex public Agent External Sessions contribution', () => {
         expect.objectContaining({
           messageRole: 'agent',
           raw: {
-            type: 'message',
-            message: 'first public message',
+            role: 'agent',
+            content: {
+              type: 'codex',
+              data: {
+                type: 'message',
+                message: 'first public message',
+              },
+            },
           },
         }),
       ]));
@@ -199,8 +429,14 @@ describe('Codex public Agent External Sessions contribution', () => {
         id: expect.any(String),
         messageRole: 'agent',
         raw: {
-          type: 'message',
-          message: 'follow-up public message',
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'message',
+              message: 'follow-up public message',
+            },
+          },
         },
       });
       expect(after.value.items[0]?.id).not.toBe(page.value.items[0]?.id);

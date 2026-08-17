@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+  OauthCredentialRecord,
+  TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type {
   CodexActiveProviderAccount,
@@ -25,14 +28,14 @@ export type CodexUsageSubjectRef =
     }>;
 
 export type ResolveCodexUsageSubjectRefInput = Readonly<{
-  connectedServiceRecord?: ConnectedServiceCredentialRecordV1 | null;
+  connectedServiceRecord?: OauthCredentialRecord | TokenCredentialRecord | null;
   liveProviderAccount?: CodexActiveProviderAccount | null;
   authStoreProviderAccountIdProof?: CodexAuthStoreProviderAccountIdProof | null;
   provisionalDiscriminator?: string | null;
   accountLabel?: string | null;
 }>;
 
-function readProviderAccountId(record: ConnectedServiceCredentialRecordV1 | null | undefined): string | null {
+function readProviderAccountId(record: OauthCredentialRecord | TokenCredentialRecord | null | undefined): string | null {
   if (!record || record.kind !== 'oauth') return null;
   const value = record.oauth.providerAccountId;
   return typeof value === 'string' && value.trim() ? value.trim() : null;

@@ -1,13 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    SESSION_CONFIG_OPTIONS_STATE_KEY,
-    SESSION_MODELS_STATE_KEY,
-    SESSION_MODES_STATE_KEY,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-
-import {
-    buildCodexAppServerSessionControlsMetadataStates,
     readCodexAppServerSessionControls,
     resolveCodexAppServerCollaborationModeSelection,
 } from './controls';
@@ -51,30 +44,14 @@ describe('Codex app-server session controls', () => {
             currentModelId: 'gpt-5.5',
             currentServiceTier: 'fast',
         });
-        const states = buildCodexAppServerSessionControlsMetadataStates({
-            snapshot,
-            provider: 'codex',
-            updatedAt: 123,
-            currentModeId: 'plan',
-            currentModelId: 'gpt-5.5',
-        });
-
         expect(client.request).toHaveBeenCalledWith('collaborationMode/list', {});
         expect(client.request).toHaveBeenCalledWith('model/list', {});
-        expect(states.sessionModesState).toEqual({
-            v: 1,
-            provider: 'codex',
-            updatedAt: 123,
-            currentModeId: 'plan',
+        expect(snapshot).toEqual({
             availableModes: [
                 { id: 'plan', name: 'Plan', description: 'Think first' },
                 { id: 'default', name: 'Default' },
             ],
-        });
-        expect(states.sessionModelsState).toEqual({
-            v: 1,
-            provider: 'codex',
-            updatedAt: 123,
+            currentModeId: 'plan',
             currentModelId: 'gpt-5.5',
             availableModels: [
                 {
@@ -104,56 +81,7 @@ describe('Codex app-server session controls', () => {
                     ],
                 },
             ],
-        });
-        expect(states.sessionConfigOptionsState).toEqual({
-            v: 1,
-            provider: 'codex',
-            updatedAt: 123,
             configOptions: [],
-        });
-    });
-
-    it('preserves last-known-good controls when list endpoints return no usable items', () => {
-        const metadataSnapshot = {
-            [SESSION_MODES_STATE_KEY]: {
-                v: 1,
-                provider: 'codex',
-                updatedAt: 1,
-                currentModeId: 'default',
-                availableModes: [{ id: 'default', name: 'Default' }],
-            },
-            [SESSION_MODELS_STATE_KEY]: {
-                v: 1,
-                provider: 'codex',
-                updatedAt: 1,
-                currentModelId: 'gpt-5.5',
-                availableModels: [{ id: 'gpt-5.5', name: 'GPT 5.5' }],
-            },
-            [SESSION_CONFIG_OPTIONS_STATE_KEY]: {
-                v: 1,
-                provider: 'codex',
-                updatedAt: 1,
-                configOptions: [{ id: 'service_tier', name: 'Speed', type: 'select', currentValue: 'fast' }],
-            },
-        };
-
-        const states = buildCodexAppServerSessionControlsMetadataStates({
-            metadataSnapshot,
-            snapshot: {
-                availableModes: [],
-                currentModeId: null,
-                availableModels: [],
-                currentModelId: null,
-                configOptions: [],
-            },
-            provider: 'codex',
-            updatedAt: 456,
-        });
-
-        expect(states).toEqual({
-            sessionModesState: metadataSnapshot[SESSION_MODES_STATE_KEY],
-            sessionModelsState: metadataSnapshot[SESSION_MODELS_STATE_KEY],
-            sessionConfigOptionsState: metadataSnapshot[SESSION_CONFIG_OPTIONS_STATE_KEY],
         });
     });
 

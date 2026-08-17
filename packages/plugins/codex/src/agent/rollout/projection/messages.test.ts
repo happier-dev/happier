@@ -4,6 +4,23 @@ import { projectCodexRolloutActions } from './messages.js';
 import type { CodexRolloutAction } from './actions.js';
 
 describe('projectCodexRolloutActions', () => {
+    it('preserves the authoritative tool-result error bit', () => {
+        const actions: CodexRolloutAction[] = [{
+            type: 'tool-result',
+            callId: 'call-1',
+            output: { body: 'failed', success: false },
+            isError: true,
+        }];
+
+        expect(projectCodexRolloutActions(actions, { sidechainId: null })).toEqual([{
+            type: 'tool-result',
+            callId: 'call-1',
+            output: { body: 'failed', success: false },
+            sidechainId: null,
+            isError: true,
+        }]);
+    });
+
     it('projects subagent lifecycle as subagent facts rather than synthetic transcript tools', () => {
         const actions: CodexRolloutAction[] = [
             {

@@ -2,7 +2,7 @@ import type {
   AgentSessionRealtimeHandle,
   AgentSessionRealtimeLifecycleEvent,
   AgentSessionRealtimeStartResult,
-} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRealtimeStartRequestV1Schema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -585,7 +585,7 @@ describe('Codex app-server realtime V3 adapter', () => {
       inspect: async () => {
         const fixture = createClientFixture({
           advertised: true,
-          codexCliVersion: '0.145.1',
+          codexCliVersion: '0.146.1',
           versionSupported: false,
           request: async () => {
             throw new Error('feature inspection must not run for an unvalidated runtime');
@@ -1268,6 +1268,33 @@ describe('Codex app-server realtime V3 adapter', () => {
     }
   });
 
+  it('accepts a healthy realtime negotiation that settles after the generic 15s RPC budget', async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = createClientFixture();
+      const conversation = createCodexAppServerRealtimeConversation({
+        getClient: async () => fixture.client,
+        getThreadId: () => 'thread-1',
+        isDisposed: () => false,
+        isRuntimeExited: fixture.isExited,
+      });
+      const startPromise = conversation.start({
+        transport: { kind: 'webrtc', offerSdp: 'offer' },
+      });
+      await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
+        'thread/realtime/start',
+        expect.any(Object),
+      ));
+
+      await vi.advanceTimersByTimeAsync(17_118);
+      const started = await settleSuccessfulStart(fixture, startPromise);
+
+      expect(started.transport.answerSdp).toBe('v=0\r\nanswer');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps a spontaneous close terminally fenced until app-server process replacement', async () => {
     const fixture = createClientFixture();
     const conversation = createConversation(fixture);
@@ -1365,6 +1392,10 @@ describe('Codex app-server realtime V3 adapter', () => {
     fixture.publish('thread/realtime/sdp', {
       threadId: 'thread-1',
       sdp: 'stale-after-replacement',
+    });
+    fixture.publish('thread/realtime/error', {
+      threadId: 'thread-1',
+      message: 'stale error after replacement',
     });
     await expect(Promise.race([
       replacementStart.then(() => 'settled'),

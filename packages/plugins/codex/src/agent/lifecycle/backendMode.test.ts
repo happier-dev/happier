@@ -81,26 +81,13 @@ describe('resolveCodexBackendModeForRun', () => {
 describe('resolveCodexSessionBackendMode', () => {
   it('defaults configured Codex sessions to app-server', () => {
     expect(resolveCodexSessionBackendMode({
-      metadata: null,
       accountSettings: null,
     })).toBe('appServer');
   });
 
-  it('prefers persisted canonical Codex runtime identity over account settings', () => {
+  it('uses the typed configured runtime mode supplied by the host', () => {
     expect(resolveCodexSessionBackendMode({
-      metadata: {
-        codexBackendMode: 'acp',
-      },
-      accountSettings: { codexBackendMode: 'appServer' },
+      accountSettings: { codexBackendMode: 'acp' },
     })).toBe('acp');
-  });
-
-  it('does not treat persisted legacy mcp runtime identity as app-server control support', () => {
-    expect(resolveCodexSessionBackendMode({
-      metadata: {
-        codexBackendMode: 'mcp',
-      },
-      accountSettings: { codexBackendMode: 'appServer' },
-    })).toBeNull();
   });
 });

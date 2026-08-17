@@ -1,20 +1,13 @@
 import type {
-  AgentExternalSessionCandidate,
   AgentExternalSessionLinkData,
-  AgentExternalSessionLinkDataValue,
   AgentExternalSessionSource,
-  AgentExternalSessionTranscriptItem,
   AgentExternalSessionsContribution,
   AgentExternalSessionsFailureCode,
   AgentExternalSessionsInvocation,
   AgentExternalSessionsReadAfterTranscriptResult,
   AgentExternalSessionsResult,
   AgentExternalSessionsTranscriptPage,
-  ExternalSessionsSource,
-  RuntimeDescriptorV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
-import { resolveTranscriptBodySessionMessageRole } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
   resolveConfiguredCodexHomePath,
@@ -24,15 +17,28 @@ import {
   CodexExternalSessionCandidateSourceChangedError,
   listCodexSessionCandidates,
 } from './candidateSource.js';
-import { resolveCodexExternalSessionLinkIdentity } from './identity.js';
+import {
+  resolveCodexExternalSessionLinkIdentity,
+  type CodexExternalSessionLinkIdentity,
+} from './identity.js';
 import {
   inferCodexExternalSessionsActiveServerDir,
   validateCodexExternalSessionsSourcePolicy,
 } from './sourceValidation.js';
 import {
+  CodexExternalSessionUnsupportedRolloutRecordError,
   pageCodexExternalSessionTranscript,
   readAfterCodexExternalSessionTranscript,
 } from './transcriptSource.js';
+import {
+  isCodexExternalSessionLinkDataValue,
+  projectAgentExternalSessionSourceToCodex,
+  projectCodexExternalSessionCandidateToAgent,
+  projectCodexExternalSessionSourceToAgent,
+  projectCodexExternalSessionTranscriptPageToAgent,
+  type CodexExternalSessionSource,
+  type CodexExternalSessionTranscriptSourcePage,
+} from './models.js';
 
 function ok<T>(value: T): AgentExternalSessionsResult<T> {
   return { ok: true, value };
@@ -70,105 +76,34 @@ function isSafeConnectedServiceId(raw: unknown): raw is string {
   return typeof raw === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(raw.trim());
 }
 
-function readOptionalString(value: AgentExternalSessionLinkDataValue | undefined): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function toLegacyCodexSource(source: AgentExternalSessionSource): ExternalSessionsSource | null {
-  if (source.kind !== 'codexHome') return null;
-  const home = source.home;
-  if (home !== 'user' && home !== 'connectedService') return null;
-  const homePath = readOptionalString(source.homePath);
-  const connectedServiceId = readOptionalString(source.connectedServiceId);
-  const connectedServiceProfileId = readOptionalString(source.connectedServiceProfileId);
-  const connectedServiceGroupId = readOptionalString(source.connectedServiceGroupId);
-  return {
-    kind: 'codexHome',
-    home,
-    ...(homePath ? { homePath } : {}),
-    ...(connectedServiceId ? { connectedServiceId } : {}),
-    ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
-    ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
-  };
-}
-
-function toPublicCodexSource(source: unknown): AgentExternalSessionSource | null {
-  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
-  const sourceRecord = source as Readonly<Record<string, unknown>>;
-  if (sourceRecord.kind !== 'codexHome') return null;
-  const home = sourceRecord.home;
-  if (home !== 'user' && home !== 'connectedService') return null;
-  const homePath = typeof sourceRecord.homePath === 'string' ? sourceRecord.homePath.trim() : '';
-  const connectedServiceId = typeof sourceRecord.connectedServiceId === 'string'
-    ? sourceRecord.connectedServiceId.trim()
-    : '';
-  const connectedServiceProfileId = typeof sourceRecord.connectedServiceProfileId === 'string'
-    ? sourceRecord.connectedServiceProfileId.trim()
-    : '';
-  const connectedServiceGroupId = typeof sourceRecord.connectedServiceGroupId === 'string'
-    ? sourceRecord.connectedServiceGroupId.trim()
-    : '';
-  return {
-    kind: 'codexHome',
-    home,
-    ...(homePath ? { homePath } : {}),
-    ...(connectedServiceId ? { connectedServiceId } : {}),
-    ...(connectedServiceProfileId ? { connectedServiceProfileId } : {}),
-    ...(connectedServiceGroupId ? { connectedServiceGroupId } : {}),
-  };
-}
-
 function validateSource(params: Readonly<{
-  source: AgentExternalSessionSource;
+  source: unknown;
   env: NodeJS.ProcessEnv;
 }>): AgentExternalSessionsResult<Readonly<{
-  legacySource: ExternalSessionsSource;
+  codexSource: CodexExternalSessionSource;
   publicSource: AgentExternalSessionSource;
 }>> {
-  const legacySource = toLegacyCodexSource(params.source);
-  if (!legacySource) return failed('source_invalid', 'provider/source mismatch');
-  const canonicalRequestedHomePath = typeof legacySource.homePath === 'string'
-    ? legacySource.homePath.trim() || null
+  const codexSource = projectAgentExternalSessionSourceToCodex(params.source);
+  if (!codexSource) return failed('source_invalid', 'provider/source mismatch');
+  const canonicalRequestedHomePath = typeof codexSource.homePath === 'string'
+    ? codexSource.homePath.trim() || null
     : null;
   const validation = validateCodexExternalSessionsSourcePolicy({
-    source: legacySource,
+    source: codexSource,
     configuredCodexHomePath: resolveConfiguredCodexHomePath(params.env),
     canonicalRequestedHomePath,
     isSafeConnectedServiceId,
   });
   if (!validation.ok) return failed('source_invalid', validation.error);
-  const publicSource = toPublicCodexSource(validation.source);
-  return publicSource
-    ? ok({ legacySource: validation.source, publicSource })
-    : failed('source_invalid', 'provider/source mismatch');
+  return ok({
+    codexSource: validation.source,
+    publicSource: projectCodexExternalSessionSourceToAgent(validation.source),
+  });
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function isLinkDataValue(
-  value: unknown,
-  ancestors: ReadonlySet<object>,
-): value is AgentExternalSessionLinkDataValue {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
-  if (typeof value === 'number') return Number.isFinite(value);
-  if (typeof value !== 'object') return false;
-  if (ancestors.has(value)) return false;
-  const nextAncestors = new Set(ancestors).add(value);
-  if (Array.isArray(value)) {
-    return value.every((entry) => isLinkDataValue(entry, nextAncestors));
-  }
-  if (!isPlainObject(value) || Reflect.ownKeys(value).some((key) => typeof key !== 'string')) return false;
-  return Object.values(value).every((entry) => isLinkDataValue(entry, nextAncestors));
-}
-
-function isLinkData(value: unknown): value is AgentExternalSessionLinkData {
-  return isPlainObject(value)
-    && Reflect.ownKeys(value).every((key) => typeof key === 'string')
-    && Object.values(value).every((entry) => isLinkDataValue(entry, new Set([value])));
+function transcriptMediaReadRootsFor(source: CodexExternalSessionSource): readonly string[] {
+  const homePath = typeof source.homePath === 'string' ? source.homePath.trim() : '';
+  return homePath ? [homePath] : [];
 }
 
 function serializedByteLength(value: unknown): number {
@@ -190,102 +125,18 @@ function bounded<T>(
     : failed('invalid_request', message);
 }
 
-function mapCandidate(candidate: Readonly<{
-  remoteSessionId: string;
-  title?: string | null;
-  updatedAtMs: number;
-  createdAtMs?: number;
-  archived?: boolean;
-  details?: unknown;
-}>): AgentExternalSessionCandidate {
-  const details = isPlainObject(candidate.details) ? candidate.details : null;
-  const source = details ? toPublicCodexSource(details.source) : null;
-  const linkData: Record<string, AgentExternalSessionLinkDataValue> = {};
-  if (source) linkData.source = source;
-  if (isLinkDataValue(details?.runtimeDescriptorV1, new Set())) {
-    linkData.runtimeDescriptorV1 = details.runtimeDescriptorV1;
-  }
-  const codexBackendMode = typeof details?.codexBackendMode === 'string'
-    ? details.codexBackendMode.trim()
-    : '';
-  if (codexBackendMode) linkData.codexBackendMode = codexBackendMode;
-  return {
-    remoteSessionId: candidate.remoteSessionId,
-    ...(candidate.title ? { title: candidate.title } : {}),
-    updatedAtMs: candidate.updatedAtMs,
-    ...(candidate.createdAtMs !== undefined ? { createdAtMs: candidate.createdAtMs } : {}),
-    ...(candidate.archived !== undefined ? { archived: candidate.archived } : {}),
-    ...(Object.keys(linkData).length > 0 ? { linkData } : {}),
-  };
-}
-
-function mapTranscriptItem(item: Readonly<{
-  id: string;
-  createdAtMs: number;
-  localId?: string | null;
-  messageRole?: AgentExternalSessionTranscriptItem['messageRole'];
-  raw: unknown;
-}>): AgentExternalSessionTranscriptItem | null {
-  if (!isPlainObject(item.raw) || !isLinkData(item.raw)) return null;
-  const rawRole = item.raw.role;
-  const content = item.raw.content;
-  if (!isPlainObject(content) || !isLinkData(content)) return null;
-  const codexData = content.type === 'codex' ? content.data : null;
-  const raw = isPlainObject(codexData) && isLinkData(codexData)
-    ? codexData
-    : content;
-  const derivedRole = isPlainObject(codexData)
-    ? resolveTranscriptBodySessionMessageRole({
-      protocol: 'codex',
-      body: codexData,
-    })
-    : rawRole === 'user' || rawRole === 'agent' || rawRole === 'event'
-      ? rawRole
-      : 'unknown';
-  const messageRole = isPlainObject(codexData)
-    ? derivedRole
-    : item.messageRole ?? derivedRole;
-  if (messageRole === null || messageRole === 'unknown') return null;
-  return {
-    id: item.id,
-    createdAtMs: item.createdAtMs,
-    ...(item.localId !== undefined ? { localId: item.localId } : {}),
-    messageRole,
-    raw,
-  };
-}
-
-function mapTranscriptPage(page: Readonly<{
-  items: readonly Readonly<{
-    id: string;
-    createdAtMs: number;
-    localId?: string | null;
-    messageRole?: AgentExternalSessionTranscriptItem['messageRole'];
-    raw: unknown;
-  }>[];
-  nextCursor: string | null;
-  tailCursor?: string | null;
-  hasMore?: boolean;
-  truncated?: boolean;
-}>): AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage> {
-  const items = page.items.map(mapTranscriptItem);
-  if (items.some((item) => item === null)) {
+function mapTranscriptPage(
+  page: CodexExternalSessionTranscriptSourcePage,
+): AgentExternalSessionsResult<AgentExternalSessionsTranscriptPage> {
+  const projected = projectCodexExternalSessionTranscriptPageToAgent(page);
+  if (!projected) {
     return failed('agent_error', 'Codex produced a transcript item outside the public JSON contract.');
   }
-  return ok({
-    items: items.filter((item): item is AgentExternalSessionTranscriptItem => item !== null),
-    nextCursor: page.nextCursor,
-    ...(page.tailCursor !== undefined ? { tailCursor: page.tailCursor } : {}),
-    ...(page.hasMore !== undefined ? { hasMore: page.hasMore } : {}),
-    ...(page.truncated !== undefined ? { truncated: page.truncated } : {}),
-  });
+  return ok(projected);
 }
 
 function mapReadAfterPage(
-  page: Parameters<typeof mapTranscriptPage>[0] & Readonly<{
-    readAfterOutcome?: 'already_current' | 'gap_or_cursor_expired' | 'source_replaced' | 'source_unavailable';
-    diagnostics?: readonly Readonly<{ code: string; count: number; positions: readonly number[] }>[];
-  }>,
+  page: CodexExternalSessionTranscriptSourcePage,
 ): AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult> {
   if (page.readAfterOutcome) return ok({ outcome: page.readAfterOutcome });
   const mapped = mapTranscriptPage(page);
@@ -312,26 +163,22 @@ function mapReadAfterPage(
   });
 }
 
-function readLinkSource(linkData: AgentExternalSessionLinkData | undefined): AgentExternalSessionSource | null {
-  const source = linkData?.source;
-  if (!isPlainObject(source) || typeof source.kind !== 'string' || source.kind.trim().length === 0) return null;
-  return isLinkData(source) ? { ...source, kind: source.kind } : null;
+function readLinkSource(linkData: AgentExternalSessionLinkData | undefined): CodexExternalSessionSource | null {
+  return projectAgentExternalSessionSourceToCodex(linkData?.source);
 }
 
-function readRuntimeDescriptor(linkData: AgentExternalSessionLinkData | undefined): RuntimeDescriptorV1 | null {
-  return readRuntimeDescriptorV1FromMetadata({
-    runtimeDescriptorV1: linkData?.runtimeDescriptorV1,
-  });
+function readRuntimeDescriptor(linkData: AgentExternalSessionLinkData | undefined): unknown {
+  return linkData?.runtimeDescriptorV1;
 }
 
 function buildIdentityLinkData(params: Readonly<{
   source: AgentExternalSessionSource;
-  runtimeDescriptor?: RuntimeDescriptorV1 | null;
+  runtimeDescriptor?: CodexExternalSessionLinkIdentity['runtimeDescriptor'];
   codexBackendMode?: string | null;
 }>): AgentExternalSessionLinkData {
   return {
     source: params.source,
-    ...(params.runtimeDescriptor && isLinkDataValue(params.runtimeDescriptor, new Set())
+    ...(params.runtimeDescriptor && isCodexExternalSessionLinkDataValue(params.runtimeDescriptor, new Set())
       ? { runtimeDescriptorV1: params.runtimeDescriptor }
       : {}),
     ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
@@ -373,18 +220,18 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
     }
     const identity = resolveCodexExternalSessionLinkIdentity({
       remoteSessionId,
-      source: validation.value.legacySource,
+      source: validation.value.codexSource,
       runtimeDescriptor: readRuntimeDescriptor(request.linkData),
       ...(codexBackendMode ? { metadata: { codexBackendMode } } : {}),
     });
-    const source = toPublicCodexSource(identity.source);
-    if (!source) return failed('source_invalid', 'Codex identity resolved an invalid source.');
+    const source = projectCodexExternalSessionSourceToAgent(identity.source);
     const identityBackendMode = typeof identity.externalSessionMetadata?.codexBackendMode === 'string'
       ? identity.externalSessionMetadata.codexBackendMode
       : null;
     return bounded({
       source,
       remoteSessionId: identity.remoteSessionId,
+      transcriptMediaReadRoots: transcriptMediaReadRootsFor(identity.source),
       linkData: buildIdentityLinkData({
         source,
         runtimeDescriptor: identity.runtimeDescriptor,
@@ -400,7 +247,10 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       const validation = validateSource({ source: request.source, env: readEnv() });
       if (!validation.ok) return validation;
       return bounded(
-        { source: validation.value.publicSource },
+        {
+          source: validation.value.publicSource,
+          transcriptMediaReadRoots: transcriptMediaReadRootsFor(validation.value.codexSource),
+        },
         request.maxSerializedBytes,
         'Codex source result cannot fit the result byte bound.',
       );
@@ -417,20 +267,24 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       if (!validation.ok) return validation;
       try {
         const listed = await listCodexSessionCandidates({
-          source: validation.value.legacySource,
+          source: validation.value.codexSource,
           activeServerDir: activeServerDirFor(validation.value.publicSource),
           env,
           cursor: request.cursor,
           limit: request.maxItems,
           searchTerm: request.searchTerm,
           searchMode: request.searchMode,
+          signal: request.signal,
+          deadlineAtMs: request.deadlineAtMs,
+          exec: request.exec,
         });
         const after = invocationFailure(request);
         if (after) return after;
         return bounded({
-          candidates: listed.candidates.map(mapCandidate),
+          candidates: listed.candidates.map(projectCodexExternalSessionCandidateToAgent),
           nextCursor: listed.nextCursor,
           ...(listed.searchIncomplete !== undefined ? { searchIncomplete: listed.searchIncomplete } : {}),
+          ...(listed.preparation !== undefined ? { preparation: listed.preparation } : {}),
         }, request.maxSerializedBytes, 'Codex candidate page cannot fit the result byte bound.');
       } catch (error) {
         const after = invocationFailure(request);
@@ -465,7 +319,7 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       if (!validation.ok) return validation;
       try {
         const page = await pageCodexExternalSessionTranscript({
-          source: validation.value.legacySource,
+          source: validation.value.codexSource,
           activeServerDir: activeServerDirFor(validation.value.publicSource),
           env,
           remoteSessionId: request.remoteSessionId,
@@ -473,6 +327,8 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
           cursor: request.cursor,
           maxBytes: request.maxSerializedBytes,
           maxItems: request.maxItems,
+          signal: request.signal,
+          deadlineAtMs: request.deadlineAtMs,
         });
         const after = invocationFailure(request);
         if (after) return after;
@@ -483,6 +339,9 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;
+        if (error instanceof CodexExternalSessionUnsupportedRolloutRecordError) {
+          return failed('agent_error', error.message, false);
+        }
         return failed(
           'agent_unavailable',
           error instanceof Error ? error.message : 'Codex external-session transcript operation failed.',
@@ -502,13 +361,15 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       if (!validation.ok) return validation;
       try {
         const page = await readAfterCodexExternalSessionTranscript({
-          source: validation.value.legacySource,
+          source: validation.value.codexSource,
           activeServerDir: activeServerDirFor(validation.value.publicSource),
           env,
           remoteSessionId: request.remoteSessionId,
           cursor: request.cursor,
           maxBytes: request.maxSerializedBytes,
           maxItems: request.maxItems,
+          signal: request.signal,
+          deadlineAtMs: request.deadlineAtMs,
         });
         const after = invocationFailure(request);
         if (after) return after;
@@ -519,6 +380,9 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
       } catch (error) {
         const after = invocationFailure(request);
         if (after) return after;
+        if (error instanceof CodexExternalSessionUnsupportedRolloutRecordError) {
+          return failed('agent_error', error.message, false);
+        }
         return ok({ outcome: 'read_failed' });
       }
     },
@@ -526,4 +390,4 @@ export function createCodexExternalSessionsContribution(params: Readonly<{
   });
 }
 
-export const codexExternalSessionsContribution = createCodexExternalSessionsContribution();
+export const codexExternalSessionsContribution: AgentExternalSessionsContribution = createCodexExternalSessionsContribution();

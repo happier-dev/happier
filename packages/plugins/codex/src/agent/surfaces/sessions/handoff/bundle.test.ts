@@ -47,8 +47,16 @@ describe('codex session handoff bundle', () => {
 
     expect(result.agentId).toBe('codex');
     expect(result.remoteSessionId).toBe('thread_1');
-    expect(result.affinity).toEqual({
+    expect(result.affinity).toMatchObject({
       backendMode: 'appServer',
+      runtimeDescriptor: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'thread_1',
+        },
+      },
     });
     expect(result.files).toEqual([
       {
@@ -112,7 +120,7 @@ describe('codex session handoff bundle', () => {
     });
   });
 
-  it('exports rollout files from the linked connected-service codex home instead of the current CODEX_HOME', async () => {
+  it('exports rollout files from the typed linked connected-service Codex home', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-connected-'));
     const userCodexHome = join(root, 'user-codex-home');
     const connectedCodexHome = join(
@@ -138,17 +146,10 @@ describe('codex session handoff bundle', () => {
         path: '/repo',
         codexSessionId: 'thread_connected',
         codexBackendMode: 'appServer',
-        directSessionV1: {
-          v: 1,
-          providerId: 'codex',
-          machineId: 'machine_1',
-          remoteSessionId: 'thread_connected',
-          source: {
-            kind: 'codexHome',
-            home: 'connectedService',
-            connectedServiceId: 'openai-codex',
-          },
-          linkedAtMs: 1,
+        externalSessionSource: {
+          kind: 'codexHome',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
         },
       },
       remoteSessionId: 'thread_connected',
@@ -164,17 +165,25 @@ describe('codex session handoff bundle', () => {
         contentBase64: Buffer.from('{"event":"hello-connected"}\n', 'utf8').toString('base64'),
       },
     ]);
-    expect(result.affinity).toEqual({
+    expect(result.affinity).toMatchObject({
       backendMode: 'appServer',
-      source: {
-        kind: 'codexHome',
-        home: 'connectedService',
-        connectedServiceId: 'openai-codex',
+      runtimeDescriptor: {
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'thread_connected',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+        },
       },
+    });
+    expect(result.affinity?.source).toEqual({
+      kind: 'codexHome',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
     });
   });
 
-  it('exports the canonical codex runtime descriptor when present', async () => {
+  it('rebuilds a sanitized Codex runtime descriptor from the typed handoff metadata', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-runtime-'));
     const rolloutDir = join(codexHome, 'sessions', '2026', '03', '08');
     await mkdir(rolloutDir, { recursive: true });
@@ -210,9 +219,6 @@ describe('codex session handoff bundle', () => {
       agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_runtime',
-        home: 'connectedService',
-        connectedServiceId: 'openai-codex',
-        connectedServiceGroupId: 'group-1',
         agentExtra: {
           owner: 'codex',
           schemaId: 'codex.agentRuntimeDescriptorExtra',
@@ -222,7 +228,7 @@ describe('codex session handoff bundle', () => {
     });
   });
 
-  it('uses codex runtime descriptor source affinity for persisted handoff export when externalSessionV1 is absent', async () => {
+  it('ignores cast-injected raw runtime descriptor metadata at the plugin boundary', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-runtime-source-'));
     const userCodexHome = join(root, 'user-codex-home');
     const connectedCodexHome = join(
@@ -237,10 +243,10 @@ describe('codex session handoff bundle', () => {
       'codex',
       'codex-home',
     );
-    const rolloutDir = join(connectedCodexHome, 'sessions', '2026', '03', '08');
-    await mkdir(userCodexHome, { recursive: true });
-    await mkdir(rolloutDir, { recursive: true });
-    await writeFile(join(rolloutDir, 'rollout-2026-03-08T10-00-00-thread_runtime_only.jsonl'), '{"event":"hello-runtime-source"}\n', 'utf8');
+    const userRolloutDir = join(userCodexHome, 'sessions', '2026', '03', '08');
+    await mkdir(userRolloutDir, { recursive: true });
+    await mkdir(connectedCodexHome, { recursive: true });
+    await writeFile(join(userRolloutDir, 'rollout-2026-03-08T10-00-00-thread_runtime_only.jsonl'), '{"event":"hello-runtime-source"}\n', 'utf8');
 
     const result = await exportCodexSessionBundle({
       metadata: {
@@ -268,27 +274,24 @@ describe('codex session handoff bundle', () => {
       activeServerDir: join(root, 'servers', 'cloud'),
     });
 
-    expect(result.files).toEqual([
-      {
-        relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_runtime_only.jsonl',
-        contentBase64: Buffer.from('{"event":"hello-runtime-source"}\n', 'utf8').toString('base64'),
+    expect(result.affinity?.source).toBeUndefined();
+    expect(result.affinity?.runtimeDescriptor).toMatchObject({
+      agent: {
+        backendMode: 'appServer',
+        providerSessionId: 'thread_runtime_only',
       },
-    ]);
-    expect(result.affinity?.source).toEqual({
-      kind: 'codexHome',
-      home: 'connectedService',
-      connectedServiceId: 'openai-codex',
-      connectedServiceProfileId: 'profile-1',
-      connectedServiceGroupId: 'group-1',
+    });
+    expect(result.affinity?.runtimeDescriptor).not.toMatchObject({
+      agent: { home: 'connectedService' },
     });
   });
 
-  it('does not export machine-specific codex homePath affinity in the bundle', async () => {
+  it('does not export machine-specific typed Codex source home paths', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-export-homepath-'));
     const userCodexHome = join(root, 'user-codex-home');
     const sourceCodexHome = join(root, 'source-machine-codex-home');
-    const rolloutDir = join(sourceCodexHome, 'sessions', '2026', '03', '08');
-    await mkdir(userCodexHome, { recursive: true });
+    const rolloutDir = join(userCodexHome, 'sessions', '2026', '03', '08');
+    await mkdir(sourceCodexHome, { recursive: true });
     await mkdir(rolloutDir, { recursive: true });
     await writeFile(join(rolloutDir, 'rollout-2026-03-08T10-00-00-thread_homepath.jsonl'), '{"event":"hello-homepath"}\n', 'utf8');
 
@@ -297,27 +300,10 @@ describe('codex session handoff bundle', () => {
         path: '/repo',
         codexSessionId: 'thread_homepath',
         codexBackendMode: 'appServer',
-        externalSessionV1: {
-          v: 1,
-          agentId: 'codex',
-          machineId: 'machine_1',
-          remoteSessionId: 'thread_homepath',
-          source: {
-            kind: 'codexHome',
-            home: 'user',
-            homePath: sourceCodexHome,
-          },
-          linkedAtMs: 1,
-        },
-        agentRuntimeDescriptorV1: {
-          v: 1,
-          agentId: 'codex',
-          agent: {
-            backendMode: 'appServer',
-            providerSessionId: 'thread_homepath',
-            home: 'user',
-            homePath: sourceCodexHome,
-          },
+        externalSessionSource: {
+          kind: 'codexHome',
+          home: 'user',
+          homePath: sourceCodexHome,
         },
       },
       remoteSessionId: 'thread_homepath',
@@ -327,10 +313,7 @@ describe('codex session handoff bundle', () => {
       activeServerDir: join(root, 'servers', 'cloud'),
     });
 
-    expect(result.affinity?.source).toEqual({
-      kind: 'codexHome',
-      home: 'user',
-    });
+    expect(result.affinity?.source).toEqual({ kind: 'codexHome', home: 'user' });
     const exportedHomePath = (result.affinity?.runtimeDescriptor?.provider as unknown as { homePath?: unknown } | undefined)?.homePath;
     expect(typeof exportedHomePath).not.toBe('string');
     expect(exportedHomePath ?? null).toBeNull();
@@ -368,14 +351,10 @@ describe('codex session handoff bundle', () => {
     });
     expect(result.resume).toEqual({
       directory: targetPath,
-      agent: 'codex',
-      resume: 'thread_1',
       environmentVariables: {
         CODEX_HOME: codexHome,
       },
-      transcriptStorage: 'direct',
-      approvedNewDirectoryCreation: true,
-      codexBackendMode: 'appServer',
+      resumePlanOptions: { codexBackendMode: 'appServer' },
     });
 
     const importedPath = join(codexHome, 'sessions', '2026', '03', '08', 'rollout-2026-03-08T10-00-00-thread_1.jsonl');
@@ -746,7 +725,7 @@ describe('codex session handoff bundle', () => {
     });
   });
 
-  it('supports persisted resume plans when the handoff keeps persisted transcript storage', async () => {
+  it('returns author-safe launch hints for imported sessions', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-persisted-'));
     const targetPath = join(tmpdir(), 'repo-target-persisted');
 
@@ -768,19 +747,14 @@ describe('codex session handoff bundle', () => {
       env: {
         CODEX_HOME: codexHome,
       },
-      sessionStorageMode: 'persisted',
     });
 
     expect(result.resume).toMatchObject({
       directory: targetPath,
-      agent: 'codex',
-      resume: 'thread_2',
       environmentVariables: {
         CODEX_HOME: codexHome,
       },
-      transcriptStorage: 'persisted',
-      approvedNewDirectoryCreation: true,
-      codexBackendMode: 'appServer',
+      resumePlanOptions: { codexBackendMode: 'appServer' },
     });
   });
 
@@ -809,7 +783,7 @@ describe('codex session handoff bundle', () => {
     });
 
     expect(result.resume).toMatchObject({
-      codexBackendMode: 'acp',
+      resumePlanOptions: { codexBackendMode: 'acp' },
     });
   });
 
@@ -908,7 +882,7 @@ describe('codex session handoff bundle', () => {
     });
 
     expect(result.resume).toMatchObject({
-      codexBackendMode: 'appServer',
+      resumePlanOptions: { codexBackendMode: 'appServer' },
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
@@ -948,7 +922,7 @@ describe('codex session handoff bundle', () => {
     });
 
     expect(result.resume).toMatchObject({
-      codexBackendMode: 'appServer',
+      resumePlanOptions: { codexBackendMode: 'appServer' },
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
       agentId: 'codex',

@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 
 import type {
   AgentExternalSessionsResolvedIdentity,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+} from '@happier-dev/plugin-sdk/sessions/external';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fsBoundary = vi.hoisted(() => ({

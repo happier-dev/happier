@@ -1,30 +1,111 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { CodexRuntimeFetch as FetchRuntimeServiceV1 } from '../runtimeFetch.js';
-import { ConnectedServiceQuotaSnapshotV1Schema, buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import {
   createOpenAiCodexQuotaFetcher,
   openAiCodexQuotaFetcherDescriptor,
+  parseOpenAiCodexConnectedAccountQuotaLimits,
 } from './openaiFetcher.js';
 
+function jsonResponse(value: unknown): Awaited<ReturnType<HttpService['request']>> {
+  return {
+    status: 200,
+    finalUrl: 'https://chatgpt.com/backend-api/wham/usage',
+    headers: {},
+    body: new TextEncoder().encode(JSON.stringify(value)),
+  };
+}
+
+function systemJsonResponse(value: unknown, init?: ResponseInit): Response {
+  return new Response(JSON.stringify(value), {
+    status: init?.status ?? 200,
+    statusText: init?.statusText,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 describe('createOpenAiCodexQuotaFetcher', () => {
+  it('uses the published numeric-epoch threshold for a numeric quota reset', () => {
+    expect(parseOpenAiCodexConnectedAccountQuotaLimits({
+      rate_limit: { primary_window: { reset_at: 1_000_000_000_000 } },
+    })).toEqual([
+      { id: 'session', resetsAtMs: 1_000_000_000_000 },
+      { id: 'weekly' },
+    ]);
+  });
+
+  it('returns a provider-neutral public usage observation from the private quota fetcher', async () => {
+    const now = 1_000_000;
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const fetcher = createOpenAiCodexQuotaFetcher({
+      usageUrl: 'https://quota.happier.dev/openai-codex/usage',
+      runtimeFetch: {
+        request: async () => jsonResponse({
+          plan_type: 'pro',
+          rate_limit: {
+            primary_window: { used_percent: 12, reset_at: 1_700_000_000 },
+          },
+        }),
+      },
+    });
+
+    const snapshot = await fetcher.loadQuota({
+      record,
+      now,
+      signal: new AbortController().signal,
+    });
+
+    expect(snapshot).toMatchObject({
+      v: 1,
+      providerId: 'openai-codex',
+      recordKey: {
+        providerId: 'openai-codex',
+        accountSubjectId: 'acct',
+        subjectKind: 'account',
+        quotaScope: 'account',
+      },
+      accountSubject: { kind: 'providerSubject', id: 'acct' },
+      observedAtMs: now,
+      fetchedAtMs: now,
+      source: 'providerHttp',
+      confidence: 'confirmed',
+      state: 'loaded_data',
+      planLabel: 'pro',
+      accountLabel: 'user@example.com',
+      meters: expect.arrayContaining([
+        expect.objectContaining({ meterId: 'session', utilizationPct: 12 }),
+      ]),
+    });
+    expect(snapshot).not.toHaveProperty('recordId');
+    expect(snapshot).not.toHaveProperty('serviceId');
+    expect(snapshot).not.toHaveProperty('profileId');
+  });
+
   it('uses the Codex-owned private ChatGPT usage endpoint by default', async () => {
     const now = 1_000_000;
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: new Headers(),
-      json: async () => ({
+    const fetchMock = vi.fn(async () => systemJsonResponse({
         plan_type: 'pro',
         rate_limit: {
           primary_window: { used_percent: 12, reset_at: 1700000000 },
         },
-      }),
-      text: async () => '',
-      arrayBuffer: async () => new ArrayBuffer(0),
-    } as Response));
+    }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const record = buildConnectedServiceCredentialRecord({
@@ -48,23 +129,18 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
 
     expect(snapshot?.planLabel).toBe('pro');
-    expect(snapshot?.activeAccountId).toBe('acct');
+    expect(snapshot?.accountSubject).toEqual({ kind: 'providerSubject', id: 'acct' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://chatgpt.com/backend-api/wham/usage');
   });
 
   it('loads reset-credit inventory with the same OAuth account headers for the default Codex usage endpoint', async () => {
     const now = 1_000_000;
     const requests: Array<Readonly<{ url: string; headers: Readonly<Record<string, string>> }>> = [];
-    const runtimeFetch = vi.fn(async (request: Parameters<FetchRuntimeServiceV1>[0]) => {
+    const request = vi.fn(async (request: Parameters<HttpService['request']>[0]) => {
       const { url, headers } = request;
       requests.push({ url, headers: headers as Readonly<Record<string, string>> });
       if (url.endsWith('/rate-limit-reset-credits')) {
-        return {
-          ok: true,
-          status: 200,
-          statusText: 'OK',
-          headers: {},
-          json: async () => ({
+        return jsonResponse({
             available_count: 1,
             credits: [{
               id: 'credit-1',
@@ -74,27 +150,17 @@ describe('createOpenAiCodexQuotaFetcher', () => {
               profile_image_url: 'https://example.com/private-avatar.png',
               profile_user_id: 'user-secret',
             }],
-          }),
-          text: async () => '',
-          arrayBuffer: async () => new ArrayBuffer(0),
-        };
+        });
       }
-      return {
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        json: async () => ({
+      return jsonResponse({
           plan_type: 'pro',
           rate_limit: {
             primary_window: { used_percent: 100, reset_at: 1700000000 },
           },
           rate_limit_reset_credits: { available_count: 1 },
-        }),
-        text: async () => '',
-        arrayBuffer: async () => new ArrayBuffer(0),
-      };
+      });
     });
+    const runtimeFetch: Pick<HttpService, 'request'> = { request };
 
     const record = buildConnectedServiceCredentialRecord({
       now,
@@ -138,19 +204,12 @@ describe('createOpenAiCodexQuotaFetcher', () => {
 
   it('consumes reset credits with the same OAuth account headers', async () => {
     const now = 1_000_000;
-    const requests: Array<Parameters<FetchRuntimeServiceV1>[0]> = [];
-    const runtimeFetch = vi.fn(async (request: Parameters<FetchRuntimeServiceV1>[0]) => {
-      requests.push(request);
-      return {
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        json: async () => ({ code: 'reset', windows_reset: 2 }),
-        text: async () => '',
-        arrayBuffer: async () => new ArrayBuffer(0),
-      };
+    const requests: Array<Parameters<HttpService['request']>[0]> = [];
+    const request = vi.fn(async (input: Parameters<HttpService['request']>[0]) => {
+      requests.push(input);
+      return jsonResponse({ code: 'reset', windows_reset: 2 });
     });
+    const runtimeFetch: Pick<HttpService, 'request'> = { request };
 
     const record = buildConnectedServiceCredentialRecord({
       now,
@@ -188,10 +247,11 @@ describe('createOpenAiCodexQuotaFetcher', () => {
         Authorization: 'Bearer at',
         'ChatGPT-Account-Id': 'acct',
       }),
-      body: {
-        redeem_request_id: 'consume:work:credit-1',
-        credit_id: 'credit-1',
-      },
+      body: expect.any(Uint8Array),
+    });
+    expect(JSON.parse(new TextDecoder().decode(requests[0]?.body))).toEqual({
+      redeem_request_id: 'consume:work:credit-1',
+      credit_id: 'credit-1',
     });
   });
 
@@ -200,16 +260,13 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     const fetchInputs: Array<string | URL | Request> = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       fetchInputs.push(input);
-      return {
-        ok: true,
-        json: async () => ({
+      return systemJsonResponse({
           plan_type: 'pro',
           rate_limit: {
             primary_window: { used_percent: 10, reset_at: 1700000000 },
             secondary_window: { used_percent: 25, reset_at: 1700003600 },
           },
-        }),
-      } as Response;
+      });
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
@@ -236,12 +293,16 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     });
 
     const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
-    const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.planLabel).toBe('pro');
-      expect(parsed.data.meters.map((m) => m.meterId)).toEqual(['session', 'weekly']);
-    }
+    expect(snapshot).toMatchObject({
+      providerId: 'openai-codex',
+      recordKey: { providerId: 'openai-codex', accountSubjectId: 'acct' },
+      planLabel: 'pro',
+      meters: [
+        expect.objectContaining({ meterId: 'session' }),
+        expect.objectContaining({ meterId: 'weekly' }),
+      ],
+    });
+    expect(snapshot).not.toHaveProperty('recordId');
 
     const init: unknown = fetchMock.mock.calls[0]?.[1];
     const headers: unknown =
@@ -261,15 +322,12 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     const fetchInputs: Array<string | URL | Request> = [];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       fetchInputs.push(input);
-      return {
-      ok: true,
-      json: async () => ({
+      return systemJsonResponse({
         rate_limit: {
           primary_window: { used_percent: 5, reset_at: 1700000000 },
           secondary_window: { used_percent: 10, reset_at: 1700003600 },
         },
-      }),
-      } as Response;
+      });
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
@@ -305,21 +363,13 @@ describe('createOpenAiCodexQuotaFetcher', () => {
 
   it('allows the Codex-owned private ChatGPT wham usage endpoint when configured', async () => {
     const now = 1_000_000;
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: new Headers(),
-      json: async () => ({
+    const fetchMock = vi.fn(async () => systemJsonResponse({
         plan_type: 'pro',
         rate_limit: {
           primary_window: { used_percent: 22, reset_at: 1700000000 },
           secondary_window: { used_percent: 44, reset_at: 1700003600 },
         },
-      }),
-      text: async () => '',
-      arrayBuffer: async () => new ArrayBuffer(0),
-    } as Response));
+    }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const record = buildConnectedServiceCredentialRecord({
@@ -360,7 +410,8 @@ describe('createOpenAiCodexQuotaFetcher', () => {
 
   it('returns a quota_unknown snapshot without any network IO when the private endpoint is disabled', async () => {
     const now = 1_000_000;
-    const runtimeFetch = vi.fn();
+    const request = vi.fn();
+    const runtimeFetch: Pick<HttpService, 'request'> = { request };
 
     const record = buildConnectedServiceCredentialRecord({
       now,
@@ -387,9 +438,11 @@ describe('createOpenAiCodexQuotaFetcher', () => {
 
     const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
 
-    expect(runtimeFetch).not.toHaveBeenCalled();
-    const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(snapshot);
-    expect(parsed.success).toBe(true);
+    expect(request).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      providerId: 'openai-codex',
+      recordKey: { providerId: 'openai-codex', accountSubjectId: 'acct' },
+    });
     expect(snapshot?.meters.map((meter) => meter.meterId)).toEqual(['session', 'weekly']);
     for (const meter of snapshot?.meters ?? []) {
       expect(meter.status).toBe('unavailable');
@@ -440,19 +493,11 @@ describe('createOpenAiCodexQuotaFetcher', () => {
 
   it('lets the explicit usage URL override take precedence over the kill switch', async () => {
     const now = 1_000_000;
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      headers: new Headers(),
-      json: async () => ({
+    const fetchMock = vi.fn(async () => systemJsonResponse({
         rate_limit: {
           primary_window: { used_percent: 5, reset_at: 1700000000 },
         },
-      }),
-      text: async () => '',
-      arrayBuffer: async () => new ArrayBuffer(0),
-    } as Response));
+    }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const fetcher = openAiCodexQuotaFetcherDescriptor.createFetcher({
@@ -489,15 +534,10 @@ describe('createOpenAiCodexQuotaFetcher', () => {
 
   it('does not include raw provider error bodies in thrown quota fetch errors', async () => {
     const now = 1_000_000;
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
+    const fetchMock = vi.fn(async () => new Response('raw-provider-body access_token=secret', {
       status: 429,
       statusText: 'Too Many Requests',
-      headers: new Headers(),
-      json: async () => ({}),
-      text: async () => 'raw-provider-body access_token=secret',
-      arrayBuffer: async () => new ArrayBuffer(0),
-    } as Response));
+    }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const record = buildConnectedServiceCredentialRecord({
@@ -523,7 +563,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
       record,
       now,
       signal: new AbortController().signal,
-    })).rejects.toThrow(/^OpenAI usage fetch failed \(429\): Too Many Requests$/);
+    })).rejects.toThrow(/^OpenAI usage fetch failed \(429\): HTTP error$/);
     await expect(fetcher.loadQuota({
       record,
       now,

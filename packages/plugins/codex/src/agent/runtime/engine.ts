@@ -12,8 +12,8 @@ import type {
   AgentSessionOpenRequest,
   AgentSessionRuntime,
   AgentTerminalSurface,
-} from '@happier-dev/plugin-sdk/agent-runtime';
-import { writeAtomicTextFile } from '@happier-dev/plugin-sdk/experimental/fs';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import { writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 
 import { buildCodexNativeAcpRuntimeOptions } from '../acp/backend.js';
 import { resolveCanonicalCodexBackendModeFromCompatInput } from '../lifecycle/backendMode.js';
@@ -21,6 +21,10 @@ import { buildCodexTerminalArgs } from './terminal/invocation.js';
 import { resolveCodexTerminalPermissionPolicy } from './terminal/permissionPolicy.js';
 import { openCodexNativeAppServerSession } from './appServer/native.js';
 import { createCodexNativeSessionControls } from './controls.js';
+
+export {
+  codexExternalSessionsContribution,
+} from '../surfaces/sessions/external/contribution.js';
 
 type ExecutionEventInput = AgentExecutionRunEvent extends infer Event
   ? Event extends AgentExecutionRunEvent
@@ -67,16 +71,24 @@ type PreparedCodexPrimaryAccount = Readonly<{
   cleanup(): Promise<void>;
 }>;
 
-function codexPrimaryAccountUnavailable() {
-  return {
-    status: 'unavailable' as const,
-    diagnostic: {
-      code: 'codex_primary_connected_account_changed',
-      severity: 'error' as const,
-      message: 'The selected Codex account changed; restart the session before sending another prompt.',
-    },
-    retryable: false,
-  };
+async function waitForInitialCodexConnectedAccountObservations(
+  observations: Iterable<Promise<void>>,
+  signal: AbortSignal,
+): Promise<void> {
+  const abortError = () => signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Codex Connected Account preparation was aborted');
+  if (signal.aborted) throw abortError();
+  let abort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(abortError());
+    signal.addEventListener('abort', abort, { once: true });
+  });
+  try {
+    await Promise.race([Promise.all(observations), aborted]);
+  } finally {
+    signal.removeEventListener('abort', abort);
+  }
 }
 
 async function prepareCodexPrimaryConnectedAccount(
@@ -90,102 +102,124 @@ async function prepareCodexPrimaryConnectedAccount(
       async cleanup() {},
     };
   }
-  const binding = await context.services.connectedAccounts.getBinding(
-    CODEX_PRIMARY_ACCOUNT_PURPOSE,
-    { signal: context.signal },
-  );
-  if (!binding) {
-    return {
-      request,
-      bind: (session) => session,
-      async cleanup() {},
+  const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
+  const initialObservations: Promise<void>[] = [];
+  let invalidated = false;
+  let boundSession: AgentSessionRuntime | null = null;
+  let subscriptionsDisposed = false;
+  let materializedRootCleanup = async (): Promise<void> => {};
+
+  const disposeSubscriptions = (): void => {
+    if (subscriptionsDisposed) return;
+    subscriptionsDisposed = true;
+    for (const subscription of subscriptions) subscription.dispose();
+  };
+  const cleanup = async (): Promise<void> => {
+    disposeSubscriptions();
+    await materializedRootCleanup();
+  };
+  const invalidate = async (): Promise<void> => {
+    invalidated = true;
+    await boundSession?.dispose('runtime_recovery');
+  };
+  const bind = (session: AgentSessionRuntime): AgentSessionRuntime => {
+    let disposed = false;
+    const wrapped: AgentSessionRuntime = {
+      ...session,
+      async dispose(reason) {
+        if (disposed) return;
+        disposed = true;
+        disposeSubscriptions();
+        try {
+          await session.dispose(reason);
+        } finally {
+          await materializedRootCleanup();
+        }
+      },
     };
-  }
-  const materialized = await context.services.connectedAccounts.materialize(
-    CODEX_PRIMARY_ACCOUNT_PURPOSE,
-    { kind: 'files', fileIds: [CODEX_AUTH_FILE_ID] },
-    { signal: context.signal },
-  );
-  if (materialized.kind !== 'files') {
-    throw new Error('Codex primary account returned an invalid file materialization.');
-  }
-  const authFile = materialized.files[CODEX_AUTH_FILE_ID];
-  if (!authFile) {
-    throw new Error('Codex primary account did not materialize auth.json.');
-  }
-  const configuredRoot = request.launchEnvironment?.values.CODEX_HOME?.trim() ?? '';
-  const ownsRoot = !isAbsolute(configuredRoot);
-  const root = ownsRoot
-    ? await mkdtemp(join(tmpdir(), 'happier-codex-connected-account-'))
-    : configuredRoot;
+    boundSession = wrapped;
+    if (invalidated) void wrapped.dispose('runtime_recovery');
+    return wrapped;
+  };
+
   try {
+    let resolveInitial!: () => void;
+    initialObservations.push(new Promise<void>((resolve) => {
+      resolveInitial = resolve;
+    }));
+    let initialResyncPending = true;
+    subscriptions.push(context.services.connectedAccounts.watch(
+      CODEX_PRIMARY_ACCOUNT_PURPOSE,
+      () => {
+        if (initialResyncPending) {
+          initialResyncPending = false;
+          resolveInitial();
+          return;
+        }
+        return invalidate();
+      },
+    ));
+    await waitForInitialCodexConnectedAccountObservations(
+      initialObservations,
+      context.signal,
+    );
+
+    const binding = await context.services.connectedAccounts.getBinding(
+      CODEX_PRIMARY_ACCOUNT_PURPOSE,
+      { signal: context.signal },
+    );
+    if (!binding) {
+      return { request, bind, cleanup };
+    }
+    const materialized = await context.services.connectedAccounts.materialize(
+      CODEX_PRIMARY_ACCOUNT_PURPOSE,
+      { kind: 'files', fileIds: [CODEX_AUTH_FILE_ID] },
+      { signal: context.signal },
+    );
+    if (materialized.kind !== 'files') {
+      throw new Error('Codex primary account returned an invalid file materialization.');
+    }
+    const authFile = materialized.files[CODEX_AUTH_FILE_ID];
+    if (!authFile) {
+      throw new Error('Codex primary account did not materialize auth.json.');
+    }
+    const configuredRoot = request.launchEnvironment?.values.CODEX_HOME?.trim() ?? '';
+    const ownsRoot = !isAbsolute(configuredRoot);
+    const root = ownsRoot
+      ? await mkdtemp(join(tmpdir(), 'happier-codex-connected-account-'))
+      : configuredRoot;
+    let rootCleaned = false;
+    materializedRootCleanup = async (): Promise<void> => {
+      if (rootCleaned) return;
+      rootCleaned = true;
+      if (ownsRoot) {
+        await rm(root, { recursive: true, force: true }).catch(() => undefined);
+      }
+    };
     await writeAtomicTextFile({
       path: join(root, CODEX_AUTH_FILE_ID),
       contents: new TextDecoder().decode(authFile),
       mode: 0o600,
     });
+    const launchEnvironment = request.launchEnvironment ?? { values: {}, unset: [] };
+    return {
+      request: {
+        ...request,
+        launchEnvironment: {
+          values: {
+            ...launchEnvironment.values,
+            CODEX_HOME: root,
+          },
+          unset: launchEnvironment.unset.filter((key) => key !== 'CODEX_HOME'),
+        },
+      } satisfies AgentSessionOpenRequest,
+      bind,
+      cleanup,
+    };
   } catch (error) {
-    if (ownsRoot) {
-      await rm(root, { recursive: true, force: true }).catch(() => undefined);
-    }
+    await cleanup();
     throw error;
   }
-  const launchEnvironment = request.launchEnvironment ?? { values: {}, unset: [] };
-  const preparedRequest = {
-    ...request,
-    launchEnvironment: {
-      values: {
-        ...launchEnvironment.values,
-        CODEX_HOME: root,
-      },
-      unset: launchEnvironment.unset.filter((key) => key !== 'CODEX_HOME'),
-    },
-  } satisfies AgentSessionOpenRequest;
-  let cleaned = false;
-  const cleanup = async (): Promise<void> => {
-    if (cleaned) return;
-    cleaned = true;
-    if (ownsRoot) {
-      await rm(root, { recursive: true, force: true }).catch(() => undefined);
-    }
-  };
-  return {
-    request: preparedRequest,
-    bind(session) {
-      let initialResyncPending = true;
-      let current = true;
-      const subscription = context.services.connectedAccounts.watch(
-        CODEX_PRIMARY_ACCOUNT_PURPOSE,
-        () => {
-          if (initialResyncPending) {
-            initialResyncPending = false;
-            return;
-          }
-          current = false;
-        },
-      );
-      let disposed = false;
-      return {
-        ...session,
-        async send(input, options) {
-          return current
-            ? await session.send(input, options)
-            : codexPrimaryAccountUnavailable();
-        },
-        async dispose() {
-          if (disposed) return;
-          disposed = true;
-          subscription.dispose();
-          try {
-            await session.dispose();
-          } finally {
-            await cleanup();
-          }
-        },
-      };
-    },
-    cleanup,
-  };
 }
 
 async function openCodexSession(
@@ -303,12 +337,16 @@ async function openCodexExecutionRun(
         cwd: request.cwd,
         providerSessionId: request.checkpointId,
         ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+        ...(request.configuration ? { configuration: request.configuration } : {}),
+        ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
       }
     : {
         kind: 'create',
         sessionId: request.runId,
         cwd: request.cwd,
         ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
+        ...(request.configuration ? { configuration: request.configuration } : {}),
+        ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
       };
   const session = await openCodexSession(sessionRequest, context);
   const runtime = createCodexExecutionRunRuntime(request, session);

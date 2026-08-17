@@ -7,7 +7,7 @@ import type {
   AgentRuntimeFactoryContext,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createCodexAgentRuntime } from './engine.js';
@@ -29,7 +29,10 @@ function createUnboundConnectedAccounts() {
     getBinding: vi.fn(async () => null),
     requestSelection: vi.fn(),
     materialize: vi.fn(),
-    watch: vi.fn(() => ({ dispose() {} })),
+    watch: vi.fn((_purpose: string, listener: () => void) => {
+      queueMicrotask(listener);
+      return { dispose() {} };
+    }),
   };
 }
 
@@ -59,6 +62,7 @@ describe('createCodexAgentRuntime', () => {
     const context = {
       protocols: { acp: { open } },
       services: { connectedAccounts: createUnboundConnectedAccounts() },
+      signal: new AbortController().signal,
     } as unknown as AgentSessionRuntimeContext;
 
     await runtime.sessions?.open({
@@ -88,6 +92,7 @@ describe('createCodexAgentRuntime', () => {
         permissionMode: 'read-only',
         codexArgs: ['--search'],
       },
+      modelSelection: null,
     }))).resolves.toMatchObject({
       argv: [
         'resume',
@@ -165,31 +170,42 @@ describe('createCodexAgentRuntime', () => {
 
   it('materializes the qualified primary Codex account before opening the actual ACP session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-qualified-primary-'));
-    const nativeSession = createSession();
-    const nativeSend = vi.spyOn(nativeSession, 'send');
-    const open = vi.fn(async () => nativeSession);
-    const getBinding = vi.fn(async (purpose: string) => (
-      purpose === 'primary'
+    const lifecycle: string[] = [];
+    const nativeDispose = vi.fn();
+    const nativeSession = { ...createSession(), dispose: nativeDispose };
+    const open = vi.fn(async () => {
+      lifecycle.push('open');
+      return nativeSession;
+    });
+    const getBinding = vi.fn(async (purpose: string) => {
+      lifecycle.push(`binding:${purpose}`);
+      return purpose === 'primary'
         ? {
             purpose,
             service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
             target: { kind: 'account' as const, displayName: 'Codex work' },
           }
-        : null
-    ));
-    const materialize = vi.fn(async () => ({
-      kind: 'files' as const,
-      files: {
-        'auth.json': new TextEncoder().encode(JSON.stringify({
-          auth_mode: 'chatgpt',
-          tokens: { access_token: 'qualified-access' },
-        })),
-      },
-    }));
+        : null;
+    });
+    const materialize = vi.fn(async () => {
+      lifecycle.push('materialize:primary');
+      return {
+        kind: 'files' as const,
+        files: {
+          'auth.json': new TextEncoder().encode(JSON.stringify({
+            auth_mode: 'chatgpt',
+            tokens: { access_token: 'qualified-access' },
+          })),
+        },
+      };
+    });
     let resync: (() => void) | null = null;
+    const disposeSubscription = vi.fn();
     const watch = vi.fn((_purpose: string, listener: () => void) => {
+      lifecycle.push('watch:primary');
       resync = listener;
-      return { dispose() {} };
+      queueMicrotask(listener);
+      return { dispose: disposeSubscription };
     });
     const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
     const context = {
@@ -237,22 +253,229 @@ describe('createCodexAgentRuntime', () => {
         'qualified-access',
       );
       expect(watch).toHaveBeenCalledWith('primary', expect.any(Function));
+      expect(lifecycle).toEqual([
+        'watch:primary',
+        'binding:primary',
+        'materialize:primary',
+        'open',
+      ]);
       expect(resync).not.toBeNull();
       resync?.();
       resync?.();
-      await expect(session?.send({
-        inputIds: ['input-after-account-change'],
-        input: { text: 'must not reach stale auth' },
-        delivery: { kind: 'newTurn', turnId: 'turn-after-account-change' },
-      })).resolves.toMatchObject({
-        status: 'unavailable',
-        diagnostic: { code: 'codex_primary_connected_account_changed' },
+      await vi.waitFor(() => {
+        expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery');
       });
-      expect(nativeSend).not.toHaveBeenCalled();
+      expect(nativeDispose).toHaveBeenCalledTimes(1);
+      expect(disposeSubscription).toHaveBeenCalledTimes(1);
       await session?.dispose();
+      expect(nativeDispose).toHaveBeenCalledTimes(1);
+      expect(disposeSubscription).toHaveBeenCalledTimes(1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('retains the primary-purpose watch for an unbound native launch', async () => {
+    let resync: (() => void) | null = null;
+    const disposeSubscription = vi.fn();
+    const nativeDispose = vi.fn();
+    const open = vi.fn(async () => ({ ...createSession(), dispose: nativeDispose }));
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => null),
+      materialize: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        resync = listener;
+        queueMicrotask(listener);
+        return { dispose: disposeSubscription };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    const session = await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'session-native-unbound',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_CODEX_BACKEND_MODE: 'acp', NATIVE_AUTH: 'preserved' },
+        unset: [],
+      },
+    }, context);
+
+    expect(connectedAccounts.watch).toHaveBeenCalledWith('primary', expect.any(Function));
+    expect(connectedAccounts.getBinding).toHaveBeenCalledWith('primary', { signal: context.signal });
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        launchEnvironment: {
+          values: { HAPPIER_CODEX_BACKEND_MODE: 'acp', NATIVE_AUTH: 'preserved' },
+          unset: [],
+        },
+      }),
+      expect.any(Object),
+    );
+
+    resync?.();
+    await vi.waitFor(() => {
+      expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery');
+    });
+    expect(disposeSubscription).toHaveBeenCalledTimes(1);
+    await session?.dispose();
+    expect(nativeDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the initial primary-purpose resync before reading its binding', async () => {
+    let initialResync: (() => void) | null = null;
+    const open = vi.fn(async () => createSession());
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => null),
+      materialize: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        initialResync = listener;
+        return { dispose() {} };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    const opening = runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'session-initial-resync',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
+        unset: [],
+      },
+    }, context);
+
+    await vi.waitFor(() => expect(connectedAccounts.watch).toHaveBeenCalledTimes(1));
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    initialResync?.();
+    const session = await opening;
+    expect(connectedAccounts.getBinding).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
+    await session?.dispose();
+  });
+
+  it('disposes the opened session once when a later resync arrives during the binding read', async () => {
+    let resync: (() => void) | null = null;
+    const nativeDispose = vi.fn();
+    const open = vi.fn(async () => ({ ...createSession(), dispose: nativeDispose }));
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => {
+        resync?.();
+        return null;
+      }),
+      materialize: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        resync = listener;
+        queueMicrotask(listener);
+        return { dispose() {} };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    const session = await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'session-resync-during-binding-read',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
+        unset: [],
+      },
+    }, context);
+
+    await vi.waitFor(() => {
+      expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery');
+    });
+    expect(nativeDispose).toHaveBeenCalledTimes(1);
+    await session?.dispose();
+    expect(nativeDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes the primary-purpose watch when preparation fails', async () => {
+    const disposeSubscription = vi.fn();
+    const open = vi.fn(async () => createSession());
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => ({
+        purpose: 'primary',
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        target: { kind: 'account' as const, displayName: 'Codex work' },
+      })),
+      materialize: vi.fn(async () => {
+        throw new Error('qualified materialization failed');
+      }),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        queueMicrotask(listener);
+        return { dispose: disposeSubscription };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    await expect(runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'session-materialization-failure',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
+        unset: [],
+      },
+    }, context)).rejects.toThrow('qualified materialization failed');
+
+    expect(open).not.toHaveBeenCalled();
+    expect(disposeSubscription).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes the primary-purpose watch when native session open fails', async () => {
+    const disposeSubscription = vi.fn();
+    const open = vi.fn(async () => {
+      throw new Error('native session open failed');
+    });
+    const connectedAccounts = {
+      getBinding: vi.fn(async () => null),
+      materialize: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        queueMicrotask(listener);
+        return { dispose: disposeSubscription };
+      }),
+    };
+    const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const context = {
+      protocols: { acp: { open } },
+      services: { connectedAccounts },
+      signal: new AbortController().signal,
+    } as unknown as AgentSessionRuntimeContext;
+
+    await expect(runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'session-open-failure',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_CODEX_BACKEND_MODE: 'acp' },
+        unset: [],
+      },
+    }, context)).rejects.toThrow('native session open failed');
+
+    expect(disposeSubscription).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a Provider-bound session in ACP mode before opening the ACP runtime', async () => {
@@ -289,6 +512,7 @@ describe('createCodexAgentRuntime', () => {
     const context = {
       protocols: { acp: { open } },
       services: { connectedAccounts: createUnboundConnectedAccounts() },
+      signal: new AbortController().signal,
     } as unknown as AgentRuntimeContext;
 
     const executionRun = await runtime.executionRuns?.open({

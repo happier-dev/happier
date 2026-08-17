@@ -5,7 +5,7 @@ import type {
   AgentSessionGoalControl,
   AgentSessionGoalControlContext,
   AgentSessionUsageLimitRecoveryControl,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   listCodexAppServerSkills,

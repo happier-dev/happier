@@ -1,4 +1,7 @@
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+  OauthCredentialRecord,
+  TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 type CodexLoginStartClient = Readonly<{
   request: (method: string, params?: unknown) => Promise<unknown>;
@@ -65,8 +68,8 @@ function normalizeOptionalId(value: string | null | undefined): string | null {
 }
 
 function requireConnectedServiceOauthCredentialRecord(
-  record: ConnectedServiceCredentialRecordV1,
-): Extract<ConnectedServiceCredentialRecordV1, { kind: 'oauth' }> {
+  record: OauthCredentialRecord | TokenCredentialRecord,
+): OauthCredentialRecord {
   if (record.kind !== 'oauth') {
     throw new Error(`Connected service record '${record.serviceId}' is not an OAuth credential`);
   }
@@ -74,7 +77,7 @@ function requireConnectedServiceOauthCredentialRecord(
 }
 
 export function evaluateCodexConnectedServiceHotApplyEligibility(params: Readonly<{
-  candidate: ConnectedServiceCredentialRecordV1;
+  candidate: OauthCredentialRecord | TokenCredentialRecord;
   forcedWorkspaceId: string | null;
   forcedLoginMethod?: string | null;
 }>): CodexHotApplyEligibility {
@@ -99,7 +102,7 @@ export function evaluateCodexConnectedServiceHotApplyEligibility(params: Readonl
   return { eligible: true };
 }
 
-function readCodexCredentialProviderAccountId(record: ConnectedServiceCredentialRecordV1): string | null {
+function readCodexCredentialProviderAccountId(record: OauthCredentialRecord | TokenCredentialRecord): string | null {
   if (record.kind !== 'oauth' || record.serviceId !== 'openai-codex') return null;
   return normalizeOptionalId(record.oauth.providerAccountId);
 }
@@ -148,7 +151,7 @@ function classifyCodexLoginStartError(error: unknown): CodexDirectLiveAuthApplyR
 
 export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<{
   client: CodexLoginStartClient;
-  candidate: ConnectedServiceCredentialRecordV1;
+  candidate: OauthCredentialRecord | TokenCredentialRecord;
   forcedWorkspaceId: string | null;
   forcedLoginMethod?: string | null;
   persistAuthStore?: (() => Promise<void> | void) | null;

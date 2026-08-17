@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
+import type { DetectedMcpServerV1, DiscoveryWarning as McpDiscoveryWarningV1 } from '@happier-dev/plugin-sdk/mcp';
 
 export type ReadCodexMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
-    warnings: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
+    warnings: ReadonlyArray<McpDiscoveryWarningV1>;
 }>;
 
 function resolveCodexConfigTomlPath(env: NodeJS.ProcessEnv): string {
@@ -111,7 +111,7 @@ export async function readCodexMcpConfigServers(
     }
 
     const servers: DetectedMcpServerV1[] = [];
-    const warnings: DaemonMcpServersDetectWarningV1[] = [];
+    const warnings: McpDiscoveryWarningV1[] = [];
 
     const re = /^\s*\[mcp_servers\.([^\]]+)\]\s*$/gm;
     const matches: Array<Readonly<{ key: string; headerStart: number; headerEnd: number }>> = [];

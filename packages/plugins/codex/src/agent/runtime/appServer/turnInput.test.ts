@@ -2,80 +2,51 @@ import { describe, expect, it } from 'vitest';
 
 import { buildCodexAppServerTurnInput } from './turnInput';
 
-describe('buildCodexAppServerTurnInput', () => {
-    it('builds text, vendor plugin mentions, skills, and images through one structured path', () => {
-        const imagePath = '.happier/uploads/messages/m1/image.png';
+const UPLOAD_PATH = '.happier/uploads/messages/m1/image.png';
 
+describe('buildCodexAppServerTurnInput', () => {
+    it('projects vendor plugin mentions, skills, and verified images from the structured input envelope', () => {
         expect(buildCodexAppServerTurnInput({
             text: 'Use @gmail and $review',
-            trustedLocalImagePaths: new Set([imagePath]),
-            metadata: {
-                happier: {
-                    kind: 'attachments.v1',
-                    payload: {
-                        attachments: [
-                            {
-                                path: imagePath,
-                                mimeType: 'image/png',
-                            },
-                        ],
+            structuredInput: {
+                v: 1,
+                vendorPluginMentions: [
+                    {
+                        vendorPluginRef: 'plugin://gmail@openai-curated',
+                        label: 'Gmail',
                     },
-                },
-                happierStructuredInputV1: {
-                    vendorPluginMentions: [
-                        {
-                            vendorPluginRef: 'plugin://gmail@openai-curated',
-                            label: 'Gmail',
-                        },
-                    ],
-                    skillMentions: [
-                        {
-                            name: 'review',
-                            path: '/skills/review/SKILL.md',
-                            displayName: 'Review',
-                        },
-                    ],
-                    imageInputs: [
-                        {
-                            kind: 'localImage',
-                            mimeType: 'image/png',
-                            path: imagePath,
-                            provenance: { kind: 'sessionAttachmentUpload' },
-                        },
-                        {
-                            kind: 'image',
-                            mimeType: 'image/png',
-                            url: 'https://example.test/image.png',
-                        },
-                    ],
-                },
+                ],
+                skillMentions: [
+                    {
+                        id: 'review',
+                        name: 'review',
+                        path: '/skills/review/SKILL.md',
+                        displayName: 'Review',
+                    },
+                ],
+                imageInputs: [
+                    {
+                        id: `localImage:${UPLOAD_PATH}`,
+                        kind: 'localImage',
+                        mimeType: 'image/png',
+                        path: UPLOAD_PATH,
+                        provenance: { kind: 'sessionAttachmentUpload' },
+                    },
+                    {
+                        id: 'image:https://example.test/image.png',
+                        kind: 'image',
+                        mimeType: 'image/png',
+                        url: 'https://example.test/image.png',
+                    },
+                ],
             },
         })).toEqual([
             { type: 'text', text: 'Use @gmail and $review' },
             { type: 'mention', name: 'Gmail', path: 'plugin://gmail@openai-curated' },
             { type: 'skill', name: 'review', path: '/skills/review/SKILL.md' },
-            { type: 'localImage', path: imagePath },
+            { type: 'localImage', path: UPLOAD_PATH },
             { type: 'image', url: 'https://example.test/image.png' },
         ]);
-    });
-
-    it('rejects untrusted local image paths from structured metadata', () => {
-        expect(buildCodexAppServerTurnInput({
-            text: 'crafted',
-            metadata: {
-                happierStructuredInputV1: {
-                    v: 1,
-                    attachments: [
-                        {
-                            kind: 'image',
-                            mimeType: 'image/png',
-                            localPath: '/etc/passwd',
-                            path: '/tmp/private.png',
-                        },
-                    ],
-                },
-            },
-        })).toEqual([{ type: 'text', text: 'crafted' }]);
     });
 
     it('accepts protocol image attachment types without requiring kind or mimeType', () => {
@@ -83,15 +54,17 @@ describe('buildCodexAppServerTurnInput', () => {
 
         expect(buildCodexAppServerTurnInput({
             text: 'typed images',
-            trustedLocalImagePaths: new Set([localPath]),
-            metadata: {
-                happierStructuredInputV1: {
-                    v: 1,
-                    attachments: [
-                        { type: 'image', url: 'https://example.test/typed.png' },
-                        { type: 'localImage', localPath, provenance: { kind: 'sessionAttachmentUpload' } },
-                    ],
-                },
+            structuredInput: {
+                v: 1,
+                attachments: [
+                    { id: 'remote', type: 'image', url: 'https://example.test/typed.png' },
+                    {
+                        id: 'local',
+                        type: 'localImage',
+                        localPath,
+                        provenance: { kind: 'sessionAttachmentUpload' },
+                    },
+                ],
             },
         })).toEqual([
             { type: 'text', text: 'typed images' },
@@ -100,22 +73,107 @@ describe('buildCodexAppServerTurnInput', () => {
         ]);
     });
 
-    it('passes fallback plugin and skill metadata without injecting raw skill contents', () => {
+    it('drops local image inputs that are not uploaded session attachments', () => {
+        expect(buildCodexAppServerTurnInput({
+            text: 'crafted',
+            structuredInput: {
+                v: 1,
+                attachments: [
+                    {
+                        id: 'crafted',
+                        kind: 'image',
+                        mimeType: 'image/png',
+                        localPath: '/etc/passwd',
+                        path: '/tmp/private.png',
+                    },
+                ],
+            },
+        })).toEqual([{ type: 'text', text: 'crafted' }]);
+    });
+
+    it('drops local image inputs that do not carry session attachment upload provenance', () => {
+        expect(buildCodexAppServerTurnInput({
+            text: 'unstamped',
+            structuredInput: {
+                v: 1,
+                imageInputs: [
+                    {
+                        id: `localImage:${UPLOAD_PATH}`,
+                        kind: 'localImage',
+                        mimeType: 'image/png',
+                        path: UPLOAD_PATH,
+                    },
+                ],
+            },
+        })).toEqual([{ type: 'text', text: 'unstamped' }]);
+    });
+
+    it('skips skill mentions without a resolvable path so no raw skill content is forwarded', () => {
         expect(buildCodexAppServerTurnInput({
             text: 'fallback',
-            metadata: {
-                happierVendorPluginMentions: [
-                    { vendorPluginRef: 'plugin://notion@openai-curated', label: 'Notion' },
-                ],
-                happierSkillMentions: [
-                    { name: 'docs', path: '/skills/docs/SKILL.md', content: 'do not forward' },
-                    { name: 'ignored-without-path' },
+            structuredInput: {
+                v: 1,
+                skillMentions: [
+                    { id: 'docs', name: 'docs', path: '/skills/docs/SKILL.md', content: 'do not forward' },
+                    { id: 'ignored', name: 'ignored-without-path' },
                 ],
             },
         })).toEqual([
             { type: 'text', text: 'fallback' },
-            { type: 'mention', name: 'Notion', path: 'plugin://notion@openai-curated' },
             { type: 'skill', name: 'docs', path: '/skills/docs/SKILL.md' },
+        ]);
+    });
+
+    it('ignores execution run intent payloads carried on the same runtime input field', () => {
+        expect(buildCodexAppServerTurnInput({
+            text: 'review the working tree',
+            structuredInput: {
+                v: 2,
+                changeType: 'uncommitted',
+                engines: { coderabbit: { plain: true } },
+            },
+        })).toEqual([{ type: 'text', text: 'review the working tree' }]);
+    });
+
+    it('returns the text item when no structured input is supplied', () => {
+        expect(buildCodexAppServerTurnInput({ text: 'plain' })).toEqual([
+            { type: 'text', text: 'plain' },
+        ]);
+    });
+
+    it('emits exactly one item per reference when an envelope carries both shapes (D-4)', () => {
+        // A dual-written envelope repeats each reference in `mentions[]` and in the legacy
+        // per-kind array. Without precedence the concatenation would send both to Codex.
+        expect(buildCodexAppServerTurnInput({
+            text: 'Use @gmail and $review',
+            structuredInput: {
+                v: 1,
+                mentions: [
+                    {
+                        kind: 'happier.vendorPlugin',
+                        ref: 'vendorPlugin:plugin://gmail@openai-curated',
+                        token: '@gmail',
+                        start: 4,
+                        end: 10,
+                    },
+                    { kind: 'happier.skill', ref: 'skill:vendor:codex:review', token: '$review', start: 15, end: 22 },
+                ],
+                vendorPluginMentions: [{ vendorPluginRef: 'plugin://gmail@openai-curated', label: 'Gmail' }],
+                skillMentions: [{ id: 'review', name: 'review', path: '/skills/review/SKILL.md' }],
+            },
+        })).toEqual([{ type: 'text', text: 'Use @gmail and $review' }]);
+    });
+
+    it('still reads the legacy arrays when the envelope carries no mentions', () => {
+        expect(buildCodexAppServerTurnInput({
+            text: 'Use $review',
+            structuredInput: {
+                v: 1,
+                skillMentions: [{ id: 'review', name: 'review', path: '/skills/review/SKILL.md' }],
+            },
+        })).toEqual([
+            { type: 'text', text: 'Use $review' },
+            { type: 'skill', name: 'review', path: '/skills/review/SKILL.md' },
         ]);
     });
 });

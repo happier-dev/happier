@@ -1,5 +1,4 @@
-export const OPENAI_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-export const OPENAI_CODEX_AUTH_BASE_URL = 'https://auth.openai.com';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
 
 export function buildCodexAuthorizationUrl(params: Readonly<{
   redirectUri: string;
@@ -8,16 +7,16 @@ export function buildCodexAuthorizationUrl(params: Readonly<{
 }>): string {
   const query = new URLSearchParams({
     response_type: 'code',
-    client_id: OPENAI_CODEX_CLIENT_ID,
+    client_id: OPENAI_CODEX_OAUTH_PROFILE.clientId,
     redirect_uri: params.redirectUri,
-    scope: 'openid profile email offline_access',
+    scope: OPENAI_CODEX_OAUTH_PROFILE.scope,
     code_challenge: params.challenge,
     code_challenge_method: 'S256',
     id_token_add_organizations: 'true',
     codex_cli_simplified_flow: 'true',
     state: params.state,
   });
-  return `${OPENAI_CODEX_AUTH_BASE_URL}/oauth/authorize?${query.toString()}`;
+  return `${OPENAI_CODEX_OAUTH_PROFILE.authorizeUrl}?${query.toString()}`;
 }
 
 export function assertNonEmptyString(value: unknown, label: string): string {

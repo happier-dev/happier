@@ -1,12 +1,5 @@
-import {
-  ConnectedServiceQuotaSnapshotV1Schema,
-  type ConnectedServiceId,
-  type ConnectedServiceProfileId,
-  type ConnectedServiceQuotaMeterV1,
-  type ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-
-import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
+import { parseTimestampMs } from '@happier-dev/plugin-sdk';
+import type { AgentAccountUsageMeter } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS = 5 * 60 * 1000;
 
@@ -25,6 +18,7 @@ function readFiniteNumber(value: unknown): number | null {
 }
 
 function parseProviderTimestampMs(value: unknown): number | null {
+  if (typeof value === 'number') return parseTimestampMs(value);
   const numeric = readFiniteNumber(value);
   if (numeric !== null && numeric >= 0) {
     return Math.trunc(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
@@ -49,7 +43,7 @@ export function unwrapCodexRateLimitSnapshot(rawSnapshot: unknown): unknown {
   return rawSnapshot;
 }
 
-function buildMeter(meterId: 'primary' | 'secondary', raw: unknown): ConnectedServiceQuotaMeterV1 | null {
+function buildMeter(meterId: 'primary' | 'secondary', raw: unknown): AgentAccountUsageMeter | null {
   const record = isRecord(raw) ? raw : null;
   if (!record) return null;
   const utilizationPct = readUtilizationPct(record.usedPercent ?? record.used_percent ?? record.utilizationPct ?? record.utilization_pct);
@@ -83,35 +77,6 @@ function buildMeter(meterId: 'primary' | 'secondary', raw: unknown): ConnectedSe
     confidence: utilizationPct !== null || (used !== null && limit !== null) ? 'exact' : 'unknown',
     details: {},
   };
-}
-
-export function mapCodexRateLimitSnapshotToQuotaSnapshot(params: Readonly<{
-  serviceId: ConnectedServiceId;
-  profileId: ConnectedServiceProfileId;
-  activeAccountId?: string | null;
-  accountLabel?: string | null;
-  fetchedAt: number;
-  staleAfterMs?: number;
-  rawSnapshot: unknown;
-  rawResetCredits?: unknown;
-}>): ConnectedServiceQuotaSnapshotV1 {
-  const activeAccountId = readString(params.activeAccountId);
-  const recoveryCredits = mapCodexRateLimitResetCredits({
-    rawUsage: params.rawSnapshot,
-    rawResetCredits: params.rawResetCredits,
-  });
-  return ConnectedServiceQuotaSnapshotV1Schema.parse({
-    v: 1,
-    serviceId: params.serviceId,
-    profileId: params.profileId,
-    ...(activeAccountId ? { activeAccountId } : {}),
-    fetchedAt: Math.max(0, Math.trunc(params.fetchedAt)),
-    staleAfterMs: params.staleAfterMs ?? CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS,
-    planLabel: readCodexRateLimitSnapshotPlanLabel(params.rawSnapshot),
-    accountLabel: readCodexRateLimitSnapshotAccountLabel(params.rawSnapshot) ?? readString(params.accountLabel),
-    ...(recoveryCredits ? { recoveryCredits } : {}),
-    meters: mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot),
-  });
 }
 
 function readCodexRateLimitMeter(rawSnapshot: unknown, key: 'primary' | 'secondary'): Record<string, unknown> | null {
@@ -148,12 +113,12 @@ export function readCodexRateLimitSnapshotAccountLabel(rawSnapshot: unknown): st
   );
 }
 
-export function mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot: unknown): readonly ConnectedServiceQuotaMeterV1[] {
+export function mapCodexRateLimitSnapshotToUsageMeters(rawSnapshot: unknown): readonly AgentAccountUsageMeter[] {
   const raw = readCodexRateLimitRecord(rawSnapshot);
   return [
     buildMeter('primary', raw.primary ?? raw.primary_window ?? raw.primaryWindow),
     buildMeter('secondary', raw.secondary ?? raw.secondary_window ?? raw.secondaryWindow),
-  ].filter((meter): meter is ConnectedServiceQuotaMeterV1 => meter !== null);
+  ].filter((meter): meter is AgentAccountUsageMeter => meter !== null);
 }
 
 export function isCodexRateLimitSnapshotExhausted(rawSnapshot: unknown): boolean {

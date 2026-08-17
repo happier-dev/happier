@@ -1,6 +1,8 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type {
+  AgentTerminalSessionStateUpdate,
+  HandoffSurfaceV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { CodexSessionHandoffBundleSchema } from './bundle.js';
 import { exportCodexSessionBundle } from './export.js';
@@ -8,14 +10,13 @@ import { importCodexSessionBundle } from './import.js';
 
 export const codexHandoffSurface = {
   exportBundle: async (params) => {
-    const metadata = params.metadata as Record<string, unknown>;
-    const remoteSessionId = resolveVendorResumeIdFromSessionMetadata('codex', metadata);
+    const remoteSessionId = params.sessionId.trim() || null;
     if (!remoteSessionId) {
       return { ok: false, code: 'bundle_invalid', message: 'Codex handoff export requires a vendor session id' };
     }
     try {
       const bundle = await exportCodexSessionBundle({
-        metadata,
+        metadata: params.metadata,
         remoteSessionId,
         env: process.env,
         activeServerDir: params.directory,
@@ -40,7 +41,7 @@ export const codexHandoffSurface = {
         targetPath: params.targetDirectory,
         env: process.env,
       });
-      const sessionStateUpdates: SessionStateUpdateV1[] = [
+      const sessionStateUpdates: AgentTerminalSessionStateUpdate[] = [
         ...(imported.runtimeDescriptorV1
           ? [{
               fieldId: 'identity.runtimeDescriptor' as const,
@@ -58,11 +59,7 @@ export const codexHandoffSurface = {
           providerSessionId: imported.remoteSessionId,
           source: imported.externalSource,
           launch: {
-            directory: imported.resume.directory,
-            ...(imported.resume.codexBackendMode
-              ? { resumePlanOptions: { codexBackendMode: imported.resume.codexBackendMode } }
-              : {}),
-            ...(imported.resume.environmentVariables ? { environmentVariables: imported.resume.environmentVariables } : {}),
+            ...imported.resume,
             sessionStateUpdates,
           },
         },

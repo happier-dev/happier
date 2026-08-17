@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 import { listCodexSessionCandidates } from './candidateSource.js';
 import {
@@ -17,24 +18,51 @@ function jsonl(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
+// `fast` must select the bounded rollout path without invoking app-server I/O.
+const fastModeExec = {} as ExecService;
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe('Codex external-session candidate helpers', () => {
-  it('round-trips generation-fenced candidate continuation cursors', () => {
-    const cursor = encodeCodexExternalSessionCandidateCursor({
+  it('round-trips generation-fenced candidate scan cursors', () => {
+    const boundary = {
       sourceGeneration: 'source-generation',
       containerKey: '000000:2:2026/07/23',
       fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
-    });
+      scanned: 1_250,
+    };
 
-    expect(decodeCodexExternalSessionCandidateCursor(cursor)).toEqual({
+    expect(
+      decodeCodexExternalSessionCandidateCursor(encodeCodexExternalSessionCandidateCursor(boundary)),
+    ).toEqual(boundary);
+    expect(decodeCodexExternalSessionCandidateCursor('not-a-cursor')).toBeNull();
+  });
+
+  it.each([
+    ['v2 traversal position without scan progress', {
+      v: 2,
+      kind: 'codexRolloutCandidatePage',
       sourceGeneration: 'source-generation',
       containerKey: '000000:2:2026/07/23',
       fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
-    });
-    expect(decodeCodexExternalSessionCandidateCursor('not-a-cursor')).toBeNull();
+    }],
+    ['v3 last-activity ordering key', {
+      v: 3,
+      kind: 'codexRolloutCandidatePage',
+      sourceGeneration: 'source-generation',
+      updatedAtMs: 1_753_257_600_123,
+      remoteSessionId: '11111111-1111-1111-1111-111111111111',
+    }],
+  ])('rejects the superseded %s cursor', (_label, cursor) => {
+    // Neither superseded cursor names a position in the bounded scan the host
+    // candidate index drives. Rejecting them routes the surface through its
+    // existing source-changed refresh instead of silently resuming from a
+    // meaningless position.
+    expect(decodeCodexExternalSessionCandidateCursor(
+      Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url'),
+    )).toBeNull();
   });
 
   it('round-trips candidate index cursors and clamps invalid offsets', () => {
@@ -99,14 +127,34 @@ describe('Codex external-session candidate helpers', () => {
         'utf8',
       );
 
-      const page = await listCodexSessionCandidates({
+      const request = {
         source: { kind: 'codexHome', home: 'user' },
         activeServerDir: join(root, 'active-server'),
         env: { CODEX_HOME: codexHome } as NodeJS.ProcessEnv,
+        exec: fastModeExec,
         limit: 10,
         searchMode: 'fast',
+      } as const;
+
+      // Unsearched browse is the host candidate index's bounded build. Its rows
+      // carry preparation progress AND the title, because the chunk head-reads
+      // only the rows it returns — the whole-corpus work the chunked build
+      // exists to avoid is reading every SCANNED rollout, not every served one.
+      const browse = await listCodexSessionCandidates(request);
+      expect(browse.preparation).toEqual({ kind: 'building_candidate_index', scanned: 1 });
+      expect(browse.candidates).toHaveLength(1);
+      expect(browse.candidates[0]).toMatchObject({
+        remoteSessionId,
+        activity: 'unknown',
+        title: expectedTitle,
       });
 
+      // The exact-id search route hydrates the same row through the same title
+      // owner, so a served row cannot change its title by route; hydration adds
+      // the cwd the chunk does not read.
+      const page = await listCodexSessionCandidates({ ...request, searchTerm: remoteSessionId });
+
+      expect(page.preparation).toBeUndefined();
       expect(page.candidates).toHaveLength(1);
       expect(page.candidates[0]).toMatchObject({
         remoteSessionId,

@@ -1,4 +1,4 @@
-import type { SessionPermissionsServiceV1 } from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { SessionPermissionsService as SessionPermissionsServiceV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import { looksLikeCodexApprovalRequestUserInput } from './requestUserInputQuestions.js';
 

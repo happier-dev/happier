@@ -89,6 +89,15 @@ function sourceParams(fixture: Readonly<{
   };
 }
 
+function transcriptItemText(item: Readonly<{ raw: unknown }>): string {
+  const raw = item.raw as Readonly<{
+    content?: Readonly<{ data?: Readonly<{ message?: unknown }> }>;
+  }>;
+  const message = raw.content?.data?.message;
+  if (typeof message !== 'string') throw new Error('Expected a Codex agent message item');
+  return message;
+}
+
 function decodeCursorRecord(cursor: string): Record<string, unknown> {
   return JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Record<string, unknown>;
 }
@@ -205,7 +214,55 @@ describe('Codex external transcript cursor generations', () => {
     }
   });
 
-  it('reports skipped rollout records while advancing visible items', async () => {
+  it('fails closed when a previously missing archived-sessions root appears', async () => {
+    const fixture = await createFixture();
+    try {
+      await writeFile(
+        join(
+          fixture.dayDir,
+          `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`,
+        ),
+        rollout({
+          remoteSessionId: fixture.remoteSessionId,
+          timestamp: '2026-07-23T08:00:00.000Z',
+          messages: ['current source fixture'],
+        }),
+        'utf8',
+      );
+      const initial = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        cursor: null,
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      if (!initial.tailCursor) throw new Error('Expected a Codex tail cursor');
+      const initialCursor = decodeCursorRecord(initial.tailCursor);
+      expect(initialCursor.sourceGeneration).toContain('missing');
+
+      await mkdir(join(fixture.codexHome, 'archived_sessions'));
+
+      const after = await readAfterCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        cursor: initial.tailCursor,
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      expect(after).toMatchObject({
+        items: [],
+        tailCursor: expect.any(String),
+        truncated: true,
+        readAfterOutcome: 'source_replaced',
+      });
+      const replacementCursor = decodeCursorRecord(after.tailCursor ?? '');
+      expect(replacementCursor.sourceGeneration).not.toEqual(initialCursor.sourceGeneration);
+      expect(replacementCursor.streams).toEqual(initialCursor.streams);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows canonical non-transcript metadata to advance with visible items', async () => {
     const fixture = await createFixture();
     try {
       const rolloutPath = join(
@@ -241,17 +298,12 @@ describe('Codex external transcript cursor generations', () => {
           },
         }),
         jsonl({
-          type: 'unsupported_record',
-          timestamp: '2026-07-23T08:00:02.000Z',
-          payload: { ignored: true },
-        }),
-        jsonl({
           type: 'response_item',
-          timestamp: '2026-07-23T08:00:03.000Z',
+          timestamp: '2026-07-23T08:00:02.000Z',
           payload: {
             type: 'message',
             role: 'assistant',
-            content: [{ type: 'output_text', text: 'visible after skipped record' }],
+            content: [{ type: 'output_text', text: 'visible after metadata record' }],
           },
         }),
       ].join(''), 'utf8');
@@ -272,13 +324,88 @@ describe('Codex external transcript cursor generations', () => {
             count: 1,
             positions: [expect.any(Number)],
           },
-          {
-            code: 'unsupported_record_skipped',
-            count: 1,
-            positions: [expect.any(Number)],
-          },
         ],
       });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails before yielding a successor cursor for unsupported current rollout records', async () => {
+    const fixture = await createFixture();
+    try {
+      const rolloutPath = join(
+        fixture.dayDir,
+        `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`,
+      );
+      await writeFile(
+        rolloutPath,
+        [
+          jsonl({
+            type: 'session_meta',
+            timestamp: '2026-07-23T08:00:00.000Z',
+            payload: {
+              id: fixture.remoteSessionId,
+              timestamp: '2026-07-23T08:00:00.000Z',
+              cwd: '/repo/codex-transcript-cursor',
+            },
+          }),
+          jsonl({
+            type: 'unsupported_record',
+            timestamp: '2026-07-23T08:00:01.000Z',
+            payload: { ignored: true },
+          }),
+        ].join(''),
+        'utf8',
+      );
+
+      await expect(pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      })).rejects.toThrow(/unsupported rollout record/u);
+
+      await writeFile(
+        rolloutPath,
+        rollout({
+          remoteSessionId: fixture.remoteSessionId,
+          timestamp: '2026-07-23T08:00:00.000Z',
+          messages: ['initial item'],
+        }),
+        'utf8',
+      );
+      const initial = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      if (!initial.tailCursor) throw new Error('Expected a Codex tail cursor');
+
+      await appendFile(rolloutPath, [
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:00:02.000Z',
+          payload: { type: 'unrecognized_current_shape' },
+        }),
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:00:03.000Z',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'must not bypass unsupported record' }],
+          },
+        }),
+      ].join(''));
+
+      await expect(readAfterCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        cursor: initial.tailCursor,
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      })).rejects.toThrow(/unsupported rollout record/u);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -489,7 +616,7 @@ describe('Codex external transcript cursor generations', () => {
     }
   });
 
-  it('rejects a v7 cursor with one current rollout stream omitted', async () => {
+  it('rejects a v7 cursor with one current rollout stream omitted before a canonical reread', async () => {
     const fixture = await createFixture();
     try {
       for (const [time, message] of [
@@ -533,14 +660,86 @@ describe('Codex external transcript cursor generations', () => {
       })).resolves.toMatchObject({
         items: [],
         truncated: true,
-        readAfterOutcome: 'source_replaced',
+        readAfterOutcome: 'gap_or_cursor_expired',
       });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
 
-  it('returns a typed reset when the current rollout membership gains a stream', async () => {
+  it('keeps exact path continuity when cursor stream membership is reordered', async () => {
+    const fixture = await createFixture();
+    try {
+      const files = [
+        join(
+          fixture.dayDir,
+          `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`,
+        ),
+        join(
+          fixture.dayDir,
+          `rollout-2026-07-23T09-00-00-${fixture.remoteSessionId}.jsonl`,
+        ),
+      ];
+      for (const [index, file] of files.entries()) {
+        await writeFile(file, rollout({
+          remoteSessionId: fixture.remoteSessionId,
+          timestamp: `2026-07-23T${index === 0 ? '08' : '09'}:00:00.000Z`,
+          messages: [`initial stream ${index + 1}`],
+        }), 'utf8');
+      }
+      const initial = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      if (!initial.tailCursor) throw new Error('Expected a multi-stream tail cursor');
+      const cursorRecord = decodeCursorRecord(initial.tailCursor);
+      const streams = Array.isArray(cursorRecord.streams) ? cursorRecord.streams : [];
+      expect(streams).toHaveLength(2);
+      const reorderedCursor = encodeCursorRecord({
+        ...cursorRecord,
+        streams: [...streams].reverse(),
+      });
+
+      await appendFile(files[0]!, jsonl({
+        type: 'response_item',
+        timestamp: '2026-07-23T10:00:00.000Z',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'first path append' }],
+        },
+      }));
+      await appendFile(files[1]!, jsonl({
+        type: 'response_item',
+        timestamp: '2026-07-23T10:00:01.000Z',
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'second path append' }],
+        },
+      }));
+
+      const after = await readAfterCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        cursor: reorderedCursor,
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      expect(after.readAfterOutcome).toBeUndefined();
+      expect(after.items.map((item) => (
+        item.raw.content.type === 'codex'
+          && item.raw.content.data.type === 'message'
+          ? item.raw.content.data.message
+          : null
+      ))).toEqual(['first path append', 'second path append']);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers exact membership growth but keeps prior-stream replacement terminal', async () => {
     const fixture = await createFixture();
     try {
       const firstFile = join(
@@ -584,9 +783,107 @@ describe('Codex external transcript cursor generations', () => {
         items: [],
         truncated: true,
         tailCursor: expect.any(String),
-        readAfterOutcome: 'source_replaced',
+        readAfterOutcome: 'gap_or_cursor_expired',
       });
       expect(after.nextCursor).not.toBe(firstPage.tailCursor);
+
+      await writeFile(firstFile, rollout({
+        remoteSessionId: fixture.remoteSessionId,
+        timestamp: '2026-07-23T08:00:00.000Z',
+        messages: ['destructively replaced first stream'],
+      }), 'utf8');
+      await expect(readAfterCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        cursor: firstPage.tailCursor,
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      })).resolves.toMatchObject({
+        items: [],
+        truncated: true,
+        readAfterOutcome: 'source_replaced',
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('treats a root-family child with a root-named rollout file as additive membership exactly once', async () => {
+    const fixture = await createFixture();
+    const childThreadId = '22222222-2222-2222-2222-222222222222';
+    try {
+      await writeFile(
+        join(
+          fixture.dayDir,
+          `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`,
+        ),
+        [
+          jsonl({
+            type: 'session_meta',
+            timestamp: '2026-07-23T08:00:00.000Z',
+            payload: {
+              id: fixture.remoteSessionId,
+              timestamp: '2026-07-23T08:00:00.000Z',
+              cwd: '/repo/codex-transcript-cursor',
+            },
+          }),
+          jsonl({
+            type: 'event_msg',
+            timestamp: '2026-07-23T08:00:01.000Z',
+            payload: {
+              type: 'collab_agent_spawn_end',
+              new_thread_id: childThreadId,
+              new_agent_nickname: 'Child',
+              new_agent_role: 'explorer',
+              prompt: 'inspect the repo',
+            },
+          }),
+        ].join(''),
+        'utf8',
+      );
+      const initial = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      if (!initial.tailCursor) throw new Error('Expected an initial tail cursor');
+
+      await writeFile(
+        join(
+          fixture.dayDir,
+          `rollout-2026-07-23T09-00-00-${fixture.remoteSessionId}.jsonl`,
+        ),
+        rollout({
+          remoteSessionId: childThreadId,
+          rootSessionId: fixture.remoteSessionId,
+          timestamp: '2026-07-23T09:00:00.000Z',
+          messages: ['mislabeled child output'],
+        }),
+        'utf8',
+      );
+
+      await expect(readAfterCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        cursor: initial.tailCursor,
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      })).resolves.toMatchObject({
+        items: [],
+        truncated: true,
+        readAfterOutcome: 'gap_or_cursor_expired',
+      });
+
+      const canonicalPage = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 64 * 1024,
+        maxItems: 20,
+      });
+      expect(canonicalPage.items.filter((item) => transcriptItemText(item) === 'mislabeled child output'))
+        .toHaveLength(1);
+      expect(canonicalPage.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sidechainId: childThreadId }),
+      ]));
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -649,6 +946,7 @@ describe('Codex external transcript cursor generations', () => {
       ));
 
       expect(childItems).toHaveLength(1);
+      expect(childItems[0]).toMatchObject({ sidechainId: childThreadId });
       expect(childItems[0]?.raw.content).toMatchObject({
         data: { sidechainId: childThreadId },
       });
@@ -657,7 +955,84 @@ describe('Codex external transcript cursor generations', () => {
     }
   });
 
-  it('resets on a delayed child stream and discovers it through a canonical reread', async () => {
+  it('includes a sidechain whose spawn falls after the former bounded content scan', async () => {
+    const fixture = await createFixture();
+    const childThreadId = '33333333-3333-3333-3333-333333333333';
+    try {
+      const rootRolloutPath = join(
+        fixture.dayDir,
+        `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`,
+      );
+      const metadataBeforeSpawn = Array.from({ length: 513 }, () => jsonl({
+        type: 'session_meta',
+        timestamp: '2026-07-23T08:00:00.000Z',
+        payload: {
+          id: fixture.remoteSessionId,
+          timestamp: '2026-07-23T08:00:00.000Z',
+          cwd: '/repo/codex-transcript-cursor',
+          padding: 'x'.repeat(3 * 1024),
+        },
+      }));
+      await writeFile(
+        rootRolloutPath,
+        [
+          ...metadataBeforeSpawn,
+          jsonl({
+            type: 'event_msg',
+            timestamp: '2026-07-23T08:00:01.000Z',
+            payload: {
+              type: 'collab_agent_spawn_end',
+              new_thread_id: childThreadId,
+              new_agent_nickname: 'Late child',
+              new_agent_role: 'explorer',
+              prompt: 'inspect the repo',
+            },
+          }),
+        ].join(''),
+        'utf8',
+      );
+      const childRolloutPath = join(fixture.dayDir, 'rollout-late-child.jsonl');
+      await writeFile(
+        childRolloutPath,
+        rollout({
+          remoteSessionId: childThreadId,
+          rootSessionId: fixture.remoteSessionId,
+          timestamp: '2026-07-23T08:00:02.000Z',
+          messages: ['late sidechain output'],
+        }),
+        'utf8',
+      );
+
+      const page = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 4 * 1024 * 1024,
+        maxItems: 20,
+      });
+
+      expect(page.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sidechainId: childThreadId,
+          raw: expect.objectContaining({
+            content: expect.objectContaining({
+              data: expect.objectContaining({ message: 'late sidechain output' }),
+            }),
+          }),
+        }),
+      ]));
+      if (!page.tailCursor) throw new Error('Expected a root-family tail cursor');
+      const cursor = decodeCursorRecord(page.tailCursor);
+      expect(cursor.streams).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          fileRelPath: expect.stringContaining('rollout-late-child.jsonl'),
+        }),
+      ]));
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports recoverable membership growth for a delayed child and discovers it through a canonical reread', async () => {
     const fixture = await createFixture();
     const childThreadId = '22222222-2222-2222-2222-222222222222';
     try {
@@ -719,7 +1094,7 @@ describe('Codex external transcript cursor generations', () => {
       expect(reset).toMatchObject({
         items: [],
         truncated: true,
-        readAfterOutcome: 'source_replaced',
+        readAfterOutcome: 'gap_or_cursor_expired',
       });
 
       const canonicalPage = await pageCodexExternalSessionTranscript({
@@ -738,6 +1113,97 @@ describe('Codex external transcript cursor generations', () => {
           },
         },
       }]);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it('stops paging once an exhausted scan returned every projected row behind a non-transcript prefix', async () => {
+    const fixture = await createFixture();
+    try {
+      const filePath = join(
+        fixture.dayDir,
+        `rollout-2026-07-23T08-00-00-${fixture.remoteSessionId}.jsonl`,
+      );
+      const nonTranscriptPrefix = [
+        jsonl({
+          type: 'session_meta',
+          timestamp: '2026-07-23T08:00:00.000Z',
+          payload: {
+            id: fixture.remoteSessionId,
+            timestamp: '2026-07-23T08:00:00.000Z',
+            cwd: '/repo/codex-transcript-cursor',
+          },
+        }),
+        jsonl({
+          type: 'turn_context',
+          timestamp: '2026-07-23T08:00:01.000Z',
+          payload: { cwd: '/repo/codex-transcript-cursor', notes: 'c'.repeat(8 * 1024) },
+        }),
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:00:02.000Z',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{
+              type: 'input_text',
+              text: `<environment_context>${'e'.repeat(8 * 1024)}</environment_context>`,
+            }],
+          },
+        }),
+      ].join('');
+      const visibleTexts = ['visible 1', 'visible 2', 'visible 3', 'visible 4', 'visible 5', 'visible 6'];
+      const projectableTail = visibleTexts.map((text, index) => jsonl({
+        type: 'response_item',
+        timestamp: new Date(Date.parse('2026-07-23T08:00:03.000Z') + (index * 1_000)).toISOString(),
+        payload: {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text }],
+        },
+      })).join('');
+      await writeFile(filePath, `${nonTranscriptPrefix}${projectableTail}`, 'utf8');
+      expect(Buffer.byteLength(nonTranscriptPrefix, 'utf8')).toBeGreaterThan(16 * 1024);
+
+      const exhausted = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 512 * 1024,
+        maxItems: 200,
+      });
+
+      expect(exhausted.items.map((item) => transcriptItemText(item))).toEqual(visibleTexts);
+      expect(exhausted).toMatchObject({
+        hasMore: false,
+        nextCursor: null,
+        truncated: false,
+        tailCursor: expect.any(String),
+      });
+
+      // An equally exhausted scan that had to drop an older projected row still has more to page.
+      const budgeted = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        maxBytes: 512 * 1024,
+        maxItems: 5,
+      });
+      expect(budgeted.items.map((item) => transcriptItemText(item))).toEqual(visibleTexts.slice(1));
+      expect(budgeted).toMatchObject({
+        hasMore: true,
+        nextCursor: expect.any(String),
+        truncated: false,
+      });
+
+      const continued = await pageCodexExternalSessionTranscript({
+        ...sourceParams(fixture),
+        direction: 'older',
+        cursor: budgeted.nextCursor ?? '',
+        maxBytes: 512 * 1024,
+        maxItems: 5,
+      });
+      expect(continued.items.map((item) => transcriptItemText(item))).toEqual([visibleTexts[0]]);
+      expect(continued).toMatchObject({ hasMore: false, nextCursor: null });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -1006,6 +1472,7 @@ describe('Codex external transcript cursor generations', () => {
 
       expect(continued).toMatchObject({
         items: [{
+          sidechainId: null,
           raw: {
             content: {
               data: {
@@ -1105,7 +1572,7 @@ describe('Codex external transcript cursor generations', () => {
     }
   });
 
-  it('returns typed resets when the complete rollout set disappears', async () => {
+  it('treats complete rollout-stream loss as source replacement', async () => {
     const fixture = await createFixture();
     try {
       const filePath = join(
@@ -1149,7 +1616,7 @@ describe('Codex external transcript cursor generations', () => {
         nextCursor: null,
         tailCursor: null,
         truncated: true,
-        readAfterOutcome: 'gap_or_cursor_expired',
+        readAfterOutcome: 'source_replaced',
       });
       expect(older).toEqual({
         items: [],
@@ -1206,7 +1673,11 @@ describe('Codex external transcript cursor generations', () => {
           0,
         ),
       ).toBeLessThanOrEqual(aggregateBudget);
-      expect(bounded.truncated).toBe(true);
+      expect(bounded).toMatchObject({
+        hasMore: true,
+        nextCursor: expect.any(String),
+        truncated: false,
+      });
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

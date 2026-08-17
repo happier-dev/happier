@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type {
+  OauthCredentialRecord,
+  TokenCredentialRecord,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 type LegacyRuntimeAuthFailureSourceInput = Readonly<{
   reportedCredentialRevision: string | null;
@@ -11,7 +14,7 @@ type LegacyRuntimeAuthFailureSourceInput = Readonly<{
     credentialRevision: string | null;
   }>;
   currentCredential: Readonly<{
-    record: ConnectedServiceCredentialRecordV1;
+    record: OauthCredentialRecord | TokenCredentialRecord;
     credentialRevision: string;
   }>;
 }>;

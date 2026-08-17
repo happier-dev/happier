@@ -9,6 +9,7 @@
   "tiers": {
     "smoke": ["execute_trace_ok", "acp_probe_capabilities"],
     "extended": [
+      "daemon_runner_continuity_a_to_b_to_c",
       "read_in_workspace",
       "acp_in_flight_steer",
       "acp_probe_models",

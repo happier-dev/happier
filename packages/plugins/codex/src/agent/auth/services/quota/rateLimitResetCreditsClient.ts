@@ -1,4 +1,4 @@
-import type { CodexRuntimeFetch } from '../runtimeFetch.js';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 export const OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL =
   'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
@@ -11,7 +11,7 @@ export type CodexRateLimitResetCreditsClientParams = Readonly<{
   accountId?: string | null;
   userAgent?: string;
   signal?: AbortSignal;
-  runtimeFetch: CodexRuntimeFetch;
+  runtimeFetch: Pick<HttpService, 'request'>;
 }>;
 
 function buildHeaders(params: Readonly<{
@@ -67,23 +67,27 @@ function parseConsumeOutcome(value: unknown): CodexRateLimitResetCreditOutcome {
   };
 }
 
-function buildProviderError(status: number, statusText: string | undefined): Error {
-  return new Error(`OpenAI reset-credit fetch failed (${status}): ${statusText || 'HTTP error'}`);
+function buildProviderError(status: number): Error {
+  return new Error(`OpenAI reset-credit fetch failed (${status}): HTTP error`);
+}
+
+function readJsonBody(response: Awaited<ReturnType<HttpService['request']>>): unknown {
+  return JSON.parse(new TextDecoder().decode(response.body)) as unknown;
 }
 
 export async function fetchCodexRateLimitResetCredits(
   params: CodexRateLimitResetCreditsClientParams & Readonly<{ resetCreditsUrl?: string }>,
 ): Promise<unknown> {
-  const response = await params.runtimeFetch({
+  const response = await params.runtimeFetch.request({
     url: params.resetCreditsUrl ?? OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL,
     method: 'GET',
     headers: buildHeaders(params),
-    signal: params.signal,
-  });
-  if (!response.ok) {
-    throw buildProviderError(response.status, response.statusText);
+    redirect: 'error',
+  }, { signal: params.signal });
+  if (response.status < 200 || response.status >= 300) {
+    throw buildProviderError(response.status);
   }
-  return await response.json();
+  return readJsonBody(response);
 }
 
 export async function consumeCodexRateLimitResetCredit(
@@ -100,18 +104,18 @@ export async function consumeCodexRateLimitResetCredit(
   if (!idempotencyKey) {
     throw new Error('OpenAI reset-credit consume failed: missing redeem request id');
   }
-  const response = await params.runtimeFetch({
+  const response = await params.runtimeFetch.request({
     url: params.consumeUrl ?? OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDIT_CONSUME_URL,
     method: 'POST',
     headers: buildHeaders(params),
-    body: {
+    body: new TextEncoder().encode(JSON.stringify({
       redeem_request_id: idempotencyKey,
       ...(providerCreditId ? { credit_id: providerCreditId } : {}),
-    },
-    signal: params.signal,
-  });
-  if (!response.ok) {
-    throw buildProviderError(response.status, response.statusText);
+    })),
+    redirect: 'error',
+  }, { signal: params.signal });
+  if (response.status < 200 || response.status >= 300) {
+    throw buildProviderError(response.status);
   }
-  return parseConsumeOutcome(await response.json());
+  return parseConsumeOutcome(readJsonBody(response));
 }

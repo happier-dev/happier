@@ -3,14 +3,22 @@ import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/experimental/sessions';
-
+import {
+  mapCodexExternalSessionWorkWithConcurrency,
+  throwIfCodexExternalSessionInvocationStopped,
+  type CodexExternalSessionInvocationBounds,
+} from '../../surfaces/sessions/external/invocationBounds.js';
+import type { CodexExternalSessionSource } from '../../surfaces/sessions/external/models.js';
 import type { CodexExternalSessionHomeEntry } from './homeEntries.js';
 import { homeEntries } from './homeEntries.js';
 import {
   parseCodexRolloutSessionIdFromFilename,
   readCodexSessionMetaFromRollout,
 } from './indexData.js';
+import {
+  CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
+  readCodexSessionTitleFromRollout,
+} from './rolloutTitle.js';
 
 export type CodexRolloutCandidateGroup = Readonly<{
   updatedAtMs: number;
@@ -26,6 +34,12 @@ export type CodexRolloutCandidateEntry = Readonly<{
   remoteSessionId: string;
   source: CodexExternalSessionHomeEntry['source'];
   group: CodexRolloutCandidateGroup;
+  /**
+   * The session's first user message, read from the same earliest rollout file
+   * the selected-candidate build reads. Absent when the row has no usable title;
+   * an identifier-only row is correct, an invented one is not.
+   */
+  title?: string;
 }>;
 
 export type CodexRolloutCandidateSelection = Readonly<
@@ -44,16 +58,36 @@ export type CodexRolloutCandidateSelection = Readonly<
   }
 >;
 
-export type CodexRolloutCandidatePageBoundary = Readonly<{
+/**
+ * Continuation key for the bounded candidate scan the host candidate-index owner
+ * drives. It names a traversal position — the last rollout file consumed, in the
+ * deterministic container/filename order below — not a position in the final
+ * last-activity order, because the host index alone sorts and serves the ordered
+ * page. A traversal position is stable under the mutation a browse actually
+ * races: appending to an existing rollout moves that session's activity key but
+ * not its place in the traversal. Fencing it on every swept file's mtime instead
+ * would restart the whole multi-chunk build on any live Codex turn.
+ *
+ * `sourceGeneration` is scoped to exactly what THIS resume point depends on: the
+ * single day container the cursor resumes inside, whose entry set decides
+ * whether `fileName` is still the right anchor. A rollout created in any other
+ * container cannot move that anchor, so it must not discard an in-progress
+ * build — a corpus-wide generation makes an actively used Codex install restart
+ * its build faster than the build advances, and it never converges.
+ */
+export type CodexRolloutCandidateScanBoundary = Readonly<{
   sourceGeneration: string;
   containerKey: string;
   fileName: string;
+  scanned: number;
 }>;
 
-export type CodexRolloutCandidatePage = Readonly<{
+export type CodexRolloutCandidateScanChunk = Readonly<{
   entries: CodexRolloutCandidateEntry[];
   sourceGeneration: string;
-  nextBoundary: CodexRolloutCandidatePageBoundary | null;
+  /** Cumulative rollout files consumed by this build, for `preparation.scanned`. */
+  scanned: number;
+  nextBoundary: CodexRolloutCandidateScanBoundary | null;
   sourceChanged?: boolean;
 }>;
 
@@ -76,12 +110,100 @@ type SearchableRolloutCandidate = Readonly<{
   details?: unknown;
 }>;
 
+type GroupedRolloutCandidates = Map<string, {
+  group: CodexRolloutCandidateGroup;
+  source: CodexExternalSessionHomeEntry['source'];
+}>;
+
+/**
+ * Ordering is compared by UTF-16 code unit, never by `localeCompare`: the host
+ * candidate-query owner sorts and validates candidate pages with an explicit
+ * code-unit comparator, and Codex provider ids are not guaranteed lowercase
+ * UUIDs (both rollout filenames and `session_meta.id` accept arbitrary ids), so
+ * ICU collation would order a page the host then rejects as unordered.
+ */
+export function compareCodexRolloutCandidateCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+/**
+ * The single candidate ordering rule: most recent activity first, with the
+ * provider session id breaking ties so paging is deterministic.
+ */
+export function compareCodexRolloutCandidateEntries(
+  left: CodexRolloutCandidateEntry,
+  right: CodexRolloutCandidateEntry,
+): number {
+  return right.group.updatedAtMs - left.group.updatedAtMs
+    || compareCodexRolloutCandidateCodeUnits(
+      String(left.remoteSessionId),
+      String(right.remoteSessionId),
+    );
+}
+
+function mergeRolloutCandidateFile(params: Readonly<{
+  grouped: GroupedRolloutCandidates;
+  remoteSessionId: string;
+  filePath: string;
+  mtimeMs: number;
+  archived: boolean;
+  source: CodexExternalSessionHomeEntry['source'];
+}>): void {
+  const entrySortMs = parseRolloutTimestampMs(params.filePath);
+  const existing = params.grouped.get(params.remoteSessionId);
+  if (!existing) {
+    params.grouped.set(params.remoteSessionId, {
+      source: params.source,
+      group: {
+        updatedAtMs: params.mtimeMs,
+        archived: params.archived,
+        latestFilePath: params.filePath,
+        earliestFilePath: params.filePath,
+        earliestMtimeMs: params.mtimeMs,
+        latestSortMs: entrySortMs,
+        earliestSortMs: entrySortMs,
+      },
+    });
+    return;
+  }
+  params.grouped.set(params.remoteSessionId, {
+    source: entrySortMs >= existing.group.latestSortMs ? params.source : existing.source,
+    group: {
+      updatedAtMs: Math.max(existing.group.updatedAtMs, params.mtimeMs),
+      archived: existing.group.archived && params.archived,
+      latestFilePath: entrySortMs >= existing.group.latestSortMs
+        ? params.filePath
+        : existing.group.latestFilePath,
+      earliestFilePath: entrySortMs <= existing.group.earliestSortMs
+        ? params.filePath
+        : existing.group.earliestFilePath,
+      earliestMtimeMs: Math.min(existing.group.earliestMtimeMs, params.mtimeMs),
+      latestSortMs: Math.max(existing.group.latestSortMs, entrySortMs),
+      earliestSortMs: Math.min(existing.group.earliestSortMs, entrySortMs),
+    },
+  });
+}
+
+function toOrderedRolloutCandidateEntries(
+  grouped: GroupedRolloutCandidates,
+): CodexRolloutCandidateEntry[] {
+  return Array.from(grouped.entries())
+    .map(([remoteSessionId, entry]) => ({
+      remoteSessionId,
+      source: entry.source,
+      group: entry.group,
+    }))
+    .sort(compareCodexRolloutCandidateEntries);
+}
+
 async function collectRolloutFiles(params: Readonly<{
   rootDir: string;
   maxDepth: number;
   archived: boolean;
   filenameIncludes?: string;
-}>): Promise<RolloutFileEntry[]> {
+}> & CodexExternalSessionInvocationBounds): Promise<RolloutFileEntry[]> {
   const out: RolloutFileEntry[] = [];
   const maxDepth = Math.max(0, Math.trunc(params.maxDepth));
   const filenameIncludes = typeof params.filenameIncludes === 'string'
@@ -89,14 +211,18 @@ async function collectRolloutFiles(params: Readonly<{
     : '';
 
   async function walk(dir: string, depth: number): Promise<void> {
+    throwIfCodexExternalSessionInvocationStopped(params);
     if (depth > maxDepth) return;
     let entries: Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
+      throwIfCodexExternalSessionInvocationStopped(params);
       return;
     }
+    throwIfCodexExternalSessionInvocationStopped(params);
     for (const entry of entries) {
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (entry.isSymbolicLink()) continue;
       const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
       const full = join(dir, name);
@@ -109,8 +235,10 @@ async function collectRolloutFiles(params: Readonly<{
       if (filenameIncludes && !name.toLowerCase().includes(filenameIncludes)) continue;
       try {
         const s = await stat(full);
+        throwIfCodexExternalSessionInvocationStopped(params);
         out.push({ filePath: full, mtimeMs: s.mtimeMs, archived: params.archived });
       } catch {
+        throwIfCodexExternalSessionInvocationStopped(params);
         // Ignore unreadable rollout files; discovery should be best-effort.
       }
     }
@@ -181,100 +309,86 @@ export function canSearchCodexRolloutFilename(searchTerm: string): boolean {
   return searchTerm.length >= 4 && /^[a-z0-9._:-]+$/i.test(searchTerm);
 }
 
-async function resolveRolloutCandidateSessionId(filePath: string): Promise<string | null> {
+async function resolveRolloutCandidateSessionId(
+  filePath: string,
+  bounds: CodexExternalSessionInvocationBounds,
+): Promise<string | null> {
+  throwIfCodexExternalSessionInvocationStopped(bounds);
   const fromFilename = parseCodexRolloutSessionIdFromFilename(filePath);
   if (fromFilename) {
     return fromFilename;
   }
-  const sessionMeta = await readCodexSessionMetaFromRollout(filePath);
+  const sessionMeta = await readCodexSessionMetaFromRollout(filePath, bounds);
+  throwIfCodexExternalSessionInvocationStopped(bounds);
   const sessionId = typeof sessionMeta?.id === 'string' ? sessionMeta.id.trim() : '';
   return sessionId || null;
 }
 
 export async function collectCodexRolloutCandidateEntries(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
   filenameIncludes?: string;
-}>): Promise<CodexRolloutCandidateEntry[]> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateEntry[]> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const entries = await homeEntries({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
+    signal: params.signal,
+    deadlineAtMs: params.deadlineAtMs,
   });
-  const grouped = new Map<string, {
-    group: CodexRolloutCandidateGroup;
-    source: CodexExternalSessionHomeEntry['source'];
-  }>();
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const grouped: GroupedRolloutCandidates = new Map();
 
   for (const homeEntry of entries) {
+    throwIfCodexExternalSessionInvocationStopped(params);
     const files = [
       ...(await collectRolloutFiles({
         rootDir: join(homeEntry.codexHome, 'sessions'),
         maxDepth: 10,
         archived: false,
         filenameIncludes: params.filenameIncludes,
+        signal: params.signal,
+        deadlineAtMs: params.deadlineAtMs,
       })),
       ...(await collectRolloutFiles({
         rootDir: join(homeEntry.codexHome, 'archived_sessions'),
         maxDepth: 10,
         archived: true,
         filenameIncludes: params.filenameIncludes,
+        signal: params.signal,
+        deadlineAtMs: params.deadlineAtMs,
       })),
     ];
     for (const entry of files) {
-      const remoteSessionId = await resolveRolloutCandidateSessionId(entry.filePath);
+      throwIfCodexExternalSessionInvocationStopped(params);
+      const remoteSessionId = await resolveRolloutCandidateSessionId(entry.filePath, params);
       if (!remoteSessionId) continue;
-      const existing = grouped.get(remoteSessionId);
-      const entrySortMs = parseRolloutTimestampMs(entry.filePath);
-      if (!existing) {
-        grouped.set(remoteSessionId, {
-          source: homeEntry.source,
-          group: {
-            updatedAtMs: entry.mtimeMs,
-            archived: entry.archived,
-            latestFilePath: entry.filePath,
-            earliestFilePath: entry.filePath,
-            earliestMtimeMs: entry.mtimeMs,
-            latestSortMs: entrySortMs,
-            earliestSortMs: entrySortMs,
-          },
-        });
-        continue;
-      }
-      grouped.set(remoteSessionId, {
-        source: entrySortMs >= existing.group.latestSortMs ? homeEntry.source : existing.source,
-        group: {
-          updatedAtMs: Math.max(existing.group.updatedAtMs, entry.mtimeMs),
-          archived: existing.group.archived && entry.archived,
-          latestFilePath: entrySortMs >= existing.group.latestSortMs ? entry.filePath : existing.group.latestFilePath,
-          earliestFilePath: entrySortMs <= existing.group.earliestSortMs ? entry.filePath : existing.group.earliestFilePath,
-          earliestMtimeMs: Math.min(existing.group.earliestMtimeMs, entry.mtimeMs),
-          latestSortMs: Math.max(existing.group.latestSortMs, entrySortMs),
-          earliestSortMs: Math.min(existing.group.earliestSortMs, entrySortMs),
-        },
+      mergeRolloutCandidateFile({
+        grouped,
+        remoteSessionId,
+        filePath: entry.filePath,
+        mtimeMs: entry.mtimeMs,
+        archived: entry.archived,
+        source: homeEntry.source,
       });
     }
   }
 
-  return Array.from(grouped.entries())
-    .map(([remoteSessionId, entry]) => ({
-      remoteSessionId,
-      source: entry.source,
-      group: entry.group,
-    }))
-    .sort((a, b) => b.group.updatedAtMs - a.group.updatedAtMs || String(a.remoteSessionId).localeCompare(String(b.remoteSessionId)));
+  return toOrderedRolloutCandidateEntries(grouped);
 }
 
 export async function selectCodexRolloutCandidateEntries(params: Readonly<{
-  source: ExternalSessionsSource;
+  source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
   offset?: number;
   limit?: number;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
-}>): Promise<CodexRolloutCandidateSelection> {
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateSelection> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const searchTerm = normalizeCodexRolloutCandidateSearchTerm(params.searchTerm);
   const offset = Math.max(0, Math.trunc(params.offset ?? 0));
   const requestedLimit = Math.max(1, Math.trunc(params.limit ?? 1));
@@ -285,6 +399,8 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
       activeServerDir: params.activeServerDir,
       env: params.env,
       filenameIncludes: searchTerm,
+      signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
     });
     if (filenameMatches.length > 0) {
       const exactIdMatch = filenameMatches.some(({ remoteSessionId }) => remoteSessionId.toLowerCase() === searchTerm);
@@ -311,6 +427,8 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
+    signal: params.signal,
+    deadlineAtMs: params.deadlineAtMs,
   });
 
   if (!searchTerm) {
@@ -335,19 +453,29 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
   };
 }
 
-async function readDirectoryEntries(dir: string): Promise<Dirent[]> {
+async function readDirectoryEntries(
+  dir: string,
+  bounds: CodexExternalSessionInvocationBounds,
+): Promise<Dirent[]> {
+  throwIfCodexExternalSessionInvocationStopped(bounds);
   try {
-    return await readdir(dir, { withFileTypes: true });
+    const entries = await readdir(dir, { withFileTypes: true });
+    throwIfCodexExternalSessionInvocationStopped(bounds);
+    return entries;
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     return [];
   }
 }
 
 async function describeDirectoryGeneration(
   dir: string,
+  bounds: CodexExternalSessionInvocationBounds,
 ): Promise<string> {
+  throwIfCodexExternalSessionInvocationStopped(bounds);
   try {
     const metadata = await stat(dir, { bigint: true });
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     return [
       String(metadata.dev),
       String(metadata.ino),
@@ -357,6 +485,7 @@ async function describeDirectoryGeneration(
       String(metadata.size),
     ].join(':');
   } catch {
+    throwIfCodexExternalSessionInvocationStopped(bounds);
     return 'missing';
   }
 }
@@ -371,24 +500,14 @@ function isDirectoryEntry(entry: Dirent, pattern: RegExp): boolean {
     && pattern.test(directoryEntryName(entry));
 }
 
-async function describeCandidateContainersForHome(params: Readonly<{
+async function listCandidateContainersForHome(params: Readonly<{
   entry: CodexExternalSessionHomeEntry;
   homeIndex: number;
-}>): Promise<Readonly<{
-  containers: CandidateContainer[];
-  generationParts: string[];
-}>> {
+}> & CodexExternalSessionInvocationBounds): Promise<CandidateContainer[]> {
   const containers: CandidateContainer[] = [];
-  const generationParts: string[] = [
-    JSON.stringify(params.entry.source),
-    params.entry.codexHome,
-  ];
   const homeKey = String(params.homeIndex).padStart(6, '0');
   const sessionsRoot = join(params.entry.codexHome, 'sessions');
-  generationParts.push(
-    `sessions:${await describeDirectoryGeneration(sessionsRoot)}`,
-  );
-  const yearEntries = await readDirectoryEntries(sessionsRoot);
+  const yearEntries = await readDirectoryEntries(sessionsRoot, params);
   containers.push({
     key: `${homeKey}:2:0000/00/00`,
     dir: sessionsRoot,
@@ -398,34 +517,27 @@ async function describeCandidateContainersForHome(params: Readonly<{
   for (const yearEntry of yearEntries.filter((entry) =>
     isDirectoryEntry(entry, /^\d{4}$/u),
   )) {
+    throwIfCodexExternalSessionInvocationStopped(params);
     const year = directoryEntryName(yearEntry);
     const yearDir = join(sessionsRoot, year);
-    generationParts.push(
-      `sessions/${year}:${await describeDirectoryGeneration(yearDir)}`,
-    );
-    const monthEntries = await readDirectoryEntries(yearDir);
+    const monthEntries = await readDirectoryEntries(yearDir, params);
     for (const monthEntry of monthEntries.filter((entry) =>
       isDirectoryEntry(entry, /^(?:0[1-9]|1[0-2])$/u),
     )) {
+      throwIfCodexExternalSessionInvocationStopped(params);
       const month = directoryEntryName(monthEntry);
       const monthDir = join(yearDir, month);
-      generationParts.push(
-        `sessions/${year}/${month}:${await describeDirectoryGeneration(monthDir)}`,
-      );
-      const dayEntries = await readDirectoryEntries(monthDir);
+      const dayEntries = await readDirectoryEntries(monthDir, params);
       for (const dayEntry of dayEntries.filter((entry) =>
         isDirectoryEntry(entry, /^(?:0[1-9]|[12]\d|3[01])$/u),
       )) {
+        throwIfCodexExternalSessionInvocationStopped(params);
         const day = directoryEntryName(dayEntry);
-        const dayDir = join(monthDir, day);
-        generationParts.push(
-          `sessions/${year}/${month}/${day}:${await describeDirectoryGeneration(dayDir)}`,
-        );
         // Codex's measured native layout is sessions/YYYY/MM/DD/*.jsonl.
         // Keep day contents lazy so page one never stats/builds the full corpus.
         containers.push({
           key: `${homeKey}:2:${year}/${month}/${day}`,
-          dir: dayDir,
+          dir: join(monthDir, day),
           archived: false,
           source: params.entry.source,
         });
@@ -433,172 +545,240 @@ async function describeCandidateContainersForHome(params: Readonly<{
     }
   }
 
-  const archivedRoot = join(params.entry.codexHome, 'archived_sessions');
-  generationParts.push(
-    `archived_sessions:${await describeDirectoryGeneration(archivedRoot)}`,
-  );
   containers.push({
     key: `${homeKey}:1:0000/00/00`,
-    dir: archivedRoot,
+    dir: join(params.entry.codexHome, 'archived_sessions'),
     archived: true,
     source: params.entry.source,
   });
-  return { containers, generationParts };
+  return containers;
 }
 
-async function describeCandidateCorpus(params: Readonly<{
-  source: ExternalSessionsSource;
+/**
+ * Fingerprints exactly what one resume point depends on: the container the
+ * cursor resumes inside. Its entry set is what decides whether the boundary's
+ * `fileName` anchor is still correct, so a mutation there must invalidate the
+ * cursor and a mutation anywhere else must not.
+ */
+async function resolveResumeContainerGeneration(params: Readonly<{
+  containers: readonly CandidateContainer[];
+  containerKey: string | null;
+}> & CodexExternalSessionInvocationBounds): Promise<string> {
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const hash = createHash('sha256').update('codexRolloutCandidateResume:v1\n', 'utf8');
+  if (!params.containerKey) {
+    return hash.update('none\n', 'utf8').digest('base64url');
+  }
+  const container = params.containers.find(({ key }) => key === params.containerKey);
+  hash.update(`${params.containerKey}:`, 'utf8');
+  hash.update(
+    container
+      ? `${await describeDirectoryGeneration(container.dir, params)}\n`
+      : 'missing\n',
+    'utf8',
+  );
+  return hash.digest('base64url');
+}
+
+async function listCandidateCorpusContainers(params: Readonly<{
+  source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
-}>): Promise<Readonly<{
-  containers: CandidateContainer[];
-  sourceGeneration: string;
-}>> {
+}> & CodexExternalSessionInvocationBounds): Promise<CandidateContainer[]> {
+  throwIfCodexExternalSessionInvocationStopped(params);
   const entries = (await homeEntries(params))
     .sort((left, right) =>
-      left.codexHome.localeCompare(right.codexHome)
-      || JSON.stringify(left.source).localeCompare(JSON.stringify(right.source)),
+      compareCodexRolloutCandidateCodeUnits(left.codexHome, right.codexHome)
+      || compareCodexRolloutCandidateCodeUnits(
+        JSON.stringify(left.source),
+        JSON.stringify(right.source),
+      ),
     );
-  const descriptions = await Promise.all(entries.map((entry, homeIndex) =>
-    describeCandidateContainersForHome({ entry, homeIndex }),
+  const perHome = await Promise.all(entries.map((entry, homeIndex) =>
+    listCandidateContainersForHome({
+      entry,
+      homeIndex,
+      signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
+    }),
   ));
-  const generationParts = descriptions.flatMap(
-    (description) => description.generationParts,
-  );
-  return {
-    containers: descriptions
-      .flatMap((description) => description.containers)
-      .sort((left, right) => right.key.localeCompare(left.key)),
-    sourceGeneration: createHash('sha256')
-      .update(JSON.stringify(generationParts), 'utf8')
-      .digest('base64url'),
-  };
+  throwIfCodexExternalSessionInvocationStopped(params);
+  return perHome
+    .flat()
+    .sort((left, right) => compareCodexRolloutCandidateCodeUnits(right.key, left.key));
 }
 
-export async function pageCodexRolloutCandidateEntries(params: Readonly<{
-  source: ExternalSessionsSource;
+function rolloutCandidateFileNames(entries: readonly Dirent[]): string[] {
+  return entries
+    .filter((entry) => {
+      if (entry.isSymbolicLink() || !entry.isFile()) return false;
+      const name = directoryEntryName(entry);
+      return name.startsWith('rollout-') && name.endsWith('.jsonl');
+    })
+    .map(directoryEntryName)
+    // Newest creation stamp first, by UTF-16 code unit for the same reason the
+    // candidate order is: an ICU collation here would put the traversal and the
+    // `fileName` cursor comparison below into different orders.
+    .sort((left, right) => compareCodexRolloutCandidateCodeUnits(right, left));
+}
+
+/**
+ * Reads the title for the rows a chunk actually returns — never for a scanned
+ * file the chunk discards — from the same earliest rollout file the
+ * selected-candidate build reads. This is the only reason the identifier-only
+ * IN-PROGRESS page is not permanent on a large corpus: the host index serves
+ * partial rows without hydration, so a title has to arrive on the row itself.
+ */
+async function withRolloutCandidateTitles(params: Readonly<{
+  entries: readonly CodexRolloutCandidateEntry[];
+  env: NodeJS.ProcessEnv;
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateEntry[]> {
+  return await mapCodexExternalSessionWorkWithConcurrency(
+    params.entries,
+    resolveCodexRolloutSearchBuildConcurrency(params.env),
+    async (entry) => {
+      const title = await readCodexSessionTitleFromRollout(
+        entry.group.earliestFilePath,
+        params,
+        CODEX_ROLLOUT_TITLE_HEAD_BUDGET,
+      );
+      return title ? { ...entry, title } : entry;
+    },
+    params,
+  );
+}
+
+/**
+ * One bounded scan chunk of the rollout corpus, in newest-container-first
+ * traversal order.
+ *
+ * Complete work per call is bounded by `limit`: the corpus description reads
+ * only `sessions/YYYY/MM/DD` directory metadata (measured ~10–25 ms on a
+ * 49,880-file corpus), and only the rollout files this chunk actually consumes
+ * are statted or opened. Nothing here reads, stats, or groups the whole corpus,
+ * because the whole corpus does not fit the SDK's 3,000 ms per-source head
+ * acquisition: sweeping every rollout mtime to sort by last activity measured
+ * 2.9–3.7 s cold on that same corpus, and repeated once per continuation page.
+ *
+ * Last-activity ordering is therefore not this function's job. The host
+ * candidate-index owner accumulates these exact chunks, sorts them with the same
+ * `updatedAtMs`-then-code-unit rule, and alone serves the ordered page.
+ */
+export async function scanCodexRolloutCandidateChunk(params: Readonly<{
+  source: CodexExternalSessionSource;
   activeServerDir: string;
   env: NodeJS.ProcessEnv;
   limit: number;
-  after?: CodexRolloutCandidatePageBoundary | null;
-}>): Promise<CodexRolloutCandidatePage> {
-  const corpus = await describeCandidateCorpus(params);
-  if (
-    params.after
-    && params.after.sourceGeneration !== corpus.sourceGeneration
-  ) {
+  after?: CodexRolloutCandidateScanBoundary | null;
+}> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateScanChunk> {
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const containers = await listCandidateCorpusContainers(params);
+  throwIfCodexExternalSessionInvocationStopped(params);
+  const after = params.after ?? null;
+  const resumeGeneration = await resolveResumeContainerGeneration({
+    containers,
+    containerKey: after?.containerKey ?? null,
+    signal: params.signal,
+    deadlineAtMs: params.deadlineAtMs,
+  });
+  if (after && after.sourceGeneration !== resumeGeneration) {
     return {
       entries: [],
-      sourceGeneration: corpus.sourceGeneration,
+      sourceGeneration: resumeGeneration,
+      scanned: after.scanned,
       nextBoundary: null,
       sourceChanged: true,
     };
   }
 
   const limit = Math.max(1, Math.trunc(params.limit));
-  const grouped = new Map<string, {
-    group: CodexRolloutCandidateGroup;
-    source: CodexExternalSessionHomeEntry['source'];
-  }>();
-  let lastConsumed: Readonly<{ containerKey: string; fileName: string }> | null = null;
+  const grouped: GroupedRolloutCandidates = new Map();
+  let lastConsumed: Readonly<{
+    containerKey: string;
+    fileName: string;
+    sourceGeneration: string;
+  }> | null = null;
+  let scanned = after?.scanned ?? 0;
   let hasMore = false;
 
   outer:
-  for (const container of corpus.containers) {
-    if (params.after && container.key > params.after.containerKey) continue;
-    const entries = (await readDirectoryEntries(container.dir))
-      .filter((entry) => {
-        if (entry.isSymbolicLink() || !entry.isFile()) return false;
-        const name = directoryEntryName(entry);
-        return name.startsWith('rollout-') && name.endsWith('.jsonl');
-      })
-      .sort((left, right) =>
-        directoryEntryName(right).localeCompare(directoryEntryName(left)),
-      );
-    for (const entry of entries) {
-      const fileName = directoryEntryName(entry);
+  for (const container of containers) {
+    throwIfCodexExternalSessionInvocationStopped(params);
+    // Containers are ordered by descending key, so everything already consumed
+    // sorts above the boundary container.
+    if (after && compareCodexRolloutCandidateCodeUnits(container.key, after.containerKey) > 0) {
+      continue;
+    }
+    // Captured BEFORE this container's entries are listed, so a rollout created
+    // between the two is either consumed by this chunk or invalidates the next
+    // one — never silently skipped by an anchor that already accounts for it.
+    const containerGeneration = container.key === after?.containerKey
+      ? resumeGeneration
+      : await resolveResumeContainerGeneration({
+        containers,
+        containerKey: container.key,
+        signal: params.signal,
+        deadlineAtMs: params.deadlineAtMs,
+      });
+    const fileNames = rolloutCandidateFileNames(
+      await readDirectoryEntries(container.dir, params),
+    );
+    for (const fileName of fileNames) {
+      throwIfCodexExternalSessionInvocationStopped(params);
       if (
-        params.after
-        && container.key === params.after.containerKey
-        && fileName >= params.after.fileName
+        after
+        && container.key === after.containerKey
+        && compareCodexRolloutCandidateCodeUnits(fileName, after.fileName) >= 0
       ) {
         continue;
       }
       const filePath = join(container.dir, fileName);
-      const remoteSessionId = await resolveRolloutCandidateSessionId(filePath);
+      const remoteSessionId = await resolveRolloutCandidateSessionId(filePath, params);
       if (!remoteSessionId) {
-        lastConsumed = { containerKey: container.key, fileName };
+        scanned += 1;
+        lastConsumed = { containerKey: container.key, fileName, sourceGeneration: containerGeneration };
         continue;
       }
-      const existing = grouped.get(remoteSessionId);
-      if (!existing && grouped.size >= limit) {
+      // Stop before consuming a file that would exceed the chunk bound, so the
+      // boundary always names a fully consumed file.
+      if (!grouped.has(remoteSessionId) && grouped.size >= limit) {
         hasMore = true;
         break outer;
       }
       let mtimeMs: number;
       try {
         mtimeMs = (await stat(filePath)).mtimeMs;
+        throwIfCodexExternalSessionInvocationStopped(params);
       } catch {
-        lastConsumed = { containerKey: container.key, fileName };
+        throwIfCodexExternalSessionInvocationStopped(params);
+        scanned += 1;
+        lastConsumed = { containerKey: container.key, fileName, sourceGeneration: containerGeneration };
         continue;
       }
-      const entrySortMs = parseRolloutTimestampMs(filePath);
-      if (!existing) {
-        grouped.set(remoteSessionId, {
-          source: container.source,
-          group: {
-            updatedAtMs: mtimeMs,
-            archived: container.archived,
-            latestFilePath: filePath,
-            earliestFilePath: filePath,
-            earliestMtimeMs: mtimeMs,
-            latestSortMs: entrySortMs,
-            earliestSortMs: entrySortMs,
-          },
-        });
-      } else {
-        grouped.set(remoteSessionId, {
-          source: entrySortMs >= existing.group.latestSortMs
-            ? container.source
-            : existing.source,
-          group: {
-            updatedAtMs: Math.max(existing.group.updatedAtMs, mtimeMs),
-            archived: existing.group.archived && container.archived,
-            latestFilePath:
-              entrySortMs >= existing.group.latestSortMs
-                ? filePath
-                : existing.group.latestFilePath,
-            earliestFilePath:
-              entrySortMs <= existing.group.earliestSortMs
-                ? filePath
-                : existing.group.earliestFilePath,
-            earliestMtimeMs: Math.min(
-              existing.group.earliestMtimeMs,
-              mtimeMs,
-            ),
-            latestSortMs: Math.max(existing.group.latestSortMs, entrySortMs),
-            earliestSortMs: Math.min(existing.group.earliestSortMs, entrySortMs),
-          },
-        });
-      }
-      lastConsumed = { containerKey: container.key, fileName };
+      mergeRolloutCandidateFile({
+        grouped,
+        remoteSessionId,
+        filePath,
+        mtimeMs,
+        archived: container.archived,
+        source: container.source,
+      });
+      scanned += 1;
+      lastConsumed = { containerKey: container.key, fileName, sourceGeneration: containerGeneration };
     }
   }
 
   return {
-    entries: Array.from(grouped.entries()).map(
-      ([remoteSessionId, entry]) => ({
-        remoteSessionId,
-        source: entry.source,
-        group: entry.group,
-      }),
-    ),
-    sourceGeneration: corpus.sourceGeneration,
+    entries: await withRolloutCandidateTitles({
+      entries: toOrderedRolloutCandidateEntries(grouped),
+      env: params.env,
+      signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
+    }),
+    sourceGeneration: resumeGeneration,
+    scanned,
     nextBoundary: hasMore && lastConsumed
-      ? {
-        sourceGeneration: corpus.sourceGeneration,
-        ...lastConsumed,
-      }
+      ? { ...lastConsumed, scanned }
       : null,
   };
 }

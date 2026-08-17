@@ -1,0 +1,783 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [
+      {
+        "capabilities": {
+          "executionRuns": {
+            "checkpoint": true,
+            "open": [
+              "create",
+              "resume"
+            ],
+            "stop": true
+          },
+          "sessions": {
+            "cancel": true,
+            "catalog": {
+              "active": [
+                "vendorPlugins",
+                "skills"
+              ],
+              "inactive": [
+                "vendorPlugins",
+                "skills"
+              ]
+            },
+            "configuration": true,
+            "continuationVerification": {
+              "intents": [
+                "resume",
+                "fork"
+              ],
+              "requirement": "required"
+            },
+            "conversationRollback": true,
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "goals": {
+              "active": {
+                "clear": true,
+                "get": true,
+                "set": {
+                  "fields": [
+                    "objective",
+                    "status",
+                    "tokenBudget"
+                  ],
+                  "writableStatuses": [
+                    "active",
+                    "paused",
+                    "complete"
+                  ]
+                }
+              },
+              "inactive": {
+                "clear": true,
+                "get": true,
+                "set": {
+                  "fields": [
+                    "objective",
+                    "status",
+                    "tokenBudget"
+                  ],
+                  "writableStatuses": [
+                    "active",
+                    "paused",
+                    "complete"
+                  ]
+                }
+              },
+              "source": "goals"
+            },
+            "open": [
+              "create",
+              "resume",
+              "fork"
+            ],
+            "startupInstructions": {
+              "versions": [
+                1
+              ]
+            },
+            "usageLimitRecovery": {
+              "active": [
+                "checkNow"
+              ],
+              "inactive": [
+                "checkNow"
+              ]
+            },
+            "workStateSources": [
+              {
+                "id": "goals",
+                "itemKinds": [
+                  "goal"
+                ]
+              }
+            ]
+          },
+          "surfaces": [
+            "terminal",
+            "externalSessions"
+          ]
+        },
+        "cli": {
+          "auth": {
+            "loginLaunches": [
+              {
+                "args": [
+                  "login"
+                ],
+                "kind": "primary"
+              }
+            ],
+            "probe": {
+              "backgroundChecks": "safe",
+              "credentialPaths": [
+                "~/.codex/auth.json"
+              ],
+              "envVars": [
+                "OPENAI_API_KEY",
+                "CODEX_API_KEY"
+              ],
+              "parser": "codexLoginStatus",
+              "statusArgs": [
+                "login",
+                "status"
+              ]
+            },
+            "support": "login_terminal"
+          },
+          "displayName": "OpenAI Codex CLI",
+          "executable": {
+            "binaryName": "codex",
+            "knownUserBinDirSuffixes": null,
+            "sourcePreference": "system-first"
+          },
+          "install": {
+            "docsUrl": "https://github.com/openai/codex",
+            "guideUrl": null,
+            "managed": {
+              "archiveEntriesByPlatform": {
+                "darwin": [
+                  {
+                    "archivePath": "bin/codex",
+                    "destinationPath": "bin/codex"
+                  },
+                  {
+                    "archivePath": "bin/codex-code-mode-host",
+                    "destinationPath": "bin/codex-code-mode-host"
+                  }
+                ],
+                "linux": [
+                  {
+                    "archivePath": "bin/codex",
+                    "destinationPath": "bin/codex"
+                  },
+                  {
+                    "archivePath": "bin/codex-code-mode-host",
+                    "destinationPath": "bin/codex-code-mode-host"
+                  }
+                ],
+                "win32": [
+                  {
+                    "archivePath": "bin/codex.exe",
+                    "destinationPath": "bin/codex.exe"
+                  },
+                  {
+                    "archivePath": "bin/codex-code-mode-host.exe",
+                    "destinationPath": "bin/codex-code-mode-host.exe"
+                  },
+                  {
+                    "archivePath": "codex-resources/codex-command-runner.exe",
+                    "destinationPath": "codex-resources/codex-command-runner.exe"
+                  },
+                  {
+                    "archivePath": "codex-resources/codex-windows-sandbox-setup.exe",
+                    "destinationPath": "codex-resources/codex-windows-sandbox-setup.exe"
+                  }
+                ]
+              },
+              "archiveExtractionLimits": {
+                "maxExpandedBytes": 402653184,
+                "maxFileBytes": 402653184
+              },
+              "assetNameByPlatform": {
+                "darwin": {
+                  "arm64": "codex-package-aarch64-apple-darwin.tar.gz",
+                  "x64": "codex-package-x86_64-apple-darwin.tar.gz"
+                },
+                "linux": {
+                  "arm64": "codex-package-aarch64-unknown-linux-musl.tar.gz",
+                  "x64": "codex-package-x86_64-unknown-linux-musl.tar.gz"
+                },
+                "win32": {
+                  "arm64": "codex-package-aarch64-pc-windows-msvc.tar.gz",
+                  "x64": "codex-package-x86_64-pc-windows-msvc.tar.gz"
+                }
+              },
+              "binaryName": "codex",
+              "githubRepo": "openai/codex",
+              "kind": "github_release_binary"
+            },
+            "manual": {
+              "kind": "command"
+            },
+            "recommendationOrder": 20
+          }
+        },
+        "connectedAccounts": [
+          {
+            "materializationKinds": [
+              "files"
+            ],
+            "purpose": "primary",
+            "required": false,
+            "service": "openai-codex"
+          }
+        ],
+        "id": "codex",
+        "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-responses"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "HAPPIER_CODEX_PROVIDER_API_KEY",
+              "OPENAI_API_KEY",
+              "CODEX_API_KEY"
+            ],
+            "suppressConnectedServiceIds": [
+              "openai-codex",
+              "openai"
+            ]
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "raw",
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": "anyValidated"
+                },
+                "protocol": "openai-responses"
+              }
+            ],
+            "supportsNoAuth": true
+          },
+          "materialization": "engineConfig",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
+        "runtime": {
+          "kind": "custom"
+        },
+        "surfaces": {
+          "externalSession": {
+            "externalLinkedTakeover": {
+              "writerSafety": "unsupported"
+            },
+            "sources": [
+              {
+                "instances": [
+                  {
+                    "constants": {
+                      "home": "user"
+                    },
+                    "kind": "default"
+                  },
+                  {
+                    "constants": {
+                      "home": "connectedService"
+                    },
+                    "fields": {
+                      "profileId": "connectedServiceProfileId",
+                      "serviceId": "connectedServiceId"
+                    },
+                    "kind": "connectedServiceProfiles",
+                    "serviceId": "openai-codex"
+                  }
+                ],
+                "key": {
+                  "segments": [
+                    {
+                      "kind": "literal",
+                      "value": "codexHome"
+                    },
+                    {
+                      "field": "home",
+                      "kind": "homeMode"
+                    },
+                    {
+                      "field": "connectedServiceId",
+                      "kind": "conditionalField",
+                      "when": {
+                        "equals": "connectedService",
+                        "field": "home"
+                      }
+                    },
+                    {
+                      "groupField": "connectedServiceGroupId",
+                      "kind": "connectedServiceScope",
+                      "profileField": "connectedServiceProfileId",
+                      "when": {
+                        "equals": "connectedService",
+                        "field": "home"
+                      }
+                    },
+                    {
+                      "field": "homePath",
+                      "kind": "field"
+                    }
+                  ]
+                },
+                "schema": {
+                  "fields": [
+                    {
+                      "kind": "literal",
+                      "name": "kind",
+                      "value": "codexHome"
+                    },
+                    {
+                      "kind": "enum",
+                      "name": "home",
+                      "values": [
+                        "user",
+                        "connectedService"
+                      ]
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "homePath",
+                      "optional": true
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "connectedServiceId",
+                      "optional": true
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "connectedServiceProfileId",
+                      "optional": true
+                    },
+                    {
+                      "kind": "string",
+                      "min": 1,
+                      "name": "connectedServiceGroupId",
+                      "optional": true
+                    }
+                  ],
+                  "refinements": [
+                    {
+                      "field": "connectedServiceId",
+                      "kind": "requiresWhenEquals",
+                      "when": {
+                        "equals": "connectedService",
+                        "field": "home"
+                      }
+                    },
+                    {
+                      "fields": [
+                        "connectedServiceId",
+                        "connectedServiceProfileId",
+                        "connectedServiceGroupId"
+                      ],
+                      "kind": "forbidsWhenEquals",
+                      "when": {
+                        "equals": "user",
+                        "field": "home"
+                      }
+                    }
+                  ]
+                },
+                "sourceKind": "codexHome"
+              }
+            ]
+          }
+        },
+        "title": "Codex"
+      }
+    ],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "defaultModeId": "oauth",
+          "modes": [
+            {
+              "id": "oauth",
+              "kind": "oauthAuthorizationCode",
+              "outcomeReconciliation": "none",
+              "pkce": "required",
+              "scopes": [
+                "openid",
+                "profile",
+                "email",
+                "offline_access"
+              ]
+            },
+            {
+              "id": "device",
+              "kind": "oauthDeviceCode",
+              "outcomeReconciliation": "none",
+              "scopes": [
+                "openid",
+                "profile",
+                "email",
+                "offline_access"
+              ]
+            }
+          ]
+        },
+        "id": "openai-codex",
+        "title": "Codex"
+      }
+    ],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [
+      {
+        "category": "decision",
+        "executionKind": "decide",
+        "filters": {
+          "agentId": "codex"
+        },
+        "hookApiVersion": 1,
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
+        "scope": "agent"
+      },
+      {
+        "category": "augmentation",
+        "executionKind": "augment",
+        "filters": {
+          "agentId": "codex"
+        },
+        "hookApiVersion": 1,
+        "id": "augment-spawn-env",
+        "on": "agent.spawnEnv.augment",
+        "scope": "daemon"
+      }
+    ],
+    "managedDependencies": [
+      {
+        "executable": "codex-acp",
+        "id": "codex-acp",
+        "sources": [
+          {
+            "kind": "vendorRecipe",
+            "recipeId": "codex-acp"
+          }
+        ],
+        "title": "Codex ACP adapter"
+      }
+    ],
+    "mcp": {
+      "discoverySources": [
+        {
+          "id": "config",
+          "metadata": {
+            "agentId": "codex"
+          },
+          "title": "Codex MCP configuration"
+        }
+      ],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [
+      {
+        "actions": [],
+        "fields": [
+          {
+            "analytics": {
+              "identityScope": "person",
+              "privacy": "safe",
+              "trackChanges": true,
+              "trackCurrentState": true,
+              "valueKind": "enum"
+            },
+            "default": "appServer",
+            "description": {
+              "fallback": "Select App Server, ACP, or MCP.",
+              "key": "settingsAgents.plugins.codex.fields.codexBackendMode.subtitle"
+            },
+            "id": "codexBackendMode",
+            "presentation": {
+              "control": "select",
+              "options": [
+                {
+                  "description": {
+                    "fallback": "Recommended official Codex app-server mode",
+                    "key": "settingsAgents.plugins.codex.fields.codexBackendMode.options.appServer.subtitle"
+                  },
+                  "title": {
+                    "fallback": "App Server",
+                    "key": "settingsAgents.plugins.codex.fields.codexBackendMode.options.appServer.title"
+                  },
+                  "value": "appServer"
+                },
+                {
+                  "description": {
+                    "fallback": "Route Codex through ACP (codex-acp)",
+                    "key": "settingsAgents.plugins.codex.fields.codexBackendMode.options.acp.subtitle"
+                  },
+                  "title": {
+                    "fallback": "ACP",
+                    "key": "settingsAgents.plugins.codex.fields.codexBackendMode.options.acp.title"
+                  },
+                  "value": "acp"
+                }
+              ]
+            },
+            "schema": {
+              "description": "Preferred Codex backend mode",
+              "enum": [
+                "acp",
+                "appServer",
+                "mcp",
+                "mcp_resume"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "fallback": "Codex routing mode",
+              "key": "settingsAgents.plugins.codex.fields.codexBackendMode.title"
+            }
+          }
+        ],
+        "id": "agent-settings",
+        "presentation": {
+          "icon": {
+            "color": {
+              "kind": "theme",
+              "token": "blue"
+            },
+            "ionName": "terminal-outline"
+          },
+          "sections": [
+            {
+              "description": {
+                "fallback": "Choose how Codex is routed. App Server is the recommended default. Local/remote switching and resume work with App Server; ACP remains available as a legacy fallback.",
+                "key": "settingsAgents.plugins.codex.sections.backendMode.footer"
+              },
+              "fields": [
+                "codexBackendMode"
+              ],
+              "id": "codex-mode",
+              "title": {
+                "fallback": "Routing mode",
+                "key": "settingsAgents.plugins.codex.sections.backendMode.title"
+              }
+            }
+          ],
+          "subagentSections": []
+        },
+        "scope": "account",
+        "target": {
+          "agent": "codex",
+          "kind": "agent"
+        },
+        "title": {
+          "fallback": "Codex",
+          "key": "settingsAgents.plugins.codex.title"
+        },
+        "version": 1
+      }
+    ],
+    "systemTools": [
+      {
+        "executableNames": [
+          "codex"
+        ],
+        "id": "codex-cli",
+        "title": "OpenAI Codex CLI"
+      }
+    ],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (Experimental)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session."
+          }
+        }
+      ],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [
+      {
+        "capabilities": {
+          "turn": {
+            "bargeIn": false,
+            "cancelResponse": false
+          }
+        },
+        "client": {
+          "artifactId": "voice-runtime-web",
+          "exportName": "activate",
+          "modulePath": "./ui/voice"
+        },
+        "execution": {
+          "agent": "codex",
+          "kind": "experimental_agent_session_realtime",
+          "supportedRuntimeVersions": [
+            "0.145.0",
+            "0.146.0"
+          ]
+        },
+        "id": "realtime-codex",
+        "kind": "conversation",
+        "platforms": [
+          "web",
+          "ios",
+          "android"
+        ],
+        "roles": [
+          "conversation_stt",
+          "conversation_tts",
+          "realtime_conversation",
+          "turn_control"
+        ],
+        "settings": {
+          "connectedServicesBinding": {
+            "agent": "codex",
+            "description": "Connected Service account used by global Codex Voice sessions.",
+            "id": "globalConnectedServices",
+            "serviceIds": [
+              "openai-codex"
+            ],
+            "title": "Codex account"
+          },
+          "fields": [],
+          "privacyDisclosure": {
+            "fallback": "Audio and the Codex Live conversation are sent from this device to OpenAI using WebRTC. The selected Codex session and Connected Services account run through the selected machine. OpenAI may receive bounded startup and session context and delegated Codex results so the conversation can continue and responses can be spoken. Happier’s server and relay do not carry Codex Live audio; the Happier daemon/app-server still carries signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate. Codex or OpenAI may retain developer instructions, realtime conversation material, and related diagnostics in provider-native runtime storage according to the selected account and provider policies; Happier does not delete or rewrite that provider-native data.",
+            "key": "settingsVoice.realtimeProviders.codex.privacyDisclosure"
+          },
+          "schemaVersion": 2
+        },
+        "title": "Codex Realtime Voice — Experimental"
+      }
+    ],
+    "webhooks": []
+  },
+  "description": "OpenAI Codex coding agent.",
+  "displayName": "Codex",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "filesystem",
+        "id": "codex-workspace",
+        "reason": "Use the admitted Agent workspace as the Codex process working directory.",
+        "scope": {
+          "access": [
+            "read"
+          ],
+          "locations": [
+            {
+              "root": "workspace"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "process",
+        "id": "codex-process",
+        "reason": "Run the declared Codex executable.",
+        "scope": {
+          "envKeys": [
+            "CODEX_HOME"
+          ],
+          "executables": [
+            {
+              "id": "codex-cli",
+              "kind": "systemTool"
+            },
+            {
+              "id": "codex-acp",
+              "kind": "managedDependency"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "openai-codex-oauth",
+        "reason": "Exchange and refresh OpenAI Codex OAuth credentials for the exact Connected Account.",
+        "scope": {
+          "methods": [
+            "POST"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://auth.openai.com"
+            },
+            {
+              "kind": "connectedAccountOrigin",
+              "service": "openai-codex"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "openai-codex-quota",
+        "reason": "Read quota for the exact OpenAI Codex Connected Account.",
+        "scope": {
+          "methods": [
+            "GET"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://chatgpt.com"
+            },
+            {
+              "kind": "connectedAccountOrigin",
+              "service": "openai-codex"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.agent.codex",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

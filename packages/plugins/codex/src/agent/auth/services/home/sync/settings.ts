@@ -1,9 +1,3 @@
-import {
-  resolveConnectedServicesProviderStateSharingPolicyV1,
-  type AccountSettings,
-  type ConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
-
 export const codexHomeSyncProviderLabel = 'Codex';
 
 export type CodexConnectedServiceStateSharingDiagnostic = Readonly<{
@@ -15,15 +9,6 @@ export type CodexConnectedServiceStateSharingDiagnostic = Readonly<{
   reason: 'symlink_unavailable';
   fsCode?: string;
 }>;
-
-export function resolveCodexHomeSharingSettings(
-  settingsLike: AccountSettings | Readonly<Record<string, unknown>> | null | undefined,
-): ConnectedServicesProviderStateSharingPolicyV1 {
-  return resolveConnectedServicesProviderStateSharingPolicyV1(
-    settingsLike?.connectedServicesProviderStateSharingSettingsV1,
-    'codex',
-  );
-}
 
 export function mapCodexStateSymlinkUnavailableDiagnostic(error: Readonly<{
   entryName: string;

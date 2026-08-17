@@ -1,4 +1,4 @@
-import { isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import { isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/sessions';
 
 export type CodexRolloutToolVisibility = 'default' | 'debug-only' | 'ignore';
 

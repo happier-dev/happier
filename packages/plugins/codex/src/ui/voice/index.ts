@@ -1,2 +1,2 @@
-export { BUNDLED_VOICE_UI_ENTRIES } from './entries.js';
-export { activate } from './createRuntimeContribution.js';
+export { VOICE_PROVIDER_PRESENTATIONS } from './entries.js';
+export { activate } from './runtime.js';

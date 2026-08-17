@@ -1,11 +1,44 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapCodexRateLimitSnapshotToQuotaSnapshot } from './rateLimitSnapshot.js';
+import type { CodexUsageSubjectRef } from '../usage/identity.js';
+import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../usage/snapshot.js';
 
-describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
+function mapCodexRateLimitSnapshotToUsageSnapshot(params: Readonly<{
+  profileId: string;
+  activeAccountId?: string | null;
+  accountLabel?: string | null;
+  fetchedAt: number;
+  staleAfterMs?: number;
+  rawSnapshot: unknown;
+  rawResetCredits?: unknown;
+}>) {
+  const subject: CodexUsageSubjectRef = params.activeAccountId
+    ? {
+      providerId: 'openai-codex',
+      kind: 'providerSubject',
+      accountSubjectId: params.activeAccountId,
+      proof: 'connected_service_provider_account_id',
+    }
+    : {
+      providerId: 'openai-codex',
+      kind: 'provisionalLocalSubject',
+      accountSubjectId: `provisional:test:${params.profileId}`,
+      reason: 'missing_stable_provider_account_id',
+    };
+  return mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+    subject,
+    accountLabel: params.accountLabel,
+    observedAtMs: params.fetchedAt,
+    fetchedAtMs: params.fetchedAt,
+    staleAfterMs: params.staleAfterMs,
+    rawSnapshot: params.rawSnapshot,
+    rawResetCredits: params.rawResetCredits,
+  });
+}
+
+describe('Codex public runtime usage snapshots', () => {
   it('maps Codex app-server rate-limit snapshots into connected-service quota meters', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
       activeAccountId: 'acct_123',
       fetchedAt: 1_768_000_000_000,
@@ -25,10 +58,15 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
 
     expect(snapshot).toMatchObject({
       v: 1,
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      activeAccountId: 'acct_123',
-      fetchedAt: 1_768_000_000_000,
+      providerId: 'openai-codex',
+      recordKey: {
+        providerId: 'openai-codex',
+        accountSubjectId: 'acct_123',
+        subjectKind: 'account',
+        quotaScope: 'account',
+      },
+      accountSubject: { kind: 'providerSubject', id: 'acct_123' },
+      fetchedAtMs: 1_768_000_000_000,
       planLabel: 'plus',
       accountLabel: 'alice@example.com',
       meters: [
@@ -48,6 +86,36 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
     });
   });
 
+  it('uses the published numeric-epoch threshold for a numeric app-server reset', () => {
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
+      profileId: 'work',
+      fetchedAt: 1_768_000_000_000,
+      rawSnapshot: {
+        primary: { used_percent: 50, resets_at: 10_000_000_000 },
+      },
+    });
+
+    expect(snapshot.meters).toEqual([expect.objectContaining({
+      meterId: 'primary',
+      resetsAt: 10_000_000_000_000,
+    })]);
+  });
+
+  it('retains the provider-specific numeric-string reset parsing', () => {
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
+      profileId: 'work',
+      fetchedAt: 1_768_000_000_000,
+      rawSnapshot: {
+        primary: { used_percent: 50, resets_at: '10000000000' },
+      },
+    });
+
+    expect(snapshot.meters).toEqual([expect.objectContaining({
+      meterId: 'primary',
+      resetsAt: 10_000_000_000,
+    })]);
+  });
+
   it('unwraps official app-server rateLimits response and notification envelopes', () => {
     for (const rawSnapshot of [
       {
@@ -64,8 +132,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
         },
       },
     ]) {
-      const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-        serviceId: 'openai-codex',
+      const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
         profileId: 'work',
         fetchedAt: 1_768_000_000_000,
         rawSnapshot,
@@ -83,8 +150,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
   });
 
   it('normalizes merged sparse app-server snapshots without erasing identity or reset windows', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
       activeAccountId: 'acct_live_codex',
       fetchedAt: 1_768_000_000_000,
@@ -110,9 +176,8 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
     });
 
     expect(snapshot).toMatchObject({
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      activeAccountId: 'acct_live_codex',
+      providerId: 'openai-codex',
+      accountSubject: { kind: 'providerSubject', id: 'acct_live_codex' },
       accountLabel: 'codex-user@example.test',
       planLabel: 'pro',
       meters: [
@@ -133,8 +198,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
   });
 
   it('uses a trusted account-label fallback when the rate-limit payload has no email label', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'native-profile',
       activeAccountId: 'acct_123',
       accountLabel: 'codex-user@example.test',
@@ -145,14 +209,13 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
     });
 
     expect(snapshot).toMatchObject({
-      activeAccountId: 'acct_123',
+      accountSubject: { kind: 'providerSubject', id: 'acct_123' },
       accountLabel: 'codex-user@example.test',
     });
   });
 
   it('maps app-server primary and secondary window snapshots as separate meters', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
       fetchedAt: 1_768_000_000_000,
       rawSnapshot: {
@@ -198,8 +261,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
   });
 
   it('maps Codex reset-credit payloads into sanitized recovery credits', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
       fetchedAt: 1_768_000_000_000,
       rawSnapshot: {
@@ -243,8 +305,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
   });
 
   it('preserves numeric usage and limit fields from Codex meters', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
       fetchedAt: 1_768_000_000_000,
       rawSnapshot: {
@@ -266,8 +327,7 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
   });
 
   it('ignores blank numeric fields instead of treating them as zero values', () => {
-    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
-      serviceId: 'openai-codex',
+    const snapshot = mapCodexRateLimitSnapshotToUsageSnapshot({
       profileId: 'work',
       fetchedAt: 1_768_000_000_000,
       rawSnapshot: {

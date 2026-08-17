@@ -1,10 +1,17 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   JsonValue,
 } from '@happier-dev/plugin-sdk';
 import {
   AgentRuntimeJsonValueSchema,
   type AgentRuntimeContext,
-} from '@happier-dev/plugin-sdk/agent-runtime';
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  InteractionTransientAuthorQuestionV1,
+  InteractionTransientApprovalResultV1,
+  InteractionTransientQuestionAnswerV1,
+} from '@happier-dev/plugin-sdk/interactions';
 
 import type { DisposableCodexAppServerClient } from './client.js';
 import {
@@ -12,14 +19,11 @@ import {
   looksLikeCodexApprovalRequestUserInput,
 } from '../core/requestUserInputQuestions.js';
 
-type InteractionUi = Pick<AgentRuntimeContext['ui'], 'requestApproval' | 'askQuestions'>;
-type PluginUiApprovalResult = Awaited<ReturnType<InteractionUi['requestApproval']>>;
-type PluginUiQuestion = Parameters<InteractionUi['askQuestions']>[0][number];
-type PluginUiQuestionsResult = Awaited<ReturnType<InteractionUi['askQuestions']>>;
-type PluginUiQuestionAnswer = Extract<
-  PluginUiQuestionsResult,
-  Readonly<{ status: 'answered' }>
->['answers'][string];
+type InteractionUi = Pick<AgentRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
+type SessionMcp = Pick<
+  NonNullable<AgentRuntimeContext['services']['sessions']['current']>['mcp'],
+  'elicit'
+>;
 type RecordLike = Readonly<Record<string, unknown>>;
 
 function readRecord(value: unknown): RecordLike | null {
@@ -64,7 +68,7 @@ function readCommandApprovalAvailability(record: RecordLike): Readonly<{
 }
 
 function mapApprovalDecision(
-  result: PluginUiApprovalResult,
+  result: InteractionTransientApprovalResultV1,
   options?: Readonly<{
     allowAccept?: boolean;
     allowSessionPersistence?: boolean;
@@ -77,7 +81,7 @@ function mapApprovalDecision(
     }
     return options?.allowAccept !== false ? 'accept' : 'decline';
   }
-  return result.status === 'cancelled' ? 'cancel' : 'decline';
+  return result.status !== 'declined' && result.status !== 'unavailable' ? 'cancel' : 'decline';
 }
 
 async function requestApproval(
@@ -89,19 +93,17 @@ async function requestApproval(
     params: unknown;
     allowSessionPersistence?: boolean;
   }>,
-): Promise<PluginUiApprovalResult> {
+): Promise<InteractionTransientApprovalResultV1> {
   if (!ui) {
     return {
+      requestId: randomUUID(),
+      kind: 'approval',
       status: 'unavailable',
-      diagnostic: {
-        code: 'codex_app_server_interaction_unavailable',
-        severity: 'error',
-        message: 'Codex app-server interaction UI is unavailable.',
-      },
     };
   }
   try {
     return await ui.requestApproval({
+      kind: 'approval',
       title: input.title,
       ...(input.description ? { description: input.description } : {}),
       subject: {
@@ -115,12 +117,9 @@ async function requestApproval(
     });
   } catch {
     return {
+      requestId: randomUUID(),
+      kind: 'approval',
       status: 'unavailable',
-      diagnostic: {
-        code: 'codex_app_server_interaction_failed',
-        severity: 'error',
-        message: 'Codex app-server interaction UI failed.',
-      },
     };
   }
 }
@@ -131,7 +130,6 @@ type CodexQuestion = Readonly<{
   options: readonly Readonly<{ value: string; label: string; description?: string }>[];
   allowCustom: boolean;
   required: boolean;
-  valueType: 'string' | 'number' | 'integer' | 'boolean';
   multiple: boolean;
 }>;
 
@@ -161,7 +159,7 @@ function readChoiceOptions(value: unknown): CodexQuestion['options'] {
   return options;
 }
 
-function toPluginQuestion(question: CodexQuestion): PluginUiQuestion {
+function toPluginQuestion(question: CodexQuestion): InteractionTransientAuthorQuestionV1 {
   if (question.options.length === 0) {
     return {
       id: question.id,
@@ -181,21 +179,21 @@ function toPluginQuestion(question: CodexQuestion): PluginUiQuestion {
   return {
     id: question.id,
     prompt: question.prompt,
-    type: question.multiple ? 'multiple' : 'single',
+    type: question.multiple ? 'multipleChoice' : 'singleChoice',
     required: question.required,
     choices,
     ...(question.allowCustom ? { allowCustom: true } : {}),
   };
 }
 
-function readAnswerValues(answer: PluginUiQuestionAnswer | undefined): string[] {
+function readAnswerValues(answer: InteractionTransientQuestionAnswerV1 | undefined): string[] {
   if (!answer) return [];
-  if (answer.type === 'text') return [answer.value];
-  if (answer.type === 'single') {
-    return [answer.answer.type === 'choice' ? answer.answer.choiceId : answer.answer.value];
+  if (answer.kind === 'text') return [answer.value];
+  if (answer.kind === 'singleChoice') {
+    return [answer.answer.kind === 'choice' ? answer.answer.choiceId : answer.answer.value];
   }
   return answer.answers.map((entry) => (
-    entry.type === 'choice' ? entry.choiceId : entry.value
+    entry.kind === 'choice' ? entry.choiceId : entry.value
   ));
 }
 
@@ -213,102 +211,28 @@ function normalizeToolQuestions(value: unknown): CodexQuestion[] {
       options: readChoiceOptions(record?.options),
       allowCustom: record?.isOther === true,
       required: true,
-      valueType: 'string',
       multiple: false,
     });
   }
   return output;
 }
 
-function readSchemaOptions(schema: RecordLike): CodexQuestion['options'] {
-  const direct = readChoiceOptions(schema.enum);
-  if (direct.length > 0) {
-    const enumNames = schema.enumNames;
-    if (
-      Array.isArray(enumNames)
-      && enumNames.length === direct.length
-    ) {
-      return direct.map((option, index) => ({
-        ...option,
-        label: readString(enumNames[index]) ?? option.label,
-      }));
-    }
-    return direct;
-  }
-  const oneOf = readChoiceOptions(schema.oneOf);
-  if (oneOf.length > 0) return oneOf;
-  const items = readRecord(schema.items);
-  if (!items) return [];
-  const itemEnum = readChoiceOptions(items.enum);
-  return itemEnum.length > 0 ? itemEnum : readChoiceOptions(items.anyOf);
-}
-
-function normalizeMcpFormQuestions(schemaValue: unknown): CodexQuestion[] {
-  const schema = readRecord(schemaValue);
-  const properties = readRecord(schema?.properties);
-  if (schema?.type !== 'object' || !properties) return [];
-  const required = new Set(
-    Array.isArray(schema.required)
-      ? schema.required.map(readString).filter((value): value is string => value !== null)
-      : [],
-  );
-  const output: CodexQuestion[] = [];
-  for (const [id, rawProperty] of Object.entries(properties)) {
-    const property = readRecord(rawProperty);
-    if (!property) continue;
-    const type = property.type === 'number'
-      || property.type === 'integer'
-      || property.type === 'boolean'
-      ? property.type
-      : 'string';
-    const multiple = property.type === 'array';
-    const options = type === 'boolean'
-      ? [
-          { value: 'true', label: 'Yes' },
-          { value: 'false', label: 'No' },
-        ]
-      : readSchemaOptions(property);
-    output.push({
-      id,
-      prompt: readString(property.title) ?? readString(property.description) ?? id,
-      options,
-      allowCustom: false,
-      required: required.has(id),
-      valueType: type,
-      multiple,
-    });
-  }
-  return output;
-}
-
-function answerValue(question: CodexQuestion, values: string[]): JsonValue | undefined {
-  if (values.length === 0) return undefined;
-  if (question.multiple) return values;
-  const value = values[0]!;
-  if (question.valueType === 'boolean') {
-    return value === 'true' ? true : value === 'false' ? false : undefined;
-  }
-  if (question.valueType === 'number' || question.valueType === 'integer') {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return undefined;
-    if (question.valueType === 'integer' && !Number.isInteger(parsed)) return undefined;
-    return parsed;
-  }
-  return value;
-}
-
 async function askQuestions(
   ui: InteractionUi | undefined,
   questions: readonly CodexQuestion[],
   title: string,
-): Promise<Readonly<Record<string, PluginUiQuestionAnswer>> | null> {
+): Promise<Readonly<Record<string, InteractionTransientQuestionAnswerV1>> | null> {
   if (!ui || questions.length === 0) return null;
   const pluginQuestions = questions.map(toPluginQuestion) as [
-    PluginUiQuestion,
-    ...PluginUiQuestion[],
+    InteractionTransientAuthorQuestionV1,
+    ...InteractionTransientAuthorQuestionV1[],
   ];
   try {
-    const result = await ui.askQuestions(pluginQuestions, { title });
+    const result = await ui.askQuestions({
+      kind: 'questions',
+      title,
+      questions: pluginQuestions,
+    });
     return result.status === 'answered' ? result.answers : null;
   } catch {
     return null;
@@ -317,14 +241,14 @@ async function askQuestions(
 
 function chooseApprovalLabel(
   questions: readonly CodexQuestion[],
-  result: PluginUiApprovalResult,
+  result: InteractionTransientApprovalResultV1,
 ): string | null {
   const labels = questions.flatMap((question) => question.options.map((option) => option.value));
   const pick = (pattern: RegExp) => labels.find((label) => pattern.test(label)) ?? null;
   if (result.status === 'approved') {
     return pick(/\bapprove\b|\ballow\b|\baccept\b/i) ?? labels[0] ?? null;
   }
-  if (result.status === 'cancelled') {
+  if (result.status !== 'declined' && result.status !== 'unavailable') {
     return pick(/\bcancel\b|\babort\b|\bstop\b/i)
       ?? pick(/\bdeny\b|\breject\b|\bdecline\b/i)
       ?? labels.at(-1)
@@ -336,6 +260,7 @@ function chooseApprovalLabel(
 export function registerCodexAppServerInteractionHandlers(params: Readonly<{
   client: DisposableCodexAppServerClient;
   ui?: InteractionUi;
+  mcp?: SessionMcp;
   getThreadId(): string | null;
 }>): void {
   params.client.registerRequestHandler(
@@ -454,50 +379,43 @@ export function registerCodexAppServerInteractionHandlers(params: Readonly<{
       }
       const mode = readString(raw.mode);
       const serverName = readString(raw.serverName) ?? 'MCP server';
-      const formQuestions = mode === 'form' || mode === 'openai/form'
-        ? normalizeMcpFormQuestions(raw.requestedSchema)
-        : [];
-      if (formQuestions.length > 0) {
-        const answers = await askQuestions(
-          params.ui,
-          formQuestions,
-          readString(raw.message) ?? `${serverName} request`,
-        );
-        if (!answers) return { action: 'cancel', content: null, _meta: null };
-        const content: Record<string, JsonValue> = {};
-        for (const question of formQuestions) {
-          const value = answerValue(question, readAnswerValues(answers[question.id]));
-          if (value !== undefined) content[question.id] = value;
-        }
-        if (formQuestions.some((question) => (
-          question.required && !Object.prototype.hasOwnProperty.call(content, question.id)
-        ))) {
-          return { action: 'cancel', content: null, _meta: null };
-        }
-        return { action: 'accept', content, _meta: null };
+      const isFormMode = mode === 'form' || mode === 'openai/form';
+      if (isFormMode && raw.requestedSchema === undefined) {
+        return { action: 'cancel', content: null, _meta: null };
       }
-      const result = await requestApproval(params.ui, {
-        title: `${serverName} is requesting input`,
-        ...(readString(raw.message) ? { description: readString(raw.message)! } : {}),
-        toolName: `mcp__${serverName}__elicitation`,
-        params: {
-          ...raw,
-          requestId: message.id ?? null,
-        },
-        allowSessionPersistence: false,
-      });
-      if (result.status === 'approved') {
+      if (!params.mcp) return { action: 'cancel', content: null, _meta: null };
+      const requestId = typeof message.id === 'string' || typeof message.id === 'number'
+        ? String(message.id)
+        : undefined;
+      try {
+        const result = await params.mcp.elicit({
+          ...(requestId ? { requestId } : {}),
+          serverName,
+          toolName: 'elicitation',
+          input: raw,
+          ...(readString(raw.message) ? { prompt: readString(raw.message)! } : {}),
+          ...(isFormMode
+            ? { schema: raw.requestedSchema }
+            : {}),
+        });
+        if (result.status === 'accepted') {
+          return {
+            action: 'accept',
+            content: mode === 'url' ? null : result.content ?? {},
+            _meta: null,
+          };
+        }
+        if (result.status === 'declined') {
+          return { action: 'decline', content: null, _meta: null };
+        }
         return {
-          action: 'accept',
-          content: mode === 'url' ? null : {},
+          action: 'cancel',
+          content: null,
           _meta: null,
         };
+      } catch {
+        return { action: 'cancel', content: null, _meta: null };
       }
-      return {
-        action: result.status === 'cancelled' ? 'cancel' : 'decline',
-        content: null,
-        _meta: null,
-      };
     },
   );
 }

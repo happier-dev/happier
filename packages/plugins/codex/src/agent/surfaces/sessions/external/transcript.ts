@@ -1,7 +1,6 @@
-import type {
-  ExternalSessionCandidateV1,
-  ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/plugin-sdk/experimental/sessions';
+import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
+
+import type { CodexExternalSessionCandidate } from './models.js';
 
 export type CodexExternalSessionAppServerMetadata = Readonly<{
   updatedAtMs: number;
@@ -302,7 +301,7 @@ export function decodeCodexExternalForwardCursor(raw: string): CodexExternalForw
 export function mapCodexExternalSessionAppServerPreviewToMessage(params: Readonly<{
   remoteSessionId: string;
   metadata: CodexExternalSessionAppServerMetadata;
-}>): ExternalSessionTranscriptRawMessageV1 | null {
+}>): AgentExternalSessionTranscriptItem | null {
   const previewText = typeof params.metadata.previewText === 'string' ? params.metadata.previewText.trim() : '';
   if (!previewText) return null;
   const stableId = `codex:app-server:${params.remoteSessionId}:${params.metadata.updatedAtMs}`;
@@ -324,7 +323,7 @@ export function mapCodexExternalSessionAppServerPreviewToMessage(params: Readonl
 }
 
 export function mapCodexExternalSessionAppServerCandidateToMetadata(params: Readonly<{
-  candidate: ExternalSessionCandidateV1 | null;
+  candidate: CodexExternalSessionCandidate | null;
 }>): CodexExternalSessionAppServerMetadata | null {
   const candidate = params.candidate;
   if (!candidate) return null;
