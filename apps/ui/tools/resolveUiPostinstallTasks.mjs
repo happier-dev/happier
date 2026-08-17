@@ -10,6 +10,8 @@ export function resolveUiPostinstallTasks({ env }) {
     const tasks = [
         'patch-package',
         'verify-native-patch-compilation',
+        'verify-vendored-reanimated-patch',
+        'verify-vendored-legend-patch',
         'verify-sentry-native-replay-postinit-patch',
         'verify-expo-router-web-modal-patch',
         'install-react-native-enriched-markdown-web-wasm',

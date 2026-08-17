@@ -7,6 +7,19 @@ import { ensureNohoistPeerLinks } from './ensureNohoistPeerLinks.mjs';
 import { createFilteredPatchDir } from './postinstall/filteredPatchDirectory.mjs';
 import { runCommandBestEffort, runCommandOrExit } from './postinstall/runCommand.mjs';
 import { verifyNativePatchCompilation } from './postinstall/verifyNativePatchCompilation.mjs';
+import {
+    formatVendoredLegendPatchFailure,
+    verifyVendoredLegendPatchMarkers,
+} from './postinstall/verifyVendoredLegendPatchMarkers.mjs';
+import {
+    formatVendoredReanimatedPatchFailure,
+    verifyVendoredReanimatedPatchMarkers,
+} from './postinstall/verifyVendoredReanimatedPatchMarkers.mjs';
+import {
+    findReactNativeEnrichedMarkdownPackageDirs,
+    formatReactNativeEnrichedMarkdownWebStreamingPatchFailure,
+    verifyReactNativeEnrichedMarkdownWebStreamingPatch,
+} from './postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 
 // Yarn workspaces can execute this script via a symlinked path (e.g. repoRoot/node_modules/happy/...).
 // Resolve symlinks so repoRootDir/expoAppDir are computed from the real filesystem location.
@@ -64,13 +77,6 @@ if (!patchPackageCliPath) {
 
 const tasks = resolveUiPostinstallTasks({ env: process.env });
 const wants = (id) => tasks.includes(id);
-
-function findReactNativeEnrichedMarkdownPackageDirs() {
-    return [
-        path.resolve(repoRootNodeModulesDir, 'react-native-enriched-markdown'),
-        path.resolve(expoAppNodeModulesDir, 'react-native-enriched-markdown'),
-    ].filter((packageDir) => fs.existsSync(packageDir));
-}
 
 if (wants('patch-package')) {
     // Note: this repo uses Yarn workspaces, so some dependencies are hoisted to the repo root.
@@ -163,8 +169,68 @@ if (wants('verify-native-patch-compilation')) {
     }
 }
 
+// The reanimated settled-updates fix is the one patch in this repository that NOTHING else can
+// observe: it lives in a dependency's C++, is reached through a native timer race, and when the hunk
+// is lost every first-party test still passes while animated values silently stick at stale
+// positions. It is verified right after `patch-package` runs, because that is the step that can drop
+// it — a regeneration against a partially-reverted tree rewrites the .patch file and exits 0.
+if (wants('verify-vendored-reanimated-patch')) {
+    const reanimatedPackageDirs = [
+        path.resolve(repoRootNodeModulesDir, 'react-native-reanimated'),
+        path.resolve(expoAppNodeModulesDir, 'react-native-reanimated'),
+    ];
+    const appPackageJsonPath = path.resolve(expoAppDir, 'package.json');
+
+    const failureReports = [];
+    for (const packageDir of reanimatedPackageDirs) {
+        const result = verifyVendoredReanimatedPatchMarkers({ packageDir, appPackageJsonPath });
+        // Every installed copy must carry the fix: Metro and the native build resolve independently,
+        // so a patched root copy does not vindicate an unpatched app-local one.
+        if (result.status === 'failed') {
+            failureReports.push(`${packageDir}\n${formatVendoredReanimatedPatchFailure(result)}`);
+        }
+    }
+
+    if (failureReports.length > 0) {
+        console.error(`\n${failureReports.join('\n\n')}\n`);
+        process.exit(1);
+    }
+}
+
+// Same failure mode as the reanimated guard above, and the reason this one exists at all: patch-package
+// regenerates silently and can drop hunks without a non-zero exit. Until now this check ran only inside
+// `yarn test`, so an install-time hunk drop stayed invisible for a ~27-minute suite — long enough to
+// build and ship a client from it.
+if (wants('verify-vendored-legend-patch')) {
+    const legendPackageDirs = [
+        path.resolve(repoRootNodeModulesDir, '@legendapp', 'list'),
+        path.resolve(expoAppNodeModulesDir, '@legendapp', 'list'),
+    ];
+
+    const failureReports = [];
+    for (const packageDir of legendPackageDirs) {
+        const result = verifyVendoredLegendPatchMarkers({ packageDir });
+        // Every installed copy must carry the markers: Metro and the native build resolve independently,
+        // so a patched root copy does not vindicate an unpatched app-local one.
+        //
+        // Fail on anything that is not explicitly OK or a legitimate skip, rather than matching a
+        // status name. This guard reports 'missing' where its reanimated sibling reports 'failed', and
+        // an `=== 'failed'` check copied across from that sibling passes a dropped marker silently —
+        // measured, not hypothetical. Allow-listing the safe outcomes also fails closed if a future
+        // status is added.
+        if (result.status !== 'ok' && result.status !== 'skipped') {
+            failureReports.push(`${packageDir}\n${formatVendoredLegendPatchFailure(result)}`);
+        }
+    }
+
+    if (failureReports.length > 0) {
+        console.error(`\n${failureReports.join('\n\n')}\n`);
+        process.exit(1);
+    }
+}
+
 if (wants('install-react-native-enriched-markdown-web-wasm')) {
-    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs();
+    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs({ repoRootDir, expoAppDir });
     const vendoredWasmModulePath = path.resolve(
         toolsDir,
         'react-native-enriched-markdown',
@@ -187,97 +253,23 @@ if (wants('install-react-native-enriched-markdown-web-wasm')) {
 }
 
 if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
-    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs();
+    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs({ repoRootDir, expoAppDir });
 
     if (packageDirs.length === 0) {
         console.error('Could not find react-native-enriched-markdown under repo or UI node_modules.');
         process.exit(1);
     }
 
-    const unpatchedPaths = [];
+    const failureReports = [];
     for (const packageDir of packageDirs) {
-        const enrichedMarkdownTextPath = path.resolve(packageDir, 'lib', 'module', 'web', 'EnrichedMarkdownText.js');
-        const streamingRevealPath = path.resolve(packageDir, 'lib', 'module', 'web', 'streamingReveal.js');
-        const parseMarkdownPath = path.resolve(packageDir, 'lib', 'module', 'web', 'parseMarkdown.js');
-        const parseMarkdownSourcePath = path.resolve(packageDir, 'src', 'web', 'parseMarkdown.ts');
-        const enrichedMarkdownTextSourcePath = path.resolve(packageDir, 'src', 'web', 'EnrichedMarkdownText.tsx');
-        const wasmBuildScriptPath = path.resolve(packageDir, 'cpp', 'wasm', 'build.sh');
-        const wasmSourceModulePath = path.resolve(packageDir, 'src', 'web', 'wasm', 'md4c.js');
-        const wasmBuiltModulePath = path.resolve(packageDir, 'lib', 'module', 'web', 'wasm', 'md4c.js');
-        const iosTailFadeAnimatorPath = path.resolve(packageDir, 'ios', 'utils', 'ENRMTailFadeInAnimator.m');
-        const androidTailFadeAnimatorPath = path.resolve(packageDir, 'android', 'src', 'main', 'java', 'com', 'swmansion', 'enriched', 'markdown', 'utils', 'text', 'TailFadeInAnimator.kt');
-
-        if (
-            !fs.existsSync(enrichedMarkdownTextPath)
-            || !fs.existsSync(streamingRevealPath)
-            || !fs.existsSync(parseMarkdownPath)
-            || !fs.existsSync(parseMarkdownSourcePath)
-            || !fs.existsSync(enrichedMarkdownTextSourcePath)
-            || !fs.existsSync(wasmBuildScriptPath)
-            || !fs.existsSync(wasmSourceModulePath)
-            || !fs.existsSync(wasmBuiltModulePath)
-            || !fs.existsSync(iosTailFadeAnimatorPath)
-            || !fs.existsSync(androidTailFadeAnimatorPath)
-        ) {
-            unpatchedPaths.push(packageDir);
-            continue;
-        }
-
-        const enrichedMarkdownTextContents = fs.readFileSync(enrichedMarkdownTextPath, 'utf8');
-        const streamingRevealContents = fs.readFileSync(streamingRevealPath, 'utf8');
-        const parseMarkdownContents = fs.readFileSync(parseMarkdownPath, 'utf8');
-        const parseMarkdownSourceContents = fs.readFileSync(parseMarkdownSourcePath, 'utf8');
-        const enrichedMarkdownTextSourceContents = fs.readFileSync(enrichedMarkdownTextSourcePath, 'utf8');
-        const wasmBuildScriptContents = fs.readFileSync(wasmBuildScriptPath, 'utf8');
-        const wasmSourceModuleContents = fs.readFileSync(wasmSourceModulePath, 'utf8');
-        const wasmBuiltModuleContents = fs.readFileSync(wasmBuiltModulePath, 'utf8');
-        const wasmSourceModuleBytes = fs.readFileSync(wasmSourceModulePath);
-        const wasmBuiltModuleBytes = fs.readFileSync(wasmBuiltModulePath);
-        const iosTailFadeAnimatorContents = fs.readFileSync(iosTailFadeAnimatorPath, 'utf8');
-        const androidTailFadeAnimatorContents = fs.readFileSync(androidTailFadeAnimatorPath, 'utf8');
-        if (
-            !enrichedMarkdownTextContents.includes('markStreamingRevealOffsets')
-            || !enrichedMarkdownTextContents.includes('streamingAnimation')
-            || !enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')
-            || !parseMarkdownContents.includes('preloadMarkdownRuntime')
-            || !parseMarkdownContents.includes("import createMd4cModule from './wasm/md4c.js'")
-            || parseMarkdownContents.includes("import('./wasm/md4c")
-            || !parseMarkdownContents.includes("['number', 'number', 'number']")
-            || !parseMarkdownContents.includes('stringToUTF8(markdown')
-            || !parseMarkdownContents.includes('parseCache.clear()')
-            || !parseMarkdownSourceContents.includes('lengthBytesUTF8(markdown)')
-            || !parseMarkdownSourceContents.includes("import createMd4cModule from './wasm/md4c.js'")
-            || parseMarkdownSourceContents.includes("import('./wasm/md4c")
-            || !parseMarkdownSourceContents.includes('parserPromise = null')
-            || !enrichedMarkdownTextSourceContents.includes('lastChildStyles.paragraph')
-            || enrichedMarkdownTextSourceContents.includes('<pre')
-            || !wasmBuildScriptContents.includes('STACK_SIZE=8MB')
-            || !wasmBuildScriptContents.includes('SINGLE_FILE_BINARY_ENCODE=0')
-            || !wasmBuildScriptContents.includes('ALLOW_MEMORY_GROWTH=1')
-            || !wasmBuildScriptContents.includes('EXPORT_ES6=1')
-            || !wasmBuildScriptContents.includes('"_parseMarkdown","_malloc","_free"')
-            || !wasmBuildScriptContents.includes('"stringToUTF8","lengthBytesUTF8"')
-            || !wasmSourceModuleContents.includes('export default createMd4cModule')
-            || !wasmBuiltModuleContents.includes('export default createMd4cModule')
-            || wasmSourceModuleContents.includes('import.meta')
-            || wasmBuiltModuleContents.includes('import.meta')
-            || wasmSourceModuleBytes.includes(0)
-            || wasmBuiltModuleBytes.includes(0)
-            || !streamingRevealContents.includes('data-happier-enriched-markdown-reveal')
-            || !streamingRevealContents.includes('updateStreamingRevealRanges')
-            || !iosTailFadeAnimatorContents.includes('ENRMActiveFadeRange')
-            || !androidTailFadeAnimatorContents.includes('activeRanges')
-        ) {
-            unpatchedPaths.push(packageDir);
+        const result = verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir });
+        if (result.status !== 'ok') {
+            failureReports.push(`${packageDir}\n${formatReactNativeEnrichedMarkdownWebStreamingPatchFailure(result)}`);
         }
     }
 
-    if (unpatchedPaths.length > 0) {
-        console.error(
-            `react-native-enriched-markdown web streaming patch does not appear to be applied to:\n${unpatchedPaths
-                .map((p) => `- ${p}`)
-                .join('\n')}`,
-        );
+    if (failureReports.length > 0) {
+        console.error(`\n${failureReports.join('\n\n')}\n`);
         process.exit(1);
     }
 }
