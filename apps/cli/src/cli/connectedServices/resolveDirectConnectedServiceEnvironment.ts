@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type {
   AccountSettings,
   ConnectedServiceBindingsV1,
+  ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
 import {
   readConnectedServiceMaterializationIdentityV1FromMetadata,
@@ -18,6 +19,7 @@ import {
 import type { CatalogAgentId } from '@/backends/types';
 import { configuration } from '@/configuration';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
+import { createConnectedServiceMaterializationIdentity } from '@/daemon/connectedServices/materialize/createConnectedServiceMaterializationIdentity';
 import { shouldResolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { resolveEffectiveProviderStateMode } from '@/daemon/connectedServices/stateSharing/resolveEffectiveProviderStateMode';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
@@ -30,6 +32,13 @@ export type DirectConnectedServiceEnvironment = Readonly<{
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
 }>;
+
+export function resolveDirectConnectedServiceMaterializationIdentity(
+  sessionMetadata: Readonly<Record<string, unknown>> | null,
+): ConnectedServiceMaterializationIdentityV1 {
+  return readConnectedServiceMaterializationIdentityV1FromMetadata(sessionMetadata)
+    ?? createConnectedServiceMaterializationIdentity();
+}
 
 /**
  * Remote's narrow direct-launch adapter over the canonical daemon spawn-auth
@@ -48,7 +57,7 @@ export async function resolveDirectConnectedServiceEnvironment(params: Readonly<
 }>): Promise<DirectConnectedServiceEnvironment | null> {
   const sessionMetadata = params.sessionMetadata ?? null;
   const materializationIdentity =
-    readConnectedServiceMaterializationIdentityV1FromMetadata(sessionMetadata);
+    resolveDirectConnectedServiceMaterializationIdentity(sessionMetadata);
   const connectedServicesUpdatedAt =
     typeof sessionMetadata?.connectedServicesUpdatedAt === 'number'
       && Number.isFinite(sessionMetadata.connectedServicesUpdatedAt)
@@ -69,7 +78,7 @@ export async function resolveDirectConnectedServiceEnvironment(params: Readonly<
       : {}),
     connectedServices: params.connectedServices,
     ...(connectedServicesUpdatedAt !== undefined ? { connectedServicesUpdatedAt } : {}),
-    ...(materializationIdentity ? { connectedServiceMaterializationIdentityV1: materializationIdentity } : {}),
+    connectedServiceMaterializationIdentityV1: materializationIdentity,
     ...(codexBackendMode === 'mcp' || codexBackendMode === 'acp' || codexBackendMode === 'appServer'
       ? { codexBackendMode }
       : {}),
@@ -94,8 +103,8 @@ export async function resolveDirectConnectedServiceEnvironment(params: Readonly<
           agentId: params.agentId,
           sessionDirectory: params.directory,
           connectedServicesBindingsRaw: params.connectedServices,
-          materializationKey: materializationIdentity?.id ?? params.sessionId,
-          ...(materializationIdentity ? { connectedServiceMaterializationIdentityV1: materializationIdentity } : {}),
+          materializationKey: materializationIdentity.id,
+          connectedServiceMaterializationIdentityV1: materializationIdentity,
           activeServerDir: configuration.activeServerDir,
           baseDir: join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized'),
           credentials: params.credentials,
