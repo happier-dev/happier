@@ -2,6 +2,7 @@ import { RevealText } from '../components/RevealText';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
+import { useLocalePath } from '../i18n';
 
 export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
 
@@ -26,6 +27,7 @@ export const VS_REMOTE_CONTROL_SECTION_ID = 'vs-remote-control';
  */
 export function VsRemoteControl() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const { comparison: { RC_SECTION } } = useSiteData();
 
@@ -81,7 +83,7 @@ export function VsRemoteControl() {
                     className="mx-auto mt-10 max-w-[760px] text-center text-[15px] leading-[1.6]"
                     style={{ color: 'var(--muted)' }}
                 >{rich(PAGE_PROSE.vsRemoteControl.p0, { 1: (c: ReactNode) => <a
-                        href="/vs/claude-code-remote-control"
+                        href={localeHref('/vs/claude-code-remote-control')}
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
                     >{c}</a> })}</p>

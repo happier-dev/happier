@@ -7,9 +7,13 @@ import {
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { InstallCommand } from '../components/InstallCommand';
 import { DOCS_URL, GUIDES_URL, WEB_APP_URL } from '../data/downloads';
-import { rich } from '../i18n/rich';
+import { rich, substitute } from '../i18n/rich';
 import type { ReactNode } from 'react';
 import { useSiteData } from '../i18n/siteData';
+import { useLocalePath } from '../i18n';
+
+/** The slot renderer every message in this file uses for an inline code span. */
+const CODE = (c: ReactNode) => <code className="font-mono">{c}</code>;
 
 /**
  * /agents/<slug>
@@ -135,32 +139,17 @@ function Ticks({ text }: { text: string }) {
 function InstallReality({ agent }: { agent: AgentRecord }) {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
 
-    const managedPath = (
-        <>
-            <code className="font-mono">~/.happier/tools/providers/{agent.id}/</code>
-        </>
-    );
+    const values = {
+        binary: agent.binary,
+        source: agent.managedSource ?? '',
+        path: `~/.happier/tools/providers/${agent.id}/`,
+    };
 
     switch (agent.installKind) {
         case 'happier-managed-package':
-            return (
-                <P>
-                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
-                    first and runs the copy you installed. If there is not one, it can install{' '}
-                    <code className="font-mono">{agent.managedSource}</code> into {managedPath} — its
-                    own directory, not your global npm prefix. A copy you manage yourself is never
-                    replaced or upgraded behind your back.
-                </P>
-            );
+            return <P>{rich(PAGE_PROSE.agentDetail.p14, { 1: CODE, 2: CODE, 3: CODE }, values)}</P>;
         case 'happier-managed-release':
-            return (
-                <P>
-                    Happier looks for <code className="font-mono">{agent.binary}</code> on your PATH
-                    first and runs the copy you installed. If there is not one, it can download the{' '}
-                    <code className="font-mono">{agent.managedSource}</code> release binary into{' '}
-                    {managedPath} and keep it there. Your own install always takes priority.
-                </P>
-            );
+            return <P>{rich(PAGE_PROSE.agentDetail.p15, { 1: CODE, 2: CODE, 3: CODE }, values)}</P>;
         case 'vendor-script':
             return (
                 <P>{rich(PAGE_PROSE.agentDetail.p0, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> }, { binary: agent.binary, vendor: agent.vendor })}</P>
@@ -208,47 +197,24 @@ function InstallReality({ agent }: { agent: AgentRecord }) {
  *     reason (apps/docs/content/docs/features/attach-to-session.mdx:47-52).
  */
 function TerminalHandoff({ agent }: { agent: AgentRecord }) {
-    const attach = (
-        <code className="font-mono">happier attach &lt;session-id&gt;</code>
-    );
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
+    const values = { name: agent.name, attach: 'happier attach <session-id>' };
 
     switch (agent.runtime.localControl.kind) {
         case 'tmux':
             return (
                 <P>
-                    When you want {agent.name}’s own TUI, {attach} on the computer that owns the
-                    session hands it to you inside tmux, with the history already there. On the
-                    default runtime that hand-off is exclusive: while the terminal has the session,
-                    a message you send from the app waits in the queue rather than being typed
-                    underneath you, and it goes through when you hand control back.
-                    {agent.runtime.terminalPromptInjection ? (
-                        <>
-                            {' '}
-                            The unified terminal runtime is the other arrangement — one{' '}
-                            {agent.name} process in a shared terminal host, writable from the
-                            terminal and the app at the same time.
-                        </>
-                    ) : null}
+                    {rich(PAGE_PROSE.agentDetail.p16, { 1: CODE }, values)}
+                    {agent.runtime.terminalPromptInjection
+                        ? <> {rich(PAGE_PROSE.agentDetail.p17, undefined, values)}</>
+                        : null}
                 </P>
             );
         case 'provider-attach':
-            return (
-                <P>
-                    {attach} opens {agent.name}’s own TUI on that same session through {agent.name}’s
-                    attach flow. Both ends stay writable, with no multiplexer involved and nothing
-                    to switch on first — type in the TUI and it appears in the app, send from the
-                    app and it appears in the TUI.
-                </P>
-            );
+            return <P>{rich(PAGE_PROSE.agentDetail.p18, { 1: CODE }, values)}</P>;
         case 'none':
-            return (
-                <P>
-                    There is no hand-off to {agent.name}’s own TUI. That exists for Claude Code,
-                    Codex and OpenCode, and for {agent.name} the session stays Happier’s on both
-                    ends. {attach} lists the sessions on that computer and marks the ones it cannot
-                    reattach, rather than failing after you pick one.
-                </P>
-            );
+            return <P>{rich(PAGE_PROSE.agentDetail.p19, { 1: CODE }, values)}</P>;
     }
 }
 
@@ -264,41 +230,74 @@ function TerminalHandoff({ agent }: { agent: AgentRecord }) {
  * rather than as the ordinary case it is.
  */
 function RunsOnAccount({ agent }: { agent: AgentRecord }) {
+    const { pageProse: { PAGE_PROSE } } = useSiteData();
+
     const services = agent.runtime.connectedServices;
     if (services.length === 0) return null;
 
     const list = joinWithOr(services.map((id) => CONNECTED_SERVICE_LABELS[id]));
 
+    const values = {
+        name: agent.name,
+        list,
+        service: withoutArticle(CONNECTED_SERVICE_LABELS[services[0]]),
+    };
+
     return (
-        <Prose heading={`Which account ${agent.name} runs on`} data-section="agent-accounts">
+        <Prose
+            heading={substitute(PAGE_PROSE.agentDetail.p20, { name: agent.name })}
+            data-section="agent-accounts"
+        >
+            <P>{rich(PAGE_PROSE.agentDetail.p21, undefined, values)}</P>
             <P>
-                {agent.name} is one of the agents Happier can point at a credential you connected
-                once instead of at whatever that computer is logged into. It accepts {list}.
-            </P>
-            <P>
-                Connected services are keyed by the credential, not by the agent, so the same{' '}
-                {withoutArticle(CONNECTED_SERVICE_LABELS[services[0]])} is selectable for every agent that can take
-                it, on every computer you have connected — which is also what makes a pool of your
-                own accounts useful across more than one of them. The credential is encrypted and
-                decrypted on your own devices;{' '}
-                <a
-                    href={docsHref('/features/connected-services')}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-2"
-                    style={{ color: 'var(--fg)' }}
-                >
-                    the docs page
-                </a>{' '}
-                carries the per-profile rules, because which kinds of profile each agent accepts is
-                exactly the sort of detail that moves between releases.
+                {rich(
+                    PAGE_PROSE.agentDetail.p22,
+                    {
+                        1: (c: ReactNode) => (
+                            <a
+                                href={docsHref('/features/connected-services')}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline underline-offset-2"
+                                style={{ color: 'var(--fg)' }}
+                            >
+                                {c}
+                            </a>
+                        ),
+                    },
+                    values,
+                )}
             </P>
         </Prose>
     );
 }
 
-export function AgentDetail({ agent }: { agent: AgentRecord }) {
-    const { pageProse: { PAGE_PROSE } } = useSiteData();
+/**
+ * TAKES A SLUG, NOT A RECORD, AND THAT IS THE WHOLE POINT.
+ *
+ * It used to take the `AgentRecord` itself, handed in by src/routes.tsx and by
+ * src/entries/_agent.tsx — both of which read it from the module-scope
+ * `AGENTS_BY_SLUG`, which is the ENGLISH catalogue and which the overlay never
+ * touches. So thirteen pages rendered their headline, standfirst, lead prose and
+ * FAQ in English in every language, while the chrome around them came through
+ * `useSiteData()` and translated correctly. Nothing failed: those strings were
+ * extracted, were translated into all nine locales, and were simply never asked
+ * for — 163 of them.
+ *
+ * Resolving the record HERE makes the locale the single input. A caller cannot
+ * hand in the wrong-language record, because a caller no longer hands in a
+ * record.
+ */
+export function AgentDetail({ slug }: { slug: string }) {
+    const { pageProse: { PAGE_PROSE }, agents: { AGENTS: LOCALISED_AGENTS } } = useSiteData();
+    const localeHref = useLocalePath();
+
+    const agent = LOCALISED_AGENTS.find((candidate) => candidate.slug === slug);
+    if (!agent) {
+        throw new Error(
+            `<AgentDetail slug="${slug}"> names an agent that is not in AGENTS (src/data/agents.ts).`,
+        );
+    }
 
     const setupLink = setupLinkFor(agent);
     const hasSetupGuide = agent.vendorSetupGuide !== null;
@@ -310,7 +309,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
     return (
         <PageShell>
             <nav aria-label={PAGE_PROSE.agentDetail.p11} className="mx-auto max-w-[1400px] px-6 pt-8 md:px-10">
-                <a href="/agents" className="text-[13px] underline underline-offset-2" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.agentDetail.p12)}</a>
+                <a href={localeHref('/agents')} className="text-[13px] underline underline-offset-2" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.agentDetail.p12)}</a>
             </nav>
 
             <PageHeader
@@ -425,20 +424,27 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                 */}
                 {setupLink ? (
                     <P>
-                        {hasSetupGuide
-                            ? `${agent.vendor}’s own install and sign-in guide is at `
-                            : `${agent.vendor}’s own page for ${agent.name} is at `}
-                        <a
-                            href={setupLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="underline underline-offset-2"
-                            style={{ color: 'var(--fg)' }}
-                        >
-                            {setupLink.replace(/^https?:\/\//, '')}
-                        </a>
-                        . Happier does not mirror it, because a copy of someone else’s install
-                        instructions is a copy that goes stale.
+                        {rich(
+                            hasSetupGuide ? PAGE_PROSE.agentDetail.p23 : PAGE_PROSE.agentDetail.p24,
+                            {
+                                1: (c: ReactNode) => (
+                                    <a
+                                        href={setupLink}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="underline underline-offset-2"
+                                        style={{ color: 'var(--fg)' }}
+                                    >
+                                        {c}
+                                    </a>
+                                ),
+                            },
+                            {
+                                vendor: agent.vendor,
+                                name: agent.name,
+                                link: setupLink.replace(/^https?:\/\//, ''),
+                            },
+                        )}
                     </P>
                 ) : null}
                 {happierDocsPath ? (
@@ -476,7 +482,7 @@ export function AgentDetail({ agent }: { agent: AgentRecord }) {
                         </>
                     )}
                 </P>
-                <P>{rich(PAGE_PROSE.agentDetail.p6, { 1: (c: ReactNode) => <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> })}</P>
+                <P>{rich(PAGE_PROSE.agentDetail.p6, { 1: (c: ReactNode) => <a href={localeHref('/agents')} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> })}</P>
             </Prose>
 
             <Prose

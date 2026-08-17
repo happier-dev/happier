@@ -41,6 +41,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Claude Code, Codex, OpenCode, Cursor y 9 más — en una sola app cifrada de extremo a extremo, en todos tus dispositivos y con tus propias suscripciones. Código abierto y autoalojable.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot y 7 más.",
         },
+        "fr": {
+            title: "Happier — open-source pour Claude Code, Codex et 11 autres",
+            description: "Lance Claude Code, Codex et 11 autres agents depuis ton téléphone, ton navigateur ou ton bureau. Open-source, chiffré de bout en bout, auto-hébergeable.",
+            ogTitle: "Happier — un seul client pour tous les agents de code IA.",
+            ogDescription: "Claude Code, Codex, OpenCode, Cursor et 9 autres — dans une app chiffrée de bout en bout, sur tous tes appareils, avec tes propres abonnements. Open-source et auto-hébergeable.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot et 7 autres.",
+        },
         "it": {
             title: "Happier — app open source per Claude Code, Codex e altri 11",
             description: "Esegui Claude Code, Codex e altri 11 agenti da telefono, browser o desktop. Open source, crittografato end-to-end, self-hostabile. Con i tuoi abbonamenti.",
@@ -105,6 +112,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Todos los agentes de programación con IA que ejecuta Happier",
             ogDescription: "Trece agentes de programación de línea de comandos y una sola app en tu teléfono, tu navegador y tu escritorio. Cada uno se ejecuta en tu propio ordenador, con tu propia suscripción o clave de API.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Les 13 agents de code IA que Happier fait tourner",
+            description: "Une app open-source pour 13 agents de code en ligne de commande — Claude Code, Codex, OpenCode, Pi et neuf autres — sur tes machines, avec tes comptes.",
+            ogTitle: "Tous les agents de code IA que Happier fait tourner",
+            ogDescription: "Treize agents de code en ligne de commande, une seule app sur ton téléphone, ton navigateur et ton bureau. Chacun tourne sur ta machine, avec ton abonnement ou ta clé API.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Happier esegue 13 agenti di coding AI da riga di comando",
@@ -171,6 +185,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Claude Code sigue ejecutándose en tu propio ordenador, con la sesión iniciada en tu propia cuenta de Anthropic. Happier le da un teléfono, una pestaña del navegador y una ventana de escritorio.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "App open-source pour Claude Code — Happier",
+            description: "Fais tourner Claude Code sur ta machine et pilote-le depuis ton téléphone, ton navigateur ou ton bureau. Open-source, chiffré de bout en bout, licence MIT.",
+            ogTitle: "App open-source pour Claude Code",
+            ogDescription: "Claude Code continue de tourner sur ta propre machine, connecté à ton compte Anthropic. Happier lui donne un téléphone, un onglet de navigateur et une fenêtre de bureau.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "App open source per Claude Code — Happier",
             description: "Esegui Claude Code sul tuo computer e pilotalo da telefono, browser o desktop. Open source, crittografato end-to-end, self-hostabile, con licenza MIT.",
@@ -235,6 +256,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Codex en tu teléfono, desde una app de código abierto",
             ogDescription: "La CLI openai/codex se ejecuta en hardware que es tuyo, con tu propia suscripción a ChatGPT o tu propia clave de API. Happier es la ventana desde la que asomarte a ella estés donde estés.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Codex CLI sur ton téléphone — Happier, open-source",
+            description: "La CLI openai/codex tourne sur ta machine avec ton abonnement ChatGPT ou ta clé API. Lis-la, valide et pilote-la depuis n’importe quel appareil. Gratuit.",
+            ogTitle: "Codex sur ton téléphone, depuis une app open-source",
+            ogDescription: "La CLI openai/codex tourne sur du matériel qui t’appartient, avec ton abonnement ChatGPT ou ta propre clé API. Happier est la fenêtre qui donne dessus, où que tu sois.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Codex CLI sul tuo telefono — Happier, app open source",
@@ -301,6 +329,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "OpenCode es código abierto. Happier es código abierto, con licencia MIT y autoalojable. Ninguno de los dos necesita un servidor que no controles.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "App open-source pour OpenCode — téléphone et bureau",
+            description: "OpenCode tourne sur du matériel que tu contrôles, avec tes identifiants opencode. Happier y ajoute des clients mobile, web et bureau sur un relay à toi.",
+            ogTitle: "App open-source pour OpenCode",
+            ogDescription: "OpenCode est open-source. Happier aussi : licence MIT et auto-hébergeable. Ni l’un ni l’autre n’a besoin d’un serveur que tu ne contrôles pas.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "App open source per OpenCode — telefono e desktop",
             description: "OpenCode gira su hardware che controlli, con le tue credenziali opencode auth. Happier aggiunge telefono, browser e desktop su un relay self-hostabile.",
@@ -365,6 +400,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Ejecuta Cursor Agent CLI desde tu teléfono",
             ogDescription: "Cursor distribuye un agente headless que no necesita la ventana del editor. Happier lo ejecuta en tu ordenador y pone la conversación en tu teléfono.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Pilote Cursor Agent CLI depuis ton téléphone",
+            description: "Le binaire headless cursor-agent tourne sur ta machine ou ton serveur ; la conversation, les diffs et les validations sont sur ton téléphone. Licence MIT.",
+            ogTitle: "Pilote Cursor Agent CLI depuis ton téléphone — Happier",
+            ogDescription: "Cursor livre un agent headless qui n’a pas besoin de l’éditeur. Happier le fait tourner sur ta machine et met la conversation sur ton téléphone.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Esegui Cursor Agent CLI dal telefono — Happier",
@@ -431,6 +473,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "El agente de terminal de código abierto de Google, ejecutándose contra tu propio proyecto de Google Cloud si así es como trabaja tu organización, y legible desde un teléfono.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Gemini CLI sur tous tes appareils — Happier",
+            description: "L’agent de terminal open-source de Google tourne dans ton environnement, y compris ton projet Cloud. Happier porte la session sur ton téléphone, chiffrée.",
+            ogTitle: "Gemini CLI sur tous les appareils que tu utilises",
+            ogDescription: "L’agent de terminal open-source de Google, exécuté sur ton propre projet Google Cloud si c’est ainsi que ton organisation travaille, lisible depuis un téléphone.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Gemini CLI su ogni dispositivo — Happier",
             description: "L’agente da terminale open source di Google gira nel tuo ambiente, anche sul tuo progetto Cloud. Happier porta la sessione sul telefono, crittografata.",
@@ -495,6 +544,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "GitHub Copilot CLI, manejado desde tu teléfono",
             ogDescription: "El agente de línea de comandos de Copilot, ejecutándose en tu propio ordenador o en tu propia máquina de compilación, con la sesión en el bolsillo.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "GitHub Copilot CLI depuis ton téléphone — Happier",
+            description: "Fais tourner l’agent Copilot en ligne de commande sur ta machine ou ta machine de build et pilote-le de partout. Client open-source indépendant de GitHub.",
+            ogTitle: "GitHub Copilot CLI, piloté depuis ton téléphone",
+            ogDescription: "L’agent Copilot en ligne de commande, exécuté sur ta propre machine ou sur ta propre machine de build, avec la session dans ta poche.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "GitHub Copilot CLI dal tuo telefono — Happier",
@@ -561,6 +617,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Qwen Code en tu propio ordenador, con la sesión en tu teléfono. Las dos mitades son de código abierto y ninguna necesita una cuenta con nosotros para ser útil.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "App open-source pour Qwen Code — Happier",
+            description: "Qwen Code tourne sur ta machine avec ton compte. Happier met la session sur ton téléphone, ton navigateur et ton bureau via un relay chiffré à toi.",
+            ogTitle: "App open-source pour Qwen Code",
+            ogDescription: "Qwen Code sur ta propre machine, avec la session sur ton téléphone. Les deux moitiés sont open-source et aucune n’exige un compte chez nous pour servir.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "App open source per Qwen Code — Happier",
             description: "Qwen Code gira sul tuo computer con il tuo account. Happier porta la sessione su telefono, browser e desktop, su un relay crittografato che ospiti tu.",
@@ -625,6 +688,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Kimi CLI desde tu teléfono, tu navegador o tu escritorio",
             ogDescription: "El agente de terminal de Moonshot se queda en tu ordenador. La conversación va donde vayas tú, cifrada por el camino.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Kimi CLI sur ton téléphone, ton navigateur, ton bureau",
+            description: "L’agent de code en terminal de Moonshot reste sur ta machine pendant que tu le lis et le pilotes de partout. Gratuit, licence MIT, chiffré de bout en bout.",
+            ogTitle: "Kimi CLI depuis ton téléphone, ton navigateur ou ton bureau",
+            ogDescription: "L’agent de terminal de Moonshot reste sur ta machine. La conversation te suit partout, chiffrée sur tout le chemin.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Kimi CLI dal telefono, dal browser o dal desktop",
@@ -691,6 +761,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Una app de código abierto para Kilo y los otros 12 agentes de programación de línea de comandos que puedas tener instalados.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Kilo CLI sur ton téléphone, ton portable et le web",
+            description: "Une app open-source pour Kilo CLI et douze autres agents de code en ligne de commande, sur tes machines et tes comptes. Sans sièges, sans option payante.",
+            ogTitle: "Kilo CLI sur ton téléphone, ton portable et ton navigateur",
+            ogDescription: "Une seule app open-source pour Kilo et les douze autres agents de code en ligne de commande que tu as peut-être installés.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Kilo CLI su telefono, laptop e browser",
             description: "Un’app open source per Kilo CLI e altri dodici agenti di coding da riga di comando, sui tuoi computer e con i tuoi account. Senza postazioni né paywall.",
@@ -755,6 +832,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Ejecuta Kiro CLI desde donde estés",
             ogDescription: "La CLI agéntica de AWS, ejecutándose con tu propia identidad de AWS en tu propio ordenador, con una app por delante.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Pilote Kiro CLI d’où tu veux — Happier",
+            description: "La CLI agentique d’AWS sur ta machine ou ton EC2, sous ta propre identité AWS, avec la session lisible depuis un téléphone. Relay open-source à héberger.",
+            ogTitle: "Pilote Kiro CLI d’où que tu sois",
+            ogDescription: "La CLI agentique d’AWS, exécutée sous ta propre identité AWS sur ta propre machine, avec une app devant elle.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Esegui Kiro CLI da dovunque tu sia — Happier",
@@ -821,6 +905,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "La CLI de Augment Code, ejecutándose en tu propio ordenador con tu propia titularidad de Augment, y la conversación en todos los dispositivos que tienes.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Auggie sur ton téléphone et ton bureau — Happier",
+            description: "La CLI d’Augment Code tourne sur ta machine avec ton propre abonnement. Happier réunit son transcript et ses validations à côté de tes autres agents.",
+            ogTitle: "Auggie, sur ton téléphone et sur ton bureau",
+            ogDescription: "La CLI d’Augment Code, exécutée sur ta propre machine sous ton propre abonnement Augment, avec la conversation sur chacun de tes appareils.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Auggie sul telefono e sul desktop — Happier",
             description: "Auggie, la CLI di Augment Code, gira sul tuo computer con il tuo entitlement. Happier raccoglie trascrizione e approvazioni accanto agli altri agenti.",
@@ -885,6 +976,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "App de código abierto para el Pi Coding Agent",
             ogDescription: "Pi trae sus propias claves y ningún modelo propio. Happier trae el teléfono, el navegador y la app de escritorio, y ningún servidor en medio.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "App open-source pour le Pi Coding Agent",
+            description: "Pi apporte tes propres clés API ; Happier apporte les clients mobile, web et bureau. Aucun des deux ne garde tes clés sur un serveur. Licence MIT.",
+            ogTitle: "App open-source pour le Pi Coding Agent — Happier",
+            ogDescription: "Pi apporte ses propres clés et aucun modèle maison. Happier apporte le téléphone, le navigateur et l’app de bureau, et aucun serveur au milieu.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "App open source per il Pi Coding Agent",
@@ -951,6 +1049,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "La CLI de programación de xAI, ejecutándose en tu propio ordenador con tu propia cuenta de xAI. La integración de Happier es experimental, y esta página lo dice antes de que instales nada.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Grok Build CLI depuis ton téléphone — Happier",
+            description: "La CLI de code de xAI sur ta propre machine, pilotée depuis n’importe quel appareil. L’intégration est expérimentale et cette page dit ce qui manque.",
+            ogTitle: "Grok Build CLI depuis ton téléphone ou ton bureau",
+            ogDescription: "La CLI de code de xAI, exécutée sur ta propre machine avec ton propre compte xAI. L’intégration Happier est expérimentale, et cette page le dit avant que tu installes quoi que ce soit.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Grok Build CLI dal tuo telefono — Happier",
             description: "Grok Build, la CLI di xAI, gira sul tuo computer, pilotata da ogni dispositivo. L’integrazione è sperimentale e questa pagina dice cosa non supporta.",
@@ -1015,6 +1120,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Claude Code Remote Control y Happier, comparados",
             ogDescription: "Lo que el remote propio de Anthropic hace bien, las cinco situaciones en las que se desactiva solo, y lo que hace en su lugar un solo cliente para trece agentes.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Claude Code Remote Control vs Happier : le comparatif",
+            description: "Remote Control est gratuit et bon. Mais il est indisponible avec les clés API, les gateways, Bedrock, Foundry et les organisations ZDR. Le comparatif.",
+            ogTitle: "Claude Code Remote Control face à Happier",
+            ogDescription: "Ce que le remote d’Anthropic fait bien, les cinq situations dans lesquelles il se coupe, et ce qu’un seul client pour treize agents fait à la place.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Claude Code Remote Control vs Happier: cosa copre ognuno",
@@ -1081,6 +1193,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Lo que el remote propio de OpenAI hace bien, las cinco condiciones bajo las que funciona, y lo que hace en su lugar un solo cliente para cada agente de programación.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Codex depuis ton téléphone — Codex Remote vs Happier",
+            description: "OpenAI relie l’app ChatGPT à un Mac ou un PC qui fait tourner Codex. Ce que couvre Remote, les cinq conditions qu’il impose, et ce que fait Happier.",
+            ogTitle: "Codex Remote et Happier, comparés",
+            ogDescription: "Ce que le remote d’OpenAI fait bien, les cinq conditions sous lesquelles il tourne, et ce qu’un seul client pour tous les agents de code fait à la place.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Codex dal telefono — Codex Remote vs Happier",
             description: "OpenAI abbina l’app ChatGPT a un Mac o a un PC Windows che esegue Codex. Cosa copre Remote, le cinque condizioni in cui gira, e cosa fa invece Happier.",
@@ -1145,6 +1264,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Un límite de uso no debería acabar con tu sesión.",
             ogDescription: "La sesión conserva su sitio al llegar a un límite de uso, espera a que pase el reinicio y retoma el trabajo — con una cuenta, o entre las cuentas que agrupes.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Limites d’usage Claude Code et Codex, sans perdre le fil",
+            description: "Quand une limite d’usage Claude Code ou Codex tombe, la session attend le reset puis reprend — automatiquement si tu veux. Ou mets tes comptes en pool.",
+            ogTitle: "Une limite d’usage ne devrait pas finir ta session.",
+            ogDescription: "La session garde sa place pendant une limite d’usage, attend le reset et reprend le travail — sur un seul compte, ou sur l’ensemble des comptes que tu mets en pool.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Claude Code e Codex oltre il limite di utilizzo",
@@ -1211,6 +1337,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Una sesión y dos interfaces: la propia TUI del proveedor en tu shell y Happier en tu teléfono. El mismo id de sesión, la misma transcripción y la misma cola a los dos lados del cambio.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Claude Code et Codex dans ton terminal, et dans l’app",
+            description: "Lance Claude Code, Codex ou OpenCode dans leur propre TUI et suis la même session depuis ton téléphone. Attache-toi via tmux, ou rends la main à l’app.",
+            ogTitle: "Garde tes terminaux Claude Code, Codex et OpenCode, ou travaille depuis l’app",
+            ogDescription: "Une session, deux façades : la TUI du provider dans ton shell et Happier sur ton téléphone. Même session id, même transcript, même file d’attente des deux côtés.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Claude Code e Codex nel terminale, e nell’app",
             description: "Esegui Claude Code, Codex o OpenCode nella loro TUI e segui la stessa sessione dal telefono. Fai attach via tmux, o restituisci il controllo all’app.",
@@ -1276,6 +1409,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogDescription: "Tu sesión se cifra con una clave por sesión en el dispositivo que la creó, y al relay se le entrega una copia sellada que no tiene con qué abrir. Esto es lo que sí puede ver, nombrado y no maquillado.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
         },
+        "fr": {
+            title: "Chiffrement de bout en bout — ce que voit le relay",
+            description: "Le contenu des sessions est scellé sur l’appareil qui l’a écrit. Les clés, les colonnes qu’un relay peut encore lire, et l’effet d’un stockage en clair.",
+            ogTitle: "Chiffrement de bout en bout, les clés sur tes appareils",
+            ogDescription: "Ta session est chiffrée sous une clé propre à la session, sur l’appareil qui l’a créée, et le relay reçoit une copie scellée qu’il n’a rien pour ouvrir. Voici ce qu’il voit encore, nommé sans détour.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
+        },
         "it": {
             title: "Crittografia end-to-end in Happier: cosa vede il relay",
             description: "Il contenuto è sigillato sul dispositivo che lo ha scritto. Le chiavi, le colonne che un relay legge ancora, e cosa cambia con l’archiviazione in chiaro.",
@@ -1340,6 +1480,13 @@ export const ROUTE_META_I18N: Record<string, Partial<Record<Locale, RouteMetaFie
             ogTitle: "Autoaloja el relay de Happier detrás de tu propio SSO",
             ogDescription: "Un relay que alojas tú, restringido a tu organización de GitHub o a tus grupos OIDC, con certificados de cliente, recomprobación de bajas y la política de almacenamiento que elijas. Todo con licencia MIT.",
             ogImageAlt: "El logotipo de Happier sobre las palabras: Un cliente para cada agente de programación con IA.",
+        },
+        "fr": {
+            title: "Happier auto-hébergé pour les équipes — SSO, mTLS",
+            description: "Héberge le relay Happier toi-même : filtrage par org GitHub et groupes OIDC, mTLS transmis, re-vérifs d’offboarding, rétention, Docker avec Postgres.",
+            ogTitle: "Auto-héberge le relay Happier derrière ton propre SSO",
+            ogDescription: "Un relay que tu héberges, verrouillé sur ton org GitHub ou tes groupes OIDC, avec certificats clients, re-vérifications d’offboarding et une politique de stockage que tu choisis. Licence MIT, intégralement.",
+            ogImageAlt: "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA.",
         },
         "it": {
             title: "Happier self-hosted per team — SSO, mTLS, i tuoi dati",

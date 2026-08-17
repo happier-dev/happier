@@ -1,10 +1,10 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
-import { DEFAULT_LOCALE, LOCALE_META, localeFromPathname, type Locale } from './locales';
+import { DEFAULT_LOCALE, LOCALE_META, localeFromPathname, localePath, type Locale } from './locales';
 import { en } from './messages/en';
 import { messagesFor, type Messages } from './messages/registry';
 
-export { DEFAULT_LOCALE, LOCALES, LOCALE_META, SITE_ORIGIN, localeFromPathname, localeRoutes, localeUrl, suggestLocale } from './locales';
+export { DEFAULT_LOCALE, LOCALES, LOCALE_META, SITE_ORIGIN, localeFromPathname, localePath, localeRoutes, localeUrl, suggestLocale } from './locales';
 export type { Locale, LocaleMeta } from './locales';
 export { messagesFor } from './messages/registry';
 export type { Messages } from './messages/en';
@@ -71,6 +71,19 @@ export function LocaleProvider({
 /** `const { t } = useI18n()` then `t.hero.subhead`. Typed end to end. */
 export function useI18n(): LocaleContextValue {
     return useContext(LocaleContext);
+}
+
+/**
+ * `const href = useLocalePath()` then `href('/agents')`.
+ *
+ * The hook rather than the bare function because the locale is context, and a
+ * component that had to thread it in by hand is a component that will one day
+ * forget to. scripts/assert-locale-links.mjs fails the build on any internal
+ * link in dist/ that did not go through here.
+ */
+export function useLocalePath(): (href: string) => string {
+    const { locale } = useContext(LocaleContext);
+    return (href: string) => localePath(locale, href);
 }
 
 /** Shorthand for the common case. */

@@ -6,6 +6,7 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import { trackCtaClicked } from '../analytics/events';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
+import { useLocalePath } from '../i18n';
 
 function useGitHubStars(): string | null {
     const [stars, setStars] = useState<string | null>(null);
@@ -44,6 +45,7 @@ type NavProps = {
 
 export function Nav({ variant = 'overlay', isHome = true }: NavProps) {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const stars = useGitHubStars();
 
@@ -95,7 +97,7 @@ export function Nav({ variant = 'overlay', isHome = true }: NavProps) {
                         here as a capability matrix; that matrix was removed —
                         see src/data/agents.ts.) */}
                     <a
-                        href="/agents"
+                        href={localeHref('/agents')}
                         className="hidden text-[14px] font-medium transition-opacity hover:opacity-100 md:inline-flex"
                         style={{ color: 'var(--fg)', opacity: 0.85 }}
                     >{rich(PAGE_PROSE.nav.p2)}</a>
@@ -113,7 +115,7 @@ export function Nav({ variant = 'overlay', isHome = true }: NavProps) {
                         Same md: breakpoint as the rest, so the phone nav stays
                         GitHub + CTA + toggle. */}
                     <a
-                        href="/enterprise"
+                        href={localeHref('/enterprise')}
                         className="hidden text-[14px] font-medium transition-opacity hover:opacity-100 md:inline-flex"
                         style={{ color: 'var(--fg)', opacity: 0.85 }}
                     >{rich(PAGE_PROSE.nav.p3)}</a>
@@ -132,7 +134,7 @@ export function Nav({ variant = 'overlay', isHome = true }: NavProps) {
                         whose first action is the copyable install line. */}
                     <a
                         onClick={() => trackCtaClicked({ location: 'hero-nav', label: 'Install Happier' })}
-                        href={isHome ? '#get-started' : '/#get-started'}
+                        href={isHome ? '#get-started' : localeHref('/#get-started')}
                         className="hidden items-center gap-2 rounded-full px-4 py-2 text-[14px] font-medium transition-transform hover:-translate-y-[1px] md:inline-flex"
                         style={{ background: 'var(--fg)', color: 'var(--bg)' }}
                     >{rich(PAGE_PROSE.nav.p5)}</a>

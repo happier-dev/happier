@@ -4,6 +4,7 @@ import { InstallCommand } from '../components/InstallCommand';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
+import { useLocalePath } from '../i18n';
 
 /**
  * /agents
@@ -28,6 +29,7 @@ import type { ReactNode } from 'react';
  */
 export function AgentsIndex() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const { agents: { AGENTS, UNLISTED_AGENTS, UPCOMING_AGENTS }, availability: { UPCOMING_LABEL } } = useSiteData();
 
@@ -57,7 +59,7 @@ export function AgentsIndex() {
                         {AGENTS.map((agent) => (
                             <a
                                 key={agent.id}
-                                href={`/agents/${agent.slug}`}
+                                href={localeHref(`/agents/${agent.slug}`)}
                                 className="block rounded-2xl border p-5 transition-transform hover:-translate-y-[2px]"
                                 style={{ borderColor: 'var(--card-border)' }}
                             >

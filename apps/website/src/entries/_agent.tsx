@@ -26,5 +26,8 @@ export function mountAgentPage(locale: Locale, slug: string): void {
                 'delete it — the route it hydrates does not exist.',
         );
     }
-    mount(locale, <AgentDetail agent={agent} />);
+    // `agent` above is looked up only to FAIL FAST on a slug that names nothing;
+    // the page resolves its own record from useSiteData(), because this one is
+    // the English catalogue. See the docblock on AgentDetail.
+    mount(locale, <AgentDetail slug={agent.slug} />);
 }

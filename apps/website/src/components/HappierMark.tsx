@@ -1,6 +1,7 @@
 import { useTheme } from './ThemeContext';
 import { Picture } from './Picture';
 import { useSiteData } from '../i18n/siteData';
+import { useLocalePath } from '../i18n';
 
 /**
  * Real Happier wordmark. Both PNG variants live in the DOM and we cross-fade
@@ -10,11 +11,12 @@ import { useSiteData } from '../i18n/siteData';
 export function HappierMark({ className }: { className?: string }) {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
 
+    const localeHref = useLocalePath();
     const { theme } = useTheme();
     const isDark = theme === 'dark';
     return (
         <a
-            href="/"
+            href={localeHref('/')}
             className={`relative inline-block h-7 md:h-8 ${className ?? ''}`}
             aria-label={PAGE_PROSE.happierMark.p0}
         >

@@ -4,65 +4,25 @@ import { InstallCommand } from '../components/InstallCommand';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
 
-type Step = {
-    number: number;
-    title: string;
-    description: string;
-    cta: ReactNode;
+/**
+ * The CTA for each step, keyed by the id in GET_STARTED_STEPS.
+ *
+ * The step's title and description moved to src/data/pageProse.ts so the
+ * overlay translates them; what stayed here is the half that is JSX and has no
+ * business in a data module. Keyed rather than positional so the two halves
+ * cannot drift apart when a step is added or reordered.
+ */
+const STEP_CTAS: Record<string, ReactNode> = {
+    install: <InstallCommand />,
+    setup: <CommandChip command="happier setup" />,
+    pair: <QrChip />,
+    session: <CommandChip command="happier claude" />,
 };
-
-/**
- * Each step owns the call-to-action it describes, so the flow reads as a
- * self-contained checklist: download here, install here, pair here, run here.
- */
-/**
- * Order matters here and it was backwards.
- *
- * The old step 1 was "download the app" — which sends someone to a phone store
- * before they have a machine for the phone to talk to, and that is precisely the
- * cohort that churns: 56% of installs open the app on exactly one day, median
- * lifetime two minutes. Happier does nothing until a computer is set up, so the
- * computer goes first and the phone comes third, once there is something for it
- * to connect to.
- *
- * The old step 4 read "Run happier instead of claude or codex", which is not the
- * CLI's syntax. `happier` wraps the agent, it does not replace it —
- * `happier claude`, `happier codex` (clients/cli.mdx:539-540).
- */
-const STEPS: ReadonlyArray<Step> = [
-    {
-        number: 1,
-        title: 'Install on the computer with your code',
-        description: 'One command. macOS, Linux, and Windows. Signed and checksum-verified.',
-        cta: <InstallCommand />,
-    },
-    {
-        number: 2,
-        title: 'Run setup',
-        description:
-            'Signs you in and installs the background service that keeps this machine reachable while you are away from it.',
-        cta: <CommandChip command="happier setup" />,
-    },
-    {
-        number: 3,
-        title: 'Pair a device',
-        description:
-            'happier auth login prints a QR code. Scan it with the app, or open the URL it prints in any browser.',
-        cta: <QrChip />,
-    },
-    {
-        number: 4,
-        title: 'Start a session',
-        description:
-            'Launch any of the 13 agents through Happier and it is live on every signed-in device at once.',
-        cta: <CommandChip command="happier claude" />,
-    },
-];
 
 export const GET_STARTED_SECTION_ID = 'get-started';
 
 export function GetStarted() {
-    const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const { pageProse: { PAGE_PROSE, GET_STARTED_STEPS } } = useSiteData();
 
     return (
         <section id={GET_STARTED_SECTION_ID} data-section="get-started" className="relative">
@@ -74,7 +34,7 @@ export function GetStarted() {
                     >{rich(PAGE_PROSE.getStarted.p0)}</div>
                     <RevealText
                         as="h2"
-                        text={'Up and running\nin under a minute.'}
+                        text={PAGE_PROSE.getStarted.p2}
                         className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                         stagger={60}
                     />
@@ -85,17 +45,17 @@ export function GetStarted() {
                     and stacks beneath the text on mobile. The connector line runs
                     down through the numbers so the sequence is unmistakable. */}
                 <div className="mx-auto max-w-[920px]">
-                    {STEPS.map((step, idx) => {
-                        const isLast = idx === STEPS.length - 1;
+                    {GET_STARTED_STEPS.map((step, idx) => {
+                        const isLast = idx === GET_STARTED_STEPS.length - 1;
                         return (
-                            <div key={step.number} className="grid grid-cols-[40px_1fr] gap-x-5 sm:gap-x-8">
+                            <div key={step.id} className="grid grid-cols-[40px_1fr] gap-x-5 sm:gap-x-8">
                                 {/* Left rail: number + vertical connector line */}
                                 <div className="flex flex-col items-center">
                                     <div
                                         className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] font-bold"
                                         style={{ background: 'var(--fg)', color: 'var(--bg)' }}
                                     >
-                                        {step.number}
+                                        {idx + 1}
                                     </div>
                                     {!isLast && (
                                         <div
@@ -131,7 +91,7 @@ export function GetStarted() {
                                             {step.description}
                                         </p>
                                     </div>
-                                    <div className="min-w-0 md:justify-self-end">{step.cta}</div>
+                                    <div className="min-w-0 md:justify-self-end">{STEP_CTAS[step.id]}</div>
                                 </div>
                             </div>
                         );

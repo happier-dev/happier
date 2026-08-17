@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { RevealText } from '../components/RevealText';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
+import { NodeJourney } from '../components/NodeJourney';
 
 /**
  * The three self-host claims, and the one that was false.
@@ -21,22 +22,6 @@ import { useSiteData } from '../i18n/siteData';
  * "Set it and forget it" was an unverifiable flourish besides, which the
  * anti-polish rule rules out on its own.
  */
-const HIGHLIGHTS = [
-    {
-        title: 'One-command install',
-        description: 'Install the relay server with a single command. Docker or bare metal.',
-    },
-    {
-        title: 'Daily operation',
-        description:
-            'A managed service you start, stop and check with happier relay host status. Nothing on the host updates itself — you update by rerunning the install command, when you decide to.',
-    },
-    {
-        title: 'Remote access',
-        description: 'Access your sessions from anywhere. SSH tunnels, Tailscale, or direct HTTPS.',
-    },
-] as const;
-
 const INSTALL_CMD = 'happier relay host install';
 const STATUS_CMD = 'happier relay host status';
 
@@ -49,33 +34,21 @@ export const SELF_HOST_TERMINAL_LINES = [
     { prompt: true, text: STATUS_CMD },
 ] as const;
 
-/**
- * The three layers a self-hoster owns, top to bottom. Read as a column they are
- * literally the stack the headline refers to, and the repeated "Your" is the
- * whole argument — there is no fourth node, because nothing else is in the path.
+/*
+ * SELF_HOST_STACK_NODES and the three highlight cards moved to
+ * src/data/pageProse.ts, because a label declared in a component is a label the
+ * extractor never sees and the overlay therefore never translates. Re-exported
+ * here so src/sections/publicSurfaceLinks.test.ts keeps asserting on the same
+ * name; the COMPONENT below reads them through useSiteData(), never through
+ * this binding, which is English by construction.
  */
-export const SELF_HOST_STACK_NODES = [
-    {
-        id: 'device',
-        label: 'Your device',
-        detail: 'iOS, Android, desktop, web',
-    },
-    {
-        id: 'relay',
-        label: 'Your relay',
-        detail: 'Docker or bare metal',
-    },
-    {
-        id: 'machine',
-        label: 'Your machine',
-        detail: 'Claude Code, Codex, OpenCode',
-    },
-] as const;
+export { SELF_HOST_STACK_NODES } from '../data/pageProse';
+import { SELF_HOST_STACK_NODES as SELF_HOST_STACK_NODES_EN } from '../data/pageProse';
 
-type StackNode = (typeof SELF_HOST_STACK_NODES)[number];
+type StackNode = (typeof SELF_HOST_STACK_NODES_EN)[number];
 
 export function SelfHost() {
-    const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const { pageProse: { PAGE_PROSE, SELF_HOST_HIGHLIGHTS } } = useSiteData();
 
     return (
         <section className="relative" data-section="self-host">
@@ -88,7 +61,7 @@ export function SelfHost() {
                         >{rich(PAGE_PROSE.selfHost.p1)}</div>
                         <RevealText
                             as="h2"
-                            text={'Own the stack.\nStay independent.'}
+                            text={PAGE_PROSE.selfHost.p3}
                             className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                             stagger={60}
                         />
@@ -98,8 +71,8 @@ export function SelfHost() {
                         >{rich(PAGE_PROSE.selfHost.p0)}</p>
 
                         <div className="mt-10 space-y-6">
-                            {HIGHLIGHTS.map((item) => (
-                                <div key={item.title}>
+                            {SELF_HOST_HIGHLIGHTS.map((item) => (
+                                <div key={item.id}>
                                     <h3
                                         className="text-[16px] font-semibold leading-[1.3]"
                                         style={{ color: 'var(--fg)' }}
@@ -133,47 +106,27 @@ export function SelfHost() {
  * whole argument, and a box around them would only compete with the terminal
  * block underneath.
  */
+const STACK_PLAIN_SAMPLE = 'push the hotfix branch';
+const STACK_CIPHER_SAMPLE = 'hQx2Vb9k4Tn1Rm7c\u2026';
+
 function OwnedStack() {
-    return (
-        <div className="stackrow">
-            {SELF_HOST_STACK_NODES.map((node) => (
-                <div key={node.id} className="text-center">
-                    <span className="stackrow__icon" style={{ color: 'var(--fg)' }}>
-                        <StackIcon id={node.id} />
-                    </span>
-                    {/* 15px wraps "Your machine" at phone column widths while the other
-                        two labels hold one line, which staggers the subtitles. */}
-                    <span
-                        className="mt-3.5 block text-[13px] font-semibold leading-tight sm:text-[15px]"
-                        style={{ color: 'var(--fg)' }}
-                    >
-                        {node.label}
-                    </span>
-                    <span
-                        className="stackrow__detail mt-1 block text-[12.5px] leading-[1.45]"
-                        style={{ color: 'var(--muted)' }}
-                    >
-                        {node.detail}
-                    </span>
-                </div>
-            ))}
+    // Through the hook, not the re-export above: that binding is the English one.
+    const { pageProse: { SELF_HOST_STACK_NODES } } = useSiteData();
 
-            {/* Rails are siblings of the cells, not gutter items, so they can be
-                anchored to the icon centres rather than to whatever space is left. */}
-            <FlowRail className="stackflow--1" />
-            <FlowRail className="stackflow--2" />
-        </div>
-    );
-}
-
-/** Two dots out, one back — enough to read as traffic without becoming a barber pole. */
-function FlowRail({ className }: { className: string }) {
     return (
-        <div className={`stackflow ${className}`} aria-hidden>
-            <span className="stackflow__dot" />
-            <span className="stackflow__dot" style={{ animationDelay: '1.3s' }} />
-            <span className="stackflow__dot stackflow__dot--back" style={{ animationDelay: '0.65s' }} />
-        </div>
+        <NodeJourney
+            nodes={SELF_HOST_STACK_NODES.map((node) => ({
+                id: node.id,
+                label: node.label,
+                detail: node.detail,
+            }))}
+            renderIcon={(id) => <StackIcon id={id as StackNode['id']} />}
+            // The chip is here for the same reason it is on the security page:
+            // it is the one part of the picture that shows the content sealed
+            // in transit, which is a claim the self-host argument depends on
+            // rather than a decoration borrowed from another page.
+            packet={{ plain: STACK_PLAIN_SAMPLE, cipher: STACK_CIPHER_SAMPLE }}
+        />
     );
 }
 

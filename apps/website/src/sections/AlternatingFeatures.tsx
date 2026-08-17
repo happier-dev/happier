@@ -105,7 +105,7 @@ export function AlternatingFeatures() {
                     >{rich(PAGE_PROSE.alternatingFeatures.p1)}</div>
                     <RevealText
                         as="h2"
-                        text={'One control room\nfor every coding agent.'}
+                        text={PAGE_PROSE.alternatingFeatures.p2}
                         className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                         stagger={60}
                     />

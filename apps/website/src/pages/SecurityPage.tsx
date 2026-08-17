@@ -1,8 +1,10 @@
 import { P, PageHeader, PageShell, Prose } from '../components/PageShell';
 import { SECURITY_DOCS_URL, type SecurityHop } from '../data/security';
+import { NodeJourney } from '../components/NodeJourney';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
+import { useLocalePath } from '../i18n';
 
 /**
  * /security
@@ -28,6 +30,7 @@ const PLAIN_SAMPLE = 'push the hotfix branch';
 
 export function SecurityPage() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const { security: { SECURITY_KEYS, SECURITY_NOTIFICATIONS, SECURITY_PAIRING, SECURITY_SELF_HOST, SECURITY_SOURCE, SECURITY_STORAGE } } = useSiteData();
 
@@ -71,7 +74,7 @@ export function SecurityPage() {
                     <P key={paragraph.slice(0, 32)}>{paragraph}</P>
                 ))}
                 <P>{rich(PAGE_PROSE.securityPage.p0, { 1: (c: ReactNode) => <a
-                        href="/enterprise"
+                        href={localeHref('/enterprise')}
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
                     >{c}</a> })}</P>
@@ -132,45 +135,16 @@ function MessagePath() {
                     </p>
                 </div>
 
-                <div className="wire mx-auto mt-12 max-w-[720px]">
-                    <div className="wire__lane" aria-hidden>
-                        <div className="wire__carrier">
-                            <div className="wire__packet">
-                                <span className="wire__text wire__text--plain">{PLAIN_SAMPLE}</span>
-                                <span className="wire__text wire__text--cipher font-mono">
-                                    {CIPHER_SAMPLE}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="stackrow">
-                        {SECURITY_HOPS.map((hop) => (
-                            <div key={hop.id} className="text-center">
-                                <span className="stackrow__icon" style={{ color: 'var(--fg)' }}>
-                                    <HopIcon id={hop.id} />
-                                </span>
-                                <span
-                                    className="mt-3.5 block text-[13px] font-semibold leading-tight sm:text-[15px]"
-                                    style={{ color: 'var(--fg)' }}
-                                >
-                                    {hop.label}
-                                </span>
-                                <span
-                                    className="stackrow__detail mt-1 block text-[12.5px] leading-[1.45]"
-                                    style={{ color: 'var(--muted)' }}
-                                >
-                                    {hop.verb}
-                                </span>
-                            </div>
-                        ))}
-
-                        {/* Siblings of the cells, not gutter items, so both rails
-                            are anchored to the icon centres at every width. */}
-                        <div className="wire__rail wire__rail--1" aria-hidden />
-                        <div className="wire__rail wire__rail--2" aria-hidden />
-                    </div>
-                </div>
+                <NodeJourney
+                    className="mx-auto mt-12 max-w-[720px]"
+                    nodes={SECURITY_HOPS.map((hop) => ({
+                        id: hop.id,
+                        label: hop.label,
+                        detail: hop.verb,
+                    }))}
+                    renderIcon={(id) => <HopIcon id={id as SecurityHop['id']} />}
+                    packet={{ plain: PLAIN_SAMPLE, cipher: CIPHER_SAMPLE }}
+                />
 
                 <dl className="mx-auto mt-12 grid max-w-[1080px] gap-4 md:grid-cols-3">
                     {SECURITY_HOPS.map((hop) => (

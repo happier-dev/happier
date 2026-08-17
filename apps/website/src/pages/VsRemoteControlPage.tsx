@@ -3,6 +3,7 @@ import { InstallCommand } from '../components/InstallCommand';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
+import { useLocalePath } from '../i18n';
 
 /**
  * /vs/claude-code-remote-control
@@ -27,6 +28,7 @@ import type { ReactNode } from 'react';
  */
 export function VsRemoteControlPage() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const { comparison: { COMPARISON_ROWS, RC_SCOPE_LIMIT, RC_SECTION, RC_STRENGTHS }, agents: { AGENTS } } = useSiteData();
 
@@ -189,7 +191,7 @@ export function VsRemoteControlPage() {
                             ))}
                         </dl>
                         <p className="mt-7 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</p>
-                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p6, { 1: (c: ReactNode) => <a href="/agents" className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> }, { length: AGENTS.length })}</p>
+                        <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.vsRemoteControlPage.p6, { 1: (c: ReactNode) => <a href={localeHref('/agents')} className="underline underline-offset-2" style={{ color: 'var(--fg)' }}>{c}</a> }, { length: AGENTS.length })}</p>
                     </div>
                 </div>
             </section>

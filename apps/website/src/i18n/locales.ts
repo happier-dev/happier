@@ -13,7 +13,7 @@
  */
 
 /**
- * The same ten codes the app ships, in the same spelling.
+ * The same eleven codes the app ships, in the same spelling.
  *
  * `zh-Hant` is listed BEFORE `zh-Hans` because `suggestLocale` and
  * `localeFromPathname` both resolve longest-match-first, and a Traditional
@@ -27,6 +27,7 @@ export const LOCALES = [
     'ru',
     'pl',
     'es',
+    'fr',
     'it',
     'pt',
     'ca',
@@ -191,6 +192,23 @@ export const LOCALE_META: Record<Locale, LocaleMeta> = {
         },
         productLanguage: 'es',
     },
+    fr: {
+        htmlLang: 'fr',
+        pathPrefix: '/fr',
+        nativeName: 'Français',
+        englishName: 'French',
+        // Bare `fr` covers fr-FR, fr-CA, fr-BE and fr-CH: the copy is written in
+        // standard French with no France-specific idiom, so every variant is
+        // better served this page than the English one.
+        acceptLanguagePrefixes: ['fr'],
+        ogLocale: 'fr_FR',
+        suggestion: {
+            offer: 'Cette page est aussi disponible en français.',
+            action: 'La lire en français',
+            dismiss: 'Fermer',
+        },
+        productLanguage: 'fr',
+    },
     it: {
         htmlLang: 'it',
         pathPrefix: '/it',
@@ -249,6 +267,47 @@ export function localeUrl(locale: Locale, route = '/'): string {
     // expects FROM that file path, so a trailing slash here makes every
     // localised home page fail its own canonical check.
     return normalized === '/' ? `${SITE_ORIGIN}${prefix}` : `${SITE_ORIGIN}${prefix}${normalized}`;
+}
+
+/**
+ * An `href` for a link on a page being rendered in `locale`.
+ *
+ * WHY EVERY INTERNAL LINK HAS TO GO THROUGH SOMETHING. A visitor who reached
+ * /zh-Hant and clicked "Agents we run" landed on /agents — the ENGLISH page —
+ * because the href was written `/agents` and nothing put the prefix back. Every
+ * internal link on the site did that: 566 of them per locale. The translation
+ * held for exactly one page view.
+ *
+ * It is deliberately total rather than clever: hand it anything that goes in an
+ * href and it either prefixes it or returns it untouched.
+ *   - absolute (`https:`, `mailto:`, `//cdn`) → untouched, it is not our route
+ *   - a bare fragment (`#faq`) → untouched, it is this page
+ *   - already prefixed → untouched, so a double application is harmless and the
+ *     locale-switcher's own hrefs survive being passed through
+ *   - `/` → the prefix alone (`/zh`, never `/zh/`), matching localeUrl above,
+ *     because that is the URL the page declares as canonical
+ *   - `/#faq` → `/zh#faq`, for the same reason: the home page of a locale is
+ *     `/zh`, so the anchor hangs off that and not off `/zh/`
+ *
+ * For the default locale the prefix is empty and this is the identity function,
+ * which is what keeps the English build byte-identical.
+ */
+export function localePath(locale: Locale, href: string): string {
+    const prefix = LOCALE_META[locale].pathPrefix;
+    if (!prefix) return href;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) return href;
+    if (href.startsWith('#')) return href;
+    if (!href.startsWith('/')) return href;
+    if (href === prefix || href.startsWith(`${prefix}/`) || href.startsWith(`${prefix}#`)) return href;
+    // Another locale's prefix — the switcher builds those, and prefixing them
+    // again would produce /zh-Hant/fr/agents.
+    for (const meta of Object.values(LOCALE_META)) {
+        const other = meta.pathPrefix;
+        if (other && (href === other || href.startsWith(`${other}/`) || href.startsWith(`${other}#`))) return href;
+    }
+    if (href === '/') return prefix;
+    if (href.startsWith('/#')) return `${prefix}${href.slice(1)}`;
+    return `${prefix}${href}`;
 }
 
 /**

@@ -7,17 +7,17 @@ import { ProviderMarkRow } from '../components/ProviderMarkRow';
 import { Nav } from './Nav';
 import { HeroStage } from './HeroStage';
 import { HeroBackdrop } from './HeroBackdrop';
-import { useT } from '../i18n';
+import { useSiteData } from '../i18n/siteData';
 
 /**
  * Hero — full-bleed planet background, nav floats over it, multi-provider
  * headline on the left, device screenshots + scattered providers on the right.
  */
 export function Hero() {
-    // Same source as the headline: src/i18n/messages/en.ts. This string was
-    // hardcoded here as well as in en.ts, so editing the catalogue changed
-    // nothing on the page.
-    const t = useT();
+    // Same source as the headline: HERO in src/data/pageProse.ts. It used to be
+    // src/i18n/messages/en.ts, which has two locales in it — so this sentence,
+    // the first one under the H1, was English on eight of the nine homepages.
+    const { pageProse: { HERO } } = useSiteData();
 
     return (
         <section className="relative isolate overflow-hidden" data-section="hero">
@@ -33,7 +33,7 @@ export function Hero() {
                     <div className="mt-7 max-w-[560px] text-[16px] leading-[1.55] md:text-[17px] lg:text-[18px]" style={{ color: 'var(--muted)' }}>
                         <RevealText
                             as="p"
-                            text={t.hero.subhead}
+                            text={HERO.subhead}
                             delay={525}
                             stagger={45}
                             className="font-sans tracking-normal"

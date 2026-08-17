@@ -34,6 +34,17 @@ export const PAGE_PROSE = {
         p11: "Breadcrumb",
         p12: "← Every agent Happier runs",
         p13: "Questions about running {name} through Happier",
+        p14: "Happier looks for <1>{binary}</1> on your PATH first and runs the copy you installed. If there is not one, it can install <2>{source}</2> into <3>{path}</3> — its own directory, not your global npm prefix. A copy you manage yourself is never replaced or upgraded behind your back.",
+        p15: "Happier looks for <1>{binary}</1> on your PATH first and runs the copy you installed. If there is not one, it can download the <2>{source}</2> release binary into <3>{path}</3> and keep it there. Your own install always takes priority.",
+        p16: "When you want {name}’s own TUI, <1>{attach}</1> on the computer that owns the session hands it to you inside tmux, with the history already there. On the default runtime that hand-off is exclusive: while the terminal has the session, a message you send from the app waits in the queue rather than being typed underneath you, and it goes through when you hand control back.",
+        p17: "The unified terminal runtime is the other arrangement — one {name} process in a shared terminal host, writable from the terminal and the app at the same time.",
+        p18: "<1>{attach}</1> opens {name}’s own TUI on that same session through {name}’s attach flow. Both ends stay writable, with no multiplexer involved and nothing to switch on first — type in the TUI and it appears in the app, send from the app and it appears in the TUI.",
+        p19: "There is no hand-off to {name}’s own TUI. That exists for Claude Code, Codex and OpenCode, and for {name} the session stays Happier’s on both ends. <1>{attach}</1> lists the sessions on that computer and marks the ones it cannot reattach, rather than failing after you pick one.",
+        p20: "Which account {name} runs on",
+        p21: "{name} is one of the agents Happier can point at a credential you connected once instead of at whatever that computer is logged into. It accepts {list}.",
+        p22: "Connected services are keyed by the credential, not by the agent, so the same {service} is selectable for every agent that can take it, on every computer you have connected — which is also what makes a pool of your own accounts useful across more than one of them. The credential is encrypted and decrypted on your own devices; <1>the docs page</1> carries the per-profile rules, because which kinds of profile each agent accepts is exactly the sort of detail that moves between releases.",
+        p23: "{vendor}’s own install and sign-in guide is at <1>{link}</1>. Happier does not mirror it, because a copy of someone else’s install instructions is a copy that goes stale.",
+        p24: "{vendor}’s own page for {name} is at <1>{link}</1>. Happier does not mirror it, because a copy of someone else’s install instructions is a copy that goes stale.",
     },
     agentsIndex: {
         p0: "Happier installs on the computer that holds your repository, starts the vendor’s own CLI there as an ordinary subprocess under your own login, and carries the conversation to your other devices end-to-end encrypted. It hosts none of these agents, and puts no model of its own in front of them.",
@@ -54,6 +65,7 @@ export const PAGE_PROSE = {
     alternatingFeatures: {
         p0: "Happier is the mobile-native control layer for the AI coding agents you already use. It mirrors your terminal, syncs every session, and gives you back the things a CLI can't: presence, approvals, voice, and one inbox for all of it.",
         p1: "What Happier does",
+        p2: "One control room\nfor every coding agent.",
     },
     analyticsNotice: {
         p0: "What we measure",
@@ -61,6 +73,7 @@ export const PAGE_PROSE = {
     callToAction: {
         p0: "Run it on the computer that runs your code. Keep your own subscriptions and keys. Self-host the relay or use ours. MIT licensed, end-to-end encrypted.",
         p1: "Already paired? Open the web app<1></1>",
+        p2: "Open source. Yours forever.",
     },
     codexRemotePage: {
         p0: "Every claim in this block restates OpenAI’s published documentation, including the part where their cloud does something Happier does not do at all. None of it is hedged, because a vague concession is not a concession.",
@@ -94,6 +107,11 @@ export const PAGE_PROSE = {
         p2: "Detected",
         p3: "Open the Happier web app",
         p4: "Web app",
+        p5: "Download on",
+        p6: "Direct download",
+        p7: "Desktop",
+        p8: "Download for {platform}",
+        p9: "Show desktop download options",
     },
     downloadStats: {
         p0: "downloads",
@@ -119,9 +137,11 @@ export const PAGE_PROSE = {
     },
     faq: {
         p0: "Straight answers",
+        p1: "The questions\nyou were going to ask.",
     },
     featureGrid: {
         p0: "And there's more",
+        p1: "Everything else\nyou didn’t know you needed.",
     },
     footer: {
         p0: "One open-source client for every coding agent — thirteen of them, run on your own computer, with your own subscriptions or API keys, end-to-end encrypted.",
@@ -130,6 +150,7 @@ export const PAGE_PROSE = {
     getStarted: {
         p0: "Get started",
         p1: "Scan from<1></1>your terminal",
+        p2: "Up and running\nin under a minute.",
     },
     handoffToComputer: {
         p0: "Happier runs where your code runs.",
@@ -191,9 +212,11 @@ export const PAGE_PROSE = {
         p0: "Run the Happier relay server on your own infrastructure. Your data never leaves your network.",
         p1: "Self-host",
         p2: "Copy commands",
+        p3: "Own the stack.\nStay independent.",
     },
     tabbedExplorer: {
         p0: "See it in action",
+        p1: "Every tool.\nOne interface.",
     },
     terminalPage: {
         p0: "Three of the thirteen, and they do not behave the same way. Codex is exclusive — one driver at a time. OpenCode is not, and Claude Code can be either, depending on which runtime you start it under.",
@@ -267,4 +290,145 @@ export const PAGE_PROSE = {
         p18: "What one client for {length} agents buys you",
         p19: "Trying it",
     },
+} as const;
+
+/**
+ * Copy that used to sit in a module-scope `const` inside a section component.
+ *
+ * THE COMPONENT IS THE ONE PLACE THE OVERLAY CANNOT REACH. `yarn i18n:extract`
+ * reads src/data/*.ts and nothing else, so a label table declared next to the
+ * JSX that renders it is invisible to extraction, to translation and to the
+ * coverage report at once — the failure is silent in all three directions. The
+ * homepage shipped its four setup steps, its three self-host cards and its four
+ * explorer tabs in English in every language for exactly that reason.
+ *
+ * These are records rather than flat `pN` strings because each one has a shape
+ * the page depends on, and an `id` gives walkStrings a natural key: reorder the
+ * steps and the translations follow their step instead of sliding onto the
+ * neighbour they now share an index with. The interactive halves — the CTA of a
+ * step, the icon of a card, the screenshot behind a tab — stay in the component,
+ * keyed by the same id. Copy here, JSX there.
+ */
+export const GET_STARTED_STEPS = [
+    {
+        id: 'install',
+        title: 'Install on the computer with your code',
+        description: 'One command. macOS, Linux, and Windows. Signed and checksum-verified.',
+    },
+    {
+        id: 'setup',
+        title: 'Run setup',
+        description:
+            'Signs you in and installs the background service that keeps this machine reachable while you are away from it.',
+    },
+    {
+        id: 'pair',
+        title: 'Pair a device',
+        description:
+            'happier auth login prints a QR code. Scan it with the app, or open the URL it prints in any browser.',
+    },
+    {
+        id: 'session',
+        title: 'Start a session',
+        description:
+            'Launch any of the 13 agents through Happier and it is live on every signed-in device at once.',
+    },
+] as const;
+
+/** The three cards under the self-host heading. */
+export const SELF_HOST_HIGHLIGHTS = [
+    {
+        id: 'install',
+        title: 'One-command install',
+        description: 'Install the relay server with a single command. Docker or bare metal.',
+    },
+    {
+        id: 'operation',
+        title: 'Daily operation',
+        description:
+            'A managed service you start, stop and check with happier relay host status. Nothing on the host updates itself — you update by rerunning the install command, when you decide to.',
+    },
+    {
+        id: 'access',
+        title: 'Remote access',
+        description: 'Access your sessions from anywhere. SSH tunnels, Tailscale, or direct HTTPS.',
+    },
+] as const;
+
+/**
+ * The three layers a self-hoster owns, top to bottom. Read as a column they are
+ * literally the stack the headline refers to, and the repeated "Your" is the
+ * whole argument — there is no fourth node, because nothing else is in the path.
+ */
+export const SELF_HOST_STACK_NODES = [
+    {
+        id: 'device',
+        label: 'Your device',
+        detail: 'iOS, Android, desktop, web',
+    },
+    {
+        id: 'relay',
+        label: 'Your relay',
+        detail: 'Docker or bare metal',
+    },
+    {
+        id: 'machine',
+        label: 'Your machine',
+        detail: 'Claude Code, Codex, OpenCode',
+    },
+] as const;
+
+/**
+ * The tab strip on the feature explorer.
+ *
+ * `screenshot` names an entry in ./generatedImages.ts and is not copy — it is a
+ * lowercase identifier, which is the shape looksTranslatable() rejects, so it
+ * stays out of the catalogue without needing a rule of its own.
+ */
+export const EXPLORER_TABS = [
+    { id: 'chat', label: 'Chat', screenshot: 'showcaseDesktop' },
+    { id: 'editor', label: 'Editor', screenshot: 'showcaseDesktop' },
+    { id: 'git', label: 'Git', screenshot: 'showcaseDesktop' },
+    { id: 'terminal', label: 'Terminal', screenshot: 'showcaseDesktop' },
+] as const;
+
+/**
+ * The hero: the H1's three lines, its aside, and the subhead under it.
+ *
+ * MOVED OUT OF src/i18n/messages/en.ts, WHICH IS WHY IT IS NOW TRANSLATED. That
+ * catalogue is the site's first i18n mechanism and it has exactly two locales in
+ * it — `en` and a partial `zh-Hans` — because every locale added there has to be
+ * hand-written as a typed module. The overlay catalogue has all ten, generated
+ * and validated. As long as the most prominent copy on the site lived in the
+ * first one, the H1 and the sentence under it rendered in English on nine of ten
+ * homepages while everything around them translated.
+ *
+ * `~~~` in the subhead is a RevealText no-break marker, not copy: it binds
+ * "End-to-end" to "encrypted" so the pair never straddles a line break. It has
+ * to survive translation — see src/components/RevealText.tsx.
+ */
+export const HERO = {
+    headlineLineOne: 'Claude Code, Codex',
+    headlineLineTwo: 'OpenCode, Pi',
+    headlineLineTwoAside: '& 9 more',
+    /**
+     * Does the aside count the REMAINDER or the TOTAL?
+     *
+     * English says "& 9 more" — 4 named + 9 = 13. Chinese enumerations
+     * idiomatically state the total after 等 ("等 13 种"), which asserts the
+     * same fact by different arithmetic. Without this field the count guard
+     * checks 4 + 13 = 13 against the Chinese and either fails on correct
+     * copy or, as it did until now, never looks at anything but English.
+     */
+    headlineLineTwoAsideCounts: 'remainder' as 'remainder' | 'total',
+    // "work" narrowed the promise to the working day and carried the wrong
+    // connotation with it — a lot of this audience codes for pleasure. "go"
+    // frames Happier as the thing you take with you, which is the claim the
+    // rest of the page actually supports.
+    headlineLineThree: 'Everywhere you go.',
+    // "computer", never "machine": the reader's own laptop or desktop. In
+    // Happier "machine" is a UI noun (the thing you pick in the machine
+    // selector), and using it for both makes the sentence ambiguous.
+    subhead:
+        'Run them on your own computer, with your own subscriptions or API keys.\nOpen-source. End-to-end ~~~ encrypted. Self-hostable.',
 } as const;

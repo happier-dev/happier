@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FOOTER_COLUMNS } from './Footer';
+import { FOOTER_COLUMNS } from '../data/navigation';
 import { GET_STARTED_SECTION_ID } from './GetStarted';
 import { SELF_HOST_STACK_NODES, SELF_HOST_TERMINAL_LINES } from './SelfHost';
 import { DISCORD_INVITE_URL } from '../data/community';
@@ -8,7 +8,7 @@ import { GUIDES_URL } from '../data/downloads';
 
 describe('website public surface links', () => {
     it('keeps the footer get-started link aligned with the section anchor', () => {
-        const productLinks = FOOTER_COLUMNS.find((column) => column.title === 'Product')?.links ?? [];
+        const productLinks = FOOTER_COLUMNS.find((column) => column.id === 'product')?.links ?? [];
 
         expect(productLinks).toContainEqual(expect.objectContaining({
             label: 'Get started',
@@ -22,7 +22,7 @@ describe('website public surface links', () => {
     // once already — crawlable by sitemap and by nothing else — and this is the
     // check that stops the next tidy-up doing it again.
     it('keeps guides.happier.dev linked from the footer, its last inbound link', () => {
-        const resourceLinks = FOOTER_COLUMNS.find((column) => column.title === 'Resources')?.links ?? [];
+        const resourceLinks = FOOTER_COLUMNS.find((column) => column.id === 'resources')?.links ?? [];
 
         expect(resourceLinks).toContainEqual(expect.objectContaining({
             label: 'Guides',
@@ -31,7 +31,7 @@ describe('website public surface links', () => {
     });
 
     it('links self-host users to the canonical deployment docs route', () => {
-        const openSourceLinks = FOOTER_COLUMNS.find((column) => column.title === 'Open source')?.links ?? [];
+        const openSourceLinks = FOOTER_COLUMNS.find((column) => column.id === 'open-source')?.links ?? [];
 
         expect(openSourceLinks).toContainEqual(expect.objectContaining({
             label: 'Self-host',
@@ -43,7 +43,7 @@ describe('website public surface links', () => {
     // `10006 Unknown Invite`. Pinning it to the shared constant keeps every
     // surface on one invite instead of a hand-typed guess per surface.
     it('points the footer Discord link at the canonical invite', () => {
-        const resourceLinks = FOOTER_COLUMNS.find((column) => column.title === 'Resources')?.links ?? [];
+        const resourceLinks = FOOTER_COLUMNS.find((column) => column.id === 'resources')?.links ?? [];
 
         expect(resourceLinks).toContainEqual(expect.objectContaining({
             label: 'Discord',

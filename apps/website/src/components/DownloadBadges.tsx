@@ -36,11 +36,14 @@ import { useSiteData } from '../i18n/siteData';
 type Os = 'mac' | 'win' | 'linux' | 'unknown';
 type Arch = 'arm64' | 'x86_64' | 'unknown';
 
-const DESKTOP_LABEL: Record<Os, string> = {
+/**
+ * Three of these are platform names and stay in every language; only the
+ * fallback is copy, so it comes from the catalogue rather than from here.
+ */
+const DESKTOP_LABEL: Record<Exclude<Os, 'unknown'>, string> = {
     mac: 'macOS',
     win: 'Windows',
     linux: 'Linux',
-    unknown: 'Desktop',
 };
 
 const PLATFORM_OPTIONS = DESKTOP_PLATFORMS;
@@ -240,6 +243,9 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
 
     const resolvedArch: Arch = arch !== 'unknown' ? arch : os === 'mac' ? 'arm64' : 'x86_64';
     const detectedHref = buildDesktopHref(os, resolvedArch);
+    // macOS / Windows / Linux are platform names; the fallback is the only one
+    // of the four that is copy, so it comes from the catalogue.
+    const desktopLabel = os === 'unknown' ? PAGE_PROSE.downloadBadges.p7 : DESKTOP_LABEL[os];
     const detectedId = `${os}-${resolvedArch}`;
     const canDetectPrecisely = os !== 'unknown' && archDetected;
 
@@ -253,13 +259,15 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
     const storeBadges: ReadonlyArray<BadgeSpec> = [
         {
             href: APP_STORE_URL,
-            eyebrow: 'Download on',
+            // "App Store" and "Android APK" are a store name and a file format;
+            // the eyebrow above each is the part that is copy.
+            eyebrow: PAGE_PROSE.downloadBadges.p5,
             label: 'App Store',
             icon: AppleIcon,
         },
         {
             href: ANDROID_APK_URL,
-            eyebrow: 'Direct download',
+            eyebrow: PAGE_PROSE.downloadBadges.p6,
             label: 'Android APK',
             icon: AndroidIcon,
         },
@@ -304,7 +312,9 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                         onClick={handleMainClick}
                         className="group flex items-center gap-2.5 px-3.5 py-2 transition-transform hover:-translate-y-[1px]"
                         style={{ color: 'var(--fg)' }}
-                        aria-label={canDetectPrecisely ? `Download for ${DESKTOP_LABEL[os]}` : 'Show desktop download options'}
+                        aria-label={canDetectPrecisely
+                            ? PAGE_PROSE.downloadBadges.p8.replace('{platform}', desktopLabel)
+                            : PAGE_PROSE.downloadBadges.p9}
                     >
                         <span className="shrink-0" aria-hidden>
                             {DesktopIcon}
@@ -315,7 +325,7 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                                 style={{ color: 'var(--muted)' }}
                             >{rich(PAGE_PROSE.downloadBadges.p0)}</span>
                             <span className="text-[14px] font-semibold tracking-tight">
-                                {DESKTOP_LABEL[os]}
+                                {desktopLabel}
                             </span>
                         </span>
                     </a>

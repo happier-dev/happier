@@ -183,7 +183,9 @@ const AGENT_ROUTES: Route[] = AGENTS.map((agent) => {
         // so the schema buys no SERP feature and only adds a surface that has to
         // stay in sync with the copy.
         jsonLd: [webPage(path, 'webpage', agent.h1)],
-        render: () => <AgentDetail agent={agent} />,
+        // The slug, not the record: `agent` here is the English one, and the
+        // page has to read the reader's. See the docblock on AgentDetail.
+        render: () => <AgentDetail slug={agent.slug} />,
     };
 });
 

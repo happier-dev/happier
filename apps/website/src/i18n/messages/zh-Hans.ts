@@ -54,24 +54,6 @@ export const zhHans: Messages = {
         localeSwitcherLabel: '切换语言',
     },
 
-    hero: {
-        // Provider names stay Latin; the enumeration comma 、 replaces ", ".
-        headlineLineOne: 'Claude Code、Codex',
-        headlineLineTwo: 'OpenCode、Pi',
-        // English reads "& 9 more". Chinese enumerations idiomatically state the
-        // TOTAL after 等, not the remainder — "X、Y 等 13 种" is the natural form
-        // and asserts the same fact (4 named + 9 = 13 shipped providers).
-        headlineLineTwoAside: '等 13 种',
-        headlineLineTwoAsideCounts: 'total' as const,
-        // EN: "Everywhere you go." — the English moved back off "work" to the
-        // travel framing, so the Chinese parallel moves back with it.
-        headlineLineThree: '走到哪，就在哪用。',
-        // Line 1 mirrors the new English: your own computer (电脑, not 机器 —
-        // 机器 is reserved for the in-app machine selector), your own
-        // subscriptions or API keys. Line 2 is the app's own privacyTitle,
-        // verbatim, with the RevealText no-break marker kept in place.
-        subhead: '在你自己的电脑上运行，用你自己的订阅或 API key。\n开源。端到端 ~~~ 加密。可自托管。',
-    },
 
     install: {
         copy: '复制',

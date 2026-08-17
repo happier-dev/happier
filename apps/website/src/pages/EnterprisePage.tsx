@@ -4,6 +4,7 @@ import { ENTERPRISE_DEPLOY_URL, ENTERPRISE_DOCS_URL } from '../data/enterprise';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
+import { useLocalePath } from '../i18n';
 
 /**
  * /enterprise
@@ -56,6 +57,7 @@ function CapabilityList({ items, dataSection, heading, standfirst }: {
 
 export function EnterprisePage() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const { enterprise: { ENTERPRISE_ACCESS, ENTERPRISE_DATA, ENTERPRISE_ZDR } } = useSiteData();
 
@@ -84,7 +86,7 @@ export function EnterprisePage() {
                 <P>{rich(PAGE_PROSE.enterprisePage.p0)}</P>
                 <P>{rich(PAGE_PROSE.enterprisePage.p1)}</P>
                 <P>{rich(PAGE_PROSE.enterprisePage.p2, { 1: (c: ReactNode) => <a
-                        href="/security"
+                        href={localeHref('/security')}
                         className="underline underline-offset-2"
                         style={{ color: 'var(--fg)' }}
                     >{c}</a> })}</P>

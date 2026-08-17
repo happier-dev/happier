@@ -28,6 +28,7 @@ import * as downloads from '../data/downloads';
 import * as enterprise from '../data/enterprise';
 import * as faq from '../data/faq';
 import * as features from '../data/features';
+import * as navigation from '../data/navigation';
 import * as pageProse from '../data/pageProse';
 import * as providers from '../data/providers';
 import * as security from '../data/security';
@@ -53,6 +54,7 @@ const MODULES = {
     enterprise,
     faq,
     features,
+    navigation,
     pageProse,
     providers,
     security,

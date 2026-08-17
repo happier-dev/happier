@@ -17,7 +17,7 @@ export function FeatureGrid() {
                     >{rich(PAGE_PROSE.featureGrid.p0)}</div>
                     <RevealText
                         as="h2"
-                        text={'Everything else\nyou didn\u2019t know you needed.'}
+                        text={PAGE_PROSE.featureGrid.p1}
                         className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                         stagger={60}
                     />

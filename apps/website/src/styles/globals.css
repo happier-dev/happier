@@ -306,23 +306,24 @@ body {
    chosen rather than the start frame: it is the one that states the thing the
    section exists to state, so a reader who never sees the motion still gets the
    argument rather than a decoration with the movement removed. */
-.wire {
-    --wire-glyph: 36px;
-    --wire-clear: 13px;
-}
-
+/* The wire lane and the node row share ONE set of geometry variables, declared
+   on .stackrow. They used to be declared twice under two names (--wire-glyph /
+   --stack-glyph) with identical values, which is how the two diagrams drifted
+   into having different rail treatments in the first place. */
 .wire__lane {
+    --stack-glyph: 36px;
+    --stack-clear: 13px;
     position: relative;
     height: 30px;
     margin-bottom: 14px;
 }
 
-/* Same insets as .wire__rail--1's left and --2's right: the chip travels the
+/* Same insets as .stackflow--1's left and --2's right: the chip travels the
    line, and its midpoint is still exactly 50% because the inset is symmetric. */
 .wire__carrier {
     position: absolute;
-    left: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
-    right: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
+    left: calc(16.6667% + var(--stack-glyph) / 2 + var(--stack-clear));
+    right: calc(16.6667% + var(--stack-glyph) / 2 + var(--stack-clear));
     top: 0;
     animation: wire-travel 9s linear infinite;
     will-change: transform;
@@ -381,26 +382,8 @@ body {
 
 /* The two rail segments, anchored off the icon centres exactly as .stackflow is,
    so the line stops clear of every glyph instead of running under it. */
-.wire__rail {
-    position: absolute;
-    top: calc(var(--stack-icon) / 2);
-    height: 1px;
-    background: linear-gradient(90deg,
-        transparent 0%,
-        var(--card-border) 10%,
-        var(--card-border) 90%,
-        transparent 100%);
-}
-
-.wire__rail--1 {
-    left: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
-    right: calc(50% + var(--wire-glyph) / 2 + var(--wire-clear));
-}
-
-.wire__rail--2 {
-    left: calc(50% + var(--wire-glyph) / 2 + var(--wire-clear));
-    right: calc(16.6667% + var(--wire-glyph) / 2 + var(--wire-clear));
-}
+/* .wire__rail removed: it duplicated .stackflow's geometry without the
+   travelling dots. Both diagrams now draw their rails with .stackflow. */
 
 /* Pauses at both ends and over the relay: the chip is carrying words, and words
    that never stop moving are words nobody reads. */

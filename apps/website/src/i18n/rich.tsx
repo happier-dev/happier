@@ -37,7 +37,12 @@ export type Values = Record<string, string | number>;
 /** `<1>`, `</1>` or `{name}` — the only three tokens this understands. */
 const TOKEN = /(<\/?\d+>|\{[a-zA-Z][\w]*\})/g;
 
-function substitute(text: string, values: Values | undefined): string {
+/**
+ * Exported because a heading is a `string` prop, not a ReactNode: `rich()`
+ * returns nodes, which a `heading={…}` prop cannot take. Same interpolation,
+ * without the slot machinery.
+ */
+export function substitute(text: string, values: Values | undefined): string {
     if (!values) return text;
     return text.replace(/\{([a-zA-Z][\w]*)\}/g, (whole, name) =>
         Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : whole,

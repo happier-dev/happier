@@ -12,6 +12,8 @@ import { USAGE_LIMITS_SCOPE, USAGE_LIMITS_SWITCHING } from './usageLimits';
 import { en } from '../i18n/messages/en';
 import { LOCALES } from '../i18n/locales';
 import { messagesFor } from '../i18n/messages/registry';
+import { siteDataFor } from '../i18n/siteData';
+import { HERO } from './pageProse';
 import { ROUTES } from '../routes';
 
 /**
@@ -289,7 +291,7 @@ describe('agent count claims match the shipped provider set', () => {
     });
 
     it('names four real providers in the hero headline', () => {
-        const named = `${en.hero.headlineLineOne}, ${en.hero.headlineLineTwo}`
+        const named = `${HERO.headlineLineOne}, ${HERO.headlineLineTwo}`
             .split(',')
             .map((part) => part.trim())
             .filter(Boolean);
@@ -308,17 +310,20 @@ describe('agent count claims match the shipped provider set', () => {
     // in the one translated string on the site that carries one — and pass.
     // Splitting on the CJK enumeration comma 、 matters for the same reason.
     it.each(LOCALES)('adds up in %s: named agents and the aside reach the provider count', (locale) => {
-        const t = messagesFor(locale);
-        const named = `${t.hero.headlineLineOne}, ${t.hero.headlineLineTwo}`
+        // siteDataFor, not messagesFor: the hero moved to src/data/pageProse.ts
+        // so that the overlay reaches it. Reading the old catalogue here would
+        // check English nine times and report nine passes.
+        const hero = siteDataFor(locale).pageProse.HERO;
+        const named = `${hero.headlineLineOne}, ${hero.headlineLineTwo}`
             .split(/[,、，]/)
             .map((part) => part.trim())
             .filter(Boolean).length;
 
-        const aside = t.hero.headlineLineTwoAside.match(/\d+/);
+        const aside = hero.headlineLineTwoAside.match(/\d+/);
         expect(aside, `hero aside carries no number to check in ${locale}`).not.toBeNull();
 
         const claimed = Number(aside![0]);
-        const total = t.hero.headlineLineTwoAsideCounts === 'total' ? claimed : named + claimed;
+        const total = hero.headlineLineTwoAsideCounts === 'total' ? claimed : named + claimed;
 
         expect(total, `hero in ${locale} claims ${total} providers`).toBe(PROVIDERS.length);
     });

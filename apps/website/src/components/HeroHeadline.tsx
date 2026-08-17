@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 
-import { useT } from '../i18n';
+import { useSiteData } from '../i18n/siteData';
 import { segmentWords } from '../i18n/segmentWords';
 
 /**
@@ -186,15 +186,15 @@ function countWords(groups: ReadonlyArray<Group>): number {
 }
 
 export function HeroHeadline() {
-    const t = useT();
+    const { pageProse: { HERO } } = useSiteData();
 
-    const lineOne = enumerationGroups(t.hero.headlineLineOne);
-    const named = enumerationGroups(t.hero.headlineLineTwo);
-    const aside = t.hero.headlineLineTwoAside.trim();
+    const lineOne = enumerationGroups(HERO.headlineLineOne);
+    const named = enumerationGroups(HERO.headlineLineTwo);
+    const aside = HERO.headlineLineTwoAside.trim();
     const lineTwo: Group[] = aside
         ? [...named, { words: words(aside, { small: true }) }]
         : named;
-    const lineThree: Group[] = [{ words: words(t.hero.headlineLineThree, { gradient: true }) }];
+    const lineThree: Group[] = [{ words: words(HERO.headlineLineThree, { gradient: true }) }];
 
     const lineTwoStart = countWords(lineOne);
     const lineThreeStart = lineTwoStart + countWords(lineTwo);

@@ -504,9 +504,31 @@ for (const file of files) {
     function tryAttribute(attr) {
         if (!ts.isJsxAttribute(attr) || !attr.initializer) return;
         if (!ATTR_NAMES.has(attr.name.getText())) return;
-        if (!ts.isStringLiteral(attr.initializer)) return;
 
-        const message = decodeEntities(attr.initializer.text);
+        /*
+         * BOTH `title="…"` AND `title={'…'}`, and the second one is why every
+         * display heading on the site was still in English.
+         *
+         * This used to test `isStringLiteral(attr.initializer)` and stop. That
+         * is true of `heading="Get started"` and false of
+         * `text={'Everything else\nyou didn’t know you needed.'}` — a
+         * JsxExpression wrapping a string literal, which is the form every
+         * <RevealText> on the site uses, because the headings carry escapes the
+         * attribute syntax cannot hold. So nine of them were skipped in silence:
+         * the H1, the hero subhead, and the H2 of every section on the homepage.
+         * The most prominent copy on the site, missed by a type test.
+         */
+        const literal = ts.isStringLiteral(attr.initializer)
+            ? attr.initializer
+            : ts.isJsxExpression(attr.initializer)
+                && attr.initializer.expression
+                && (ts.isStringLiteral(attr.initializer.expression)
+                    || ts.isNoSubstitutionTemplateLiteral(attr.initializer.expression))
+              ? attr.initializer.expression
+              : null;
+        if (!literal) return;
+
+        const message = decodeEntities(literal.text);
         if (!worthLifting(message)) return;
         if (!ensureProse(attr)) {
             refuse(attr, `${attr.name.getText()}="…" — no component to hold the hook`);
@@ -573,8 +595,35 @@ for (const file of files) {
     if (WRITE) writeFileSync(file, out, 'utf8');
 }
 
+/**
+ * Everything in pageProse.ts AFTER the PAGE_PROSE object.
+ *
+ * The writer below regenerates this file from the catalogue it parsed, and the
+ * parser only knows about `PAGE_PROSE`. So a hand-written sibling export —
+ * HERO, GET_STARTED_STEPS, the self-host tables — was silently deleted by the
+ * next codemod run, taking its translations with it and reverting the page to
+ * English with nothing failing. Anything past the closing `} as const;` is
+ * carried through verbatim.
+ */
+function trailingExports() {
+    let text;
+    try { text = readFileSync(PROSE_FILE, 'utf8'); } catch { return ''; }
+    const src = ts.createSourceFile(PROSE_FILE, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    let end = -1;
+    const find = (node) => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'PAGE_PROSE') {
+            end = node.parent.parent.getEnd();
+            return;
+        }
+        ts.forEachChild(node, find);
+    };
+    find(src);
+    return end === -1 ? '' : text.slice(end).replace(/^\s*\n/, '');
+}
+
 // ---- write the catalogue module -----------------------------------------
 if (WRITE && Object.keys(catalogue).length) {
+    const trailing = trailingExports();
     const body = Object.keys(catalogue)
         .sort()
         .map((ns) => {
@@ -610,7 +659,7 @@ if (WRITE && Object.keys(catalogue).length) {
 export const PAGE_PROSE = {
 ${body}
 } as const;
-`,
+${trailing ? `\n${trailing}` : ''}`,
         'utf8',
     );
     console.log(`\nwrote src/data/pageProse.ts`);

@@ -60,6 +60,18 @@ const PATH_OVERRIDES: ReadonlyMap<string, 'copy' | 'not-copy'> = new Map([
     ['terminalFeature.controlRows.*.topology', 'copy'],
     // An enum, despite sitting next to prose.
     ['agents.*.runtime.topology', 'not-copy'],
+    // The first two H1 lines are a list of four product names and nothing else
+    // ("Claude Code, Codex" / "OpenCode, Pi"). They read as prose to every
+    // heuristic here — commas, spaces, capitals — and a translated one names
+    // agents that do not exist. The ASIDE beside them ("& 9 more") is ordinary
+    // copy and stays in the catalogue, which is the whole reason these two need
+    // naming individually rather than the hero being excluded wholesale.
+    ['pageProse.*.headlineLineOne', 'not-copy'],
+    ['pageProse.*.headlineLineTwo', 'not-copy'],
+    // An acronym, so the all-caps rule below reads it as a constant. Most
+    // languages keep "FAQ", but that is a translator's call to make, not a
+    // decision the extractor should take by never showing it to them.
+    ['navigation.*.product.links.faq.label', 'copy'],
 ]);
 
 const NATURAL_KEYS = ['id', 'slug', 'key'] as const;
@@ -84,6 +96,33 @@ function isCopy(id: string, field: string): boolean {
     if (override) return override === 'copy';
     return !NOT_COPY_FIELDS.has(field);
 }
+
+/**
+ * An explicit `'copy'` override beats the shape heuristic as well as the field
+ * denylist. Without this the two gates disagree: the footer's "FAQ" passes
+ * isCopy() because its path says so, then looksTranslatable() rejects it as an
+ * all-caps constant, and the override silently does nothing. Naming a path is
+ * the strongest statement available here, so it wins outright.
+ */
+function forcedCopy(id: string): boolean {
+    return PATH_OVERRIDES.get(shape(id)) === 'copy';
+}
+
+/**
+ * Names that are rendered as a bare word and must survive translation
+ * byte-identical: agents, vendors, platforms, and Happier itself.
+ *
+ * Only single words belong here — a multi-word product name ("Claude Code",
+ * "App Store") is caught by the field denylist or reaches a translator with
+ * enough context to be left alone. This set exists purely to make the
+ * single-capitalised-word rule below safe.
+ */
+const PRODUCT_NAMES: ReadonlySet<string> = new Set([
+    'Happier', 'Claude', 'Codex', 'Gemini', 'OpenCode', 'Cursor', 'Copilot',
+    'Qwen', 'Kimi', 'Kilo', 'Kiro', 'Auggie', 'Grok', 'Augment', 'Anthropic',
+    'OpenAI', 'Google', 'GitHub', 'Discord', 'Docker', 'Tailscale', 'Homebrew',
+    'Linux', 'Windows', 'Android', 'Intel', 'Apple',
+]);
 
 /**
  * A string is translatable prose only if a human would read it as language.
@@ -114,7 +153,30 @@ export function looksTranslatable(value: string): boolean {
     if (/^(?:[a-z0-9:[\]/.%-]+\s+){2,}[a-z0-9:[\]/.%-]+$/.test(t) && !/[A-Z]/.test(t) && !/[.!?]/.test(t)) {
         return false;                                                    // tailwind class lists
     }
-    return /\s/.test(t) || /[.!?…]$/.test(t) || t.length > 24;
+    if (/\s/.test(t) || /[.!?…]$/.test(t) || t.length > 24) return true;
+
+    /*
+     * A SINGLE CAPITALISED WORD IS COPY, UNLESS IT NAMES SOMETHING.
+     *
+     * This rule used to end at the line above: one word, no space, no closing
+     * punctuation, under 25 characters — not prose, skip it. That was written
+     * against identifiers, and it worked on identifiers. What it also silently
+     * dropped was every one-word label on the site: the table headers on
+     * /features/usage-limits ("Feature", "Setting", "Default", "Why"), their
+     * cells ("Yes", "None", "Honoured", "Supported"), the comparison columns
+     * ("Price", "Capability"), the nav ("Agents", "Enterprise", "Docs") and the
+     * download badges ("Download", "Detected"). Each one rendered in English in
+     * all nine languages, and because they were never extracted, nothing
+     * reported them missing — a coverage report over a catalogue cannot count
+     * what the catalogue does not contain.
+     *
+     * PRODUCT_NAMES is what keeps the rule safe. Relaxing the length test also
+     * catches "Codex", "Gemini", "Happier", "Linux", "Windows" — rendered as
+     * table cells and platform labels, and wrong the moment they are anything
+     * else. They are excluded by name rather than by shape, because nothing
+     * about their shape distinguishes them from "Default".
+     */
+    return /^[A-Z][a-z]{2,}(?:-[a-z]+)*$/.test(t) && !PRODUCT_NAMES.has(t);
 }
 
 export type Visit = { id: string; value: string };
@@ -122,7 +184,7 @@ export type Visit = { id: string; value: string };
 /** Emit every translatable leaf string under `node`, addressed by structural id. */
 export function walkStrings(node: unknown, prefix: string, out: Visit[] = []): Visit[] {
     if (typeof node === 'string') {
-        if (looksTranslatable(node)) out.push({ id: prefix, value: node });
+        if (looksTranslatable(node) || forcedCopy(prefix)) out.push({ id: prefix, value: node });
         return out;
     }
     if (Array.isArray(node)) {
@@ -153,7 +215,7 @@ export function walkStrings(node: unknown, prefix: string, out: Visit[] = []): V
  */
 export function applyOverlay<T>(node: T, overrides: Readonly<Record<string, string>>, prefix: string): T {
     if (typeof node === 'string') {
-        if (!looksTranslatable(node)) return node;
+        if (!looksTranslatable(node) && !forcedCopy(prefix)) return node;
         const replacement = overrides[prefix];
         return (replacement && replacement.trim() !== '' ? replacement : node) as unknown as T;
     }

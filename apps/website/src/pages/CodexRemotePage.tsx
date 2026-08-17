@@ -3,6 +3,7 @@ import { InstallCommand } from '../components/InstallCommand';
 import { useSiteData } from '../i18n/siteData';
 import { rich } from '../i18n/rich';
 import type { ReactNode } from 'react';
+import { useLocalePath } from '../i18n';
 
 /**
  * /vs/codex-remote
@@ -37,6 +38,7 @@ import type { ReactNode } from 'react';
  */
 export function CodexRemotePage() {
     const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const localeHref = useLocalePath();
 
     const { codexRemote: { CODEX_COMPARISON_ROWS, CODEX_SCOPE_LIMIT, CODEX_SECTION }, agents: { AGENTS } } = useSiteData();
 
@@ -191,11 +193,11 @@ export function CodexRemotePage() {
                         </dl>
                         <p className="mt-7 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p5, { 1: (c: ReactNode) => <code className="font-mono">{c}</code> })}</p>
                         <p className="mt-4 max-w-[720px] text-[16px] leading-[1.68]" style={{ color: 'var(--muted)' }}>{rich(PAGE_PROSE.codexRemotePage.p6, { 1: (c: ReactNode) => <a
-                                href="/agents/codex"
+                                href={localeHref('/agents/codex')}
                                 className="underline underline-offset-2"
                                 style={{ color: 'var(--fg)' }}
                             >{c}</a>, 2: (c: ReactNode) => <a
-                                href="/vs/claude-code-remote-control"
+                                href={localeHref('/vs/claude-code-remote-control')}
                                 className="underline underline-offset-2"
                                 style={{ color: 'var(--fg)' }}
                             >{c}</a> })}</p>

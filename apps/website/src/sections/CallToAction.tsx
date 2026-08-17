@@ -40,7 +40,7 @@ export function CallToAction() {
                     <div className="relative px-8 py-20 text-center md:px-16 md:py-28">
                         <RevealText
                             as="h2"
-                            text={'Open source. Yours forever.'}
+                            text={PAGE_PROSE.callToAction.p2}
                             className="mx-auto max-w-[720px] font-display text-[36px] font-normal leading-[1.08] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                             stagger={60}
                         />

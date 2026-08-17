@@ -1,5 +1,6 @@
 import { DEFAULT_LOCALE, type Locale } from '../locales';
 import { en, type Messages } from './en';
+import { fr } from './fr';
 import { zhHans } from './zh-Hans';
 
 /**
@@ -44,6 +45,7 @@ type DeepPartial<T> = T extends string
  */
 export const MESSAGES: { en: Messages } & Partial<Record<Exclude<Locale, 'en'>, DeepPartial<Messages>>> = {
     en,
+    fr,
     'zh-Hans': zhHans,
 };
 

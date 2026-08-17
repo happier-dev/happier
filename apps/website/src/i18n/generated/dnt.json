@@ -562,6 +562,11 @@
       "happier session"
     ]
   },
+  "pageProse.GET_STARTED_STEPS.pair.description": {
+    "dnt": [
+      "happier auth"
+    ]
+  },
   "pageProse.PAGE_PROSE.agentsIndex.p6": {
     "dnt": [
       "happier claude",

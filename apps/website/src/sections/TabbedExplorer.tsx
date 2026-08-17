@@ -5,36 +5,18 @@ import { Picture } from '../components/Picture';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
 
-const TABS = [
-    {
-        id: 'chat',
-        label: 'Chat',
-        screenshot: 'showcaseDesktop',
-    },
-    {
-        id: 'editor',
-        label: 'Editor',
-        screenshot: 'showcaseDesktop',
-    },
-    {
-        id: 'git',
-        label: 'Git',
-        screenshot: 'showcaseDesktop',
-    },
-    {
-        id: 'terminal',
-        label: 'Terminal',
-        screenshot: 'showcaseDesktop',
-    },
-] as const;
+// The tab table moved to src/data/pageProse.ts so the labels are translated;
+// this import is for the TYPE only — the component reads the table through
+// useSiteData(), which is the localised one.
+import { EXPLORER_TABS as EXPLORER_TABS_EN } from '../data/pageProse';
 
-type TabId = (typeof TABS)[number]['id'];
+type TabId = (typeof EXPLORER_TABS_EN)[number]['id'];
 
 export function TabbedExplorer() {
-    const { pageProse: { PAGE_PROSE } } = useSiteData();
+    const { pageProse: { PAGE_PROSE, EXPLORER_TABS } } = useSiteData();
 
-    const [activeTab, setActiveTab] = useState<TabId>(TABS[0].id);
-    const active = TABS.find((t) => t.id === activeTab) ?? TABS[0];
+    const [activeTab, setActiveTab] = useState<TabId>(EXPLORER_TABS_EN[0].id);
+    const active = EXPLORER_TABS.find((t) => t.id === activeTab) ?? EXPLORER_TABS[0];
 
     return (
         <section className="relative" data-section="explorer">
@@ -46,7 +28,7 @@ export function TabbedExplorer() {
                     >{rich(PAGE_PROSE.tabbedExplorer.p0)}</div>
                     <RevealText
                         as="h2"
-                        text={'Every tool.\nOne interface.'}
+                        text={PAGE_PROSE.tabbedExplorer.p1}
                         className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
                         stagger={60}
                     />
@@ -57,7 +39,7 @@ export function TabbedExplorer() {
                         className="mb-8 inline-flex gap-1 rounded-full border p-1"
                         style={{ borderColor: 'var(--card-border)' }}
                     >
-                        {TABS.map((tab) => (
+                        {EXPLORER_TABS.map((tab) => (
                             <button
                                 key={tab.id}
                                 /* `demo_played` had no call site. The tab strip is

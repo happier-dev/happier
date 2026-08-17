@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LOCALES, LOCALE_META, SITE_ORIGIN, localeUrl, pathForLocale } from './index';
+import { LOCALES, LOCALE_META, SITE_ORIGIN, localePath, localeUrl, pathForLocale } from './index';
 import { ROUTES, localesFor, fileForRoute } from '../routes';
 
 /**
@@ -92,6 +92,52 @@ describe('the footer locale switcher only ever links to pages that exist', () =>
             expect(meta.suggestion.offer.length, `${locale} suggestion.offer`).toBeGreaterThan(0);
             expect(meta.suggestion.action.length, `${locale} suggestion.action`).toBeGreaterThan(0);
             expect(meta.suggestion.dismiss.length, `${locale} suggestion.dismiss`).toBeGreaterThan(0);
+        }
+    });
+});
+
+/**
+ * localePath is what every internal link on the site goes through, and the
+ * cases below are the ones that were actually wrong or would have been.
+ *
+ * scripts/assert-locale-links.mjs is the real guarantee — it reads the built
+ * HTML and cannot be fooled by a link site nobody remembered. This is here for
+ * the edge cases that are cheaper to state than to infer from 6,000 hrefs.
+ */
+describe('localePath', () => {
+    it('is the identity for the default locale, which keeps the English build unchanged', () => {
+        for (const href of ['/', '/agents', '/#faq', 'https://github.com/x']) {
+            expect(localePath('en', href)).toBe(href);
+        }
+    });
+
+    it('sends the home link to /zh, never /zh/ — the URL that page calls canonical', () => {
+        expect(localePath('zh-Hant', '/')).toBe('/zh-Hant');
+        expect(localePath('zh-Hant', '/')).toBe(localeUrl('zh-Hant', '/').slice(SITE_ORIGIN.length));
+    });
+
+    it('hangs an off-home anchor off the locale root, not off a trailing slash', () => {
+        expect(localePath('ja', '/#faq')).toBe('/ja#faq');
+        expect(localePath('ja', '#faq')).toBe('#faq');
+    });
+
+    it('leaves anything that is not our own route alone', () => {
+        for (const href of ['https://docs.happier.dev', 'mailto:a@b.c', '//cdn.example/x']) {
+            expect(localePath('ru', href)).toBe(href);
+        }
+    });
+
+    it('never prefixes twice, and never prefixes another locale’s path', () => {
+        expect(localePath('ru', '/ru/agents')).toBe('/ru/agents');
+        expect(localePath('ru', localePath('ru', '/agents'))).toBe('/ru/agents');
+        // The switcher builds these; re-prefixing would give /ru/fr/agents.
+        expect(localePath('ru', '/fr/agents')).toBe('/fr/agents');
+    });
+
+    it('prefixes for every locale the site ships', () => {
+        for (const locale of LOCALES) {
+            const prefix = LOCALE_META[locale].pathPrefix;
+            expect(localePath(locale, '/agents')).toBe(`${prefix}/agents`);
         }
     });
 });
