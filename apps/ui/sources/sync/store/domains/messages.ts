@@ -1068,6 +1068,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
         },
         applyMessagesLoaded: (sessionId: string) => set((state) => {
             const rawExistingSession = state.sessionMessages[sessionId];
+            if (rawExistingSession?.isLoaded === true) {
+                return state;
+            }
             const existingSession = rawExistingSession ? coerceSessionMessages(rawExistingSession) : null;
 
             if (!existingSession) {

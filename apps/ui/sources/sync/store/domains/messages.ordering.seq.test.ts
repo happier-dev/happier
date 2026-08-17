@@ -45,6 +45,19 @@ beforeEach(() => {
 });
 
 describe('messages domain: ordering', () => {
+    it('keeps an already-loaded transcript entry referentially stable when marked loaded again', () => {
+        const { get, domain } = createHarness({});
+
+        domain.applyMessagesLoaded('s1');
+        const previousSessionMessages = get().sessionMessages;
+        const previousEntry = previousSessionMessages.s1;
+
+        domain.applyMessagesLoaded('s1');
+
+        expect(get().sessionMessages).toBe(previousSessionMessages);
+        expect(get().sessionMessages.s1).toBe(previousEntry);
+    });
+
     it('advances the stored session seq from committed message activity', () => {
         const { get, domain } = createHarness({
             sessions: {
