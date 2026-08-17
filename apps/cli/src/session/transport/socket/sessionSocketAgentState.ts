@@ -47,6 +47,36 @@ function summarizeProjectedPendingRequests(value: unknown): AgentStateSummary | 
   return { pendingRequestsCount };
 }
 
+/**
+ * The Session projection only carries the pending-request count, so a projected observation may
+ * replace that count and nothing else. Merging it onto the freshest AgentState observation keeps
+ * `controlledByUser` intact; otherwise a Session held by a live local terminal would be summarized
+ * as idle and could be stopped underneath its user.
+ */
+function mergeProjectedPendingRequestCount(
+  projected: AgentStateSummary | null,
+  observedAgentState: AgentStateSummary | null,
+): AgentStateSummary | null {
+  if (!projected) return null;
+  const controlledByUser = projected.controlledByUser ?? observedAgentState?.controlledByUser;
+  return {
+    ...(controlledByUser !== undefined ? { controlledByUser } : {}),
+    pendingRequestsCount: projected.pendingRequestsCount,
+  };
+}
+
+function readUpdateBodyAgentStateCiphertext(body: unknown): string | null {
+  const value = (body as { agentState?: { value?: unknown } } | null)?.agentState?.value;
+  if (typeof value !== 'string') return null;
+  return value.trim().length > 0 ? value : null;
+}
+
+function readSessionSnapshotAgentStateCiphertext(session: unknown): string | null {
+  const value = (session as { agentState?: unknown } | null)?.agentState;
+  if (typeof value !== 'string') return null;
+  return value.trim() || null;
+}
+
 function summarizeAgentStateCiphertext(params: Readonly<{
   ciphertextBase64: string | null;
   sessionEncryptionMode: SessionStoredContentEncryptionMode;
@@ -101,14 +131,15 @@ export async function waitForIdleViaSocket(params: Readonly<{
   // Seed with the latest agentState ciphertext from snapshot, if available.
   initialAgentStateCiphertextBase64: string | null;
 }>): Promise<{ idle: true; observedAt: number }> {
+  const initialObservedAgentState = summarizeAgentStateCiphertext({
+    ciphertextBase64: params.initialAgentStateCiphertextBase64,
+    sessionEncryptionMode: params.sessionEncryptionMode,
+    ctx: params.ctx,
+  });
   const initial =
     params.initialAgentStateSummary !== undefined
-      ? params.initialAgentStateSummary
-      : summarizeAgentStateCiphertext({
-          ciphertextBase64: params.initialAgentStateCiphertextBase64,
-          sessionEncryptionMode: params.sessionEncryptionMode,
-          ctx: params.ctx,
-        });
+      ? mergeProjectedPendingRequestCount(params.initialAgentStateSummary, initialObservedAgentState)
+      : initialObservedAgentState;
   let latestSummary = initial;
   let pendingUserTurns = params.initialTurnActivity.pendingUserTurns;
   let activeTaskInFlight = params.initialTurnActivity.activeTaskInFlight;
@@ -248,18 +279,20 @@ export async function waitForIdleViaSocket(params: Readonly<{
               pendingUserTurns = refreshedProjectionActivity.pendingUserTurns;
               activeTaskInFlight = refreshedProjectionActivity.activeTaskInFlight;
             }
+            const refreshedProjectedSummary = summarizeProjectedPendingRequests(refreshedSession);
+            const refreshedObservedAgentState = summarizeAgentStateCiphertext({
+              ciphertextBase64: readSessionSnapshotAgentStateCiphertext(refreshedSession),
+              sessionEncryptionMode: params.sessionEncryptionMode,
+              ctx: params.ctx,
+            });
             const refreshedSummary =
-              summarizeProjectedPendingRequests(refreshedSession)
-              ?? summarizeAgentStateCiphertext({
-                ciphertextBase64:
-                  typeof refreshedSession?.agentState === 'string'
-                    ? String(refreshedSession.agentState).trim() || null
-                    : null,
-                sessionEncryptionMode: params.sessionEncryptionMode,
-                ctx: params.ctx,
-              });
+              mergeProjectedPendingRequestCount(
+                refreshedProjectedSummary,
+                refreshedObservedAgentState ?? latestSummary,
+              )
+              ?? refreshedObservedAgentState;
             latestSummary = refreshedSummary;
-            if (refreshedSummary) {
+            if (refreshedProjectedSummary || refreshedObservedAgentState) {
               hasFreshAgentStateObservation = true;
             }
 
@@ -300,7 +333,14 @@ export async function waitForIdleViaSocket(params: Readonly<{
         if (String(body.id ?? '') !== params.sessionId) return;
 
         const projectedActivity = detectSessionTurnActivityFromProjection(body);
-        const projectedSummary = summarizeProjectedPendingRequests(body);
+        const projectedSummary = mergeProjectedPendingRequestCount(
+          summarizeProjectedPendingRequests(body),
+          summarizeAgentStateCiphertext({
+            ciphertextBase64: readUpdateBodyAgentStateCiphertext(body),
+            sessionEncryptionMode: params.sessionEncryptionMode,
+            ctx: params.ctx,
+          }) ?? latestSummary,
+        );
         const projectedTurnStatus = preferProjectionUpdates ? readSessionProjectedTurnStatus(body.latestTurnStatus) : null;
         if (projectedActivity && projectedSummary) {
           preferProjectionUpdates = true;

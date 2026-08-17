@@ -276,4 +276,36 @@ describe('waitForSessionIdle', () => {
         expect(socketTimeoutMs).toBeGreaterThan(0);
         expect(socketTimeoutMs).toBeLessThan(100);
     });
+
+    it('forwards the snapshot AgentState alongside a projected pending-request count', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
+        const controlledAgentState = '{"controlledByUser":true,"requests":{}}';
+
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+        vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
+            waitForIdleViaSocket,
+        }));
+        mockTransportContext({
+            agentState: controlledAgentState,
+            latestTurnStatus: 'completed',
+        });
+
+        const { waitForSessionIdle } = await import('./waitForSessionIdle');
+
+        await waitForSessionIdle({
+            credentials: credentials(),
+            idOrPrefix: 'sess-1',
+            timeoutMs: 1_000,
+        });
+
+        expect(waitForIdleViaSocket).toHaveBeenCalledWith(expect.objectContaining({
+            initialAgentStateSummary: { pendingRequestsCount: 0 },
+            initialAgentStateCiphertextBase64: controlledAgentState,
+        }));
+    });
 });

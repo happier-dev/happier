@@ -115,10 +115,10 @@ export async function waitForSessionIdle(params: Readonly<{
         ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
         : {}),
       preferProjectionUpdates: initialProjectedActivity !== null,
+      // The projection only carries the pending-request count, so the AgentState observation from the
+      // same snapshot must still reach the idle owner: it is the only source of `controlledByUser`.
       initialAgentStateCiphertextBase64:
-        initialProjectedPendingRequestCount === null && agentStateCiphertext && agentStateCiphertext.length > 0
-          ? agentStateCiphertext
-          : null,
+        agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
     });
     return {
       ok: true,
