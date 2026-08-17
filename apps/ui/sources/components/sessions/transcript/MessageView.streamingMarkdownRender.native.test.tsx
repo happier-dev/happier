@@ -155,6 +155,7 @@ const messageDisplayCommon = {
 
 const forkCommon = {
     executionRunsEnabled: false,
+    agentSwitchingEnabled: false,
     sessionForkSupportSource: null,
     sessionReplayEnabled: false,
     sessionReplayMaxSeedChars: 120_000,

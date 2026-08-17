@@ -1476,6 +1476,7 @@ function ForkMessageButton(props: {
   const sessionForkSupportSource = props.forkCommon.sessionForkSupportSource;
   const hitSlop = Platform.OS === 'web' ? undefined : 15;
   const executionRunsEnabled = props.forkCommon.executionRunsEnabled;
+  const agentSwitchingEnabled = props.forkCommon.agentSwitchingEnabled;
   const sessionReplayEnabled = props.forkCommon.sessionReplayEnabled;
   const sessionReplayStrategy = props.forkCommon.sessionReplayStrategy;
   const sessionReplaySummaryRunner = props.forkCommon.sessionReplaySummaryRunnerV1;
@@ -1503,6 +1504,7 @@ function ForkMessageButton(props: {
       },
       replayEnabled: sessionReplayEnabled,
       executionRunsEnabled,
+      agentSwitchingEnabled,
       restoredDraftText: restored,
       sourceMessageId: props.messageId,
       sourcePreview: restored,
@@ -1515,6 +1517,7 @@ function ForkMessageButton(props: {
       },
     });
   }, [
+    agentSwitchingEnabled,
     executionRunsEnabled,
     props.isForkAllowed,
     props.messageId,

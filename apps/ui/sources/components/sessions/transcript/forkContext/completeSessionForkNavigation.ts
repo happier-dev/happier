@@ -47,7 +47,10 @@ export async function completeSessionForkNavigation(params: CompleteSessionForkN
         writeRestoredDraft(params.childSessionId, restoredDraftText);
     }
 
-    await waitForForkChildHydration({ childSessionId: params.childSessionId });
+    await waitForForkChildHydration({
+        childSessionId: params.childSessionId,
+        parentSessionId: params.parentSessionId,
+    });
     await params.navigate(params.childSessionId);
 
     if (restoredDraftText && params.writeForkInitialPrompt === true) {

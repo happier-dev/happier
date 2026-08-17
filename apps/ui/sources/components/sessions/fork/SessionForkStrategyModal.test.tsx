@@ -254,6 +254,16 @@ describe('SessionForkStrategyModal', () => {
         expect(forkSessionMock).not.toHaveBeenCalled();
     });
 
+    it('offers the same-engine routes with no Configure item when continuation is not offered', async () => {
+        // The closed `sessions.agentSwitching` state narrows this modal instead
+        // of emptying it: the fork routes that predate the feature stay, so the
+        // reader who opened it still has something to choose.
+        const { screen } = await renderModal({ onConfigureNewSession: null });
+        expect(screen.findByTestId('session-fork-strategy-configure')).toBeNull();
+        expect(screen.findByTestId('session-fork-strategy-native')).toBeTruthy();
+        expect(screen.findByTestId('session-fork-strategy-replay')).toBeTruthy();
+    });
+
     it('keeps the created child openable when hydration has not caught up', async () => {
         forkSessionMock.mockResolvedValue({ ok: true, childSessionId: 'child_1' });
         completeSessionForkNavigationMock.mockRejectedValueOnce(new Error('not visible locally'));

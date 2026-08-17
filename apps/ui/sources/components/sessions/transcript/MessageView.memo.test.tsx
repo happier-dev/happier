@@ -112,6 +112,7 @@ const forkCommon = {
     sessionReplayStrategy: 'recent_messages',
     sessionReplaySummaryRunnerV1: null,
     sessionReplayMaxSeedChars: 120_000,
+    agentSwitchingEnabled: false,
     sessionForkSupportSource: null,
     executionRunsEnabled: false,
 } satisfies TranscriptForkCommon;

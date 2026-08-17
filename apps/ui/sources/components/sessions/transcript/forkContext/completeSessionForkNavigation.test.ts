@@ -89,13 +89,73 @@ describe('completeSessionForkNavigation', () => {
 
         const { waitForForkChildHydration } = await import('./waitForForkChildHydration');
 
-        const result = await waitForForkChildHydration({
+        await expect(waitForForkChildHydration({
             childSessionId: 'child',
+            parentSessionId: 'parent',
             timeoutMs: 100,
             pollIntervalMs: 1,
+        })).resolves.toBeUndefined();
+
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('child', { forceRefresh: true });
+    });
+
+    // The child id comes back from a fork RPC; the only local proof that the row
+    // now in the store is THIS fork's child is its own recorded parent. Without
+    // that comparison a stale or unrelated fork child satisfies the wait, and the
+    // navigation — and the restored draft written after it — land on the wrong
+    // Session.
+    it('refuses a hydrated child that names a different parent', async () => {
+        ensureSessionVisibleForMessageRouteMock.mockImplementation(async () => {
+            storageRef.current.getState().sessions.child.metadata = {
+                forkV1: { v: 1, parentSessionId: 'someone-else' },
+            };
+            return true;
         });
 
-        expect(result).toEqual({ hydrated: true, timedOut: false });
-        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('child', { forceRefresh: true });
+        const { waitForForkChildHydration } = await import('./waitForForkChildHydration');
+
+        await expect(waitForForkChildHydration({
+            childSessionId: 'child',
+            parentSessionId: 'parent',
+            timeoutMs: 20,
+            pollIntervalMs: 1,
+        })).rejects.toThrow();
+    });
+
+    it('refuses a child whose fork metadata never hydrates', async () => {
+        ensureSessionVisibleForMessageRouteMock.mockResolvedValue(true);
+
+        const { waitForForkChildHydration } = await import('./waitForForkChildHydration');
+
+        await expect(waitForForkChildHydration({
+            childSessionId: 'child',
+            parentSessionId: 'parent',
+            timeoutMs: 20,
+            pollIntervalMs: 1,
+        })).rejects.toThrow();
+    });
+
+    it('does not navigate or write the restored prompt when hydration is refused', async () => {
+        ensureSessionVisibleForMessageRouteMock.mockImplementation(async () => {
+            storageRef.current.getState().sessions.child.metadata = {
+                forkV1: { v: 1, parentSessionId: 'someone-else' },
+            };
+            return true;
+        });
+        const navigate = vi.fn();
+
+        const { completeSessionForkNavigation } = await import('./completeSessionForkNavigation');
+
+        await expect(completeSessionForkNavigation({
+            childSessionId: 'child',
+            parentSessionId: 'parent',
+            navigate,
+            restoredDraftText: 'retry this',
+            sourceMessageId: 'm1',
+            writeForkInitialPrompt: true,
+        })).rejects.toThrow();
+
+        expect(navigate).not.toHaveBeenCalled();
+        expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
     });
 });

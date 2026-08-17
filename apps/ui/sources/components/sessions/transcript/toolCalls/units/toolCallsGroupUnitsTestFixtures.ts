@@ -10,6 +10,7 @@ export function createTranscriptSessionCommonPropsFixture(overrides?: Readonly<{
     return {
         forkCommon: {
             executionRunsEnabled: false,
+            agentSwitchingEnabled: false,
             sessionForkSupportSource: null,
             sessionReplayEnabled: false,
             sessionReplayMaxSeedChars: 1000,

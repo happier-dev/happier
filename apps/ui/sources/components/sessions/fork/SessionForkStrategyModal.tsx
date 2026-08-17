@@ -29,8 +29,11 @@ export type SessionForkStrategyModalProps = CustomModalInjectedProps & Readonly<
     /** Short quotation of the message this fork branches from, when there is one. */
     sourcePreview?: string | null;
     navigate: (childSessionId: string) => void | Promise<void>;
-    /** Leaves for the canonical New Session screen with this fork point attached. */
-    onConfigureNewSession: () => void;
+    /**
+     * Leaves for the canonical New Session screen with this fork point attached,
+     * or `null` when source-context continuation is not offered for this Session.
+     */
+    onConfigureNewSession: (() => void) | null;
 }>;
 
 /** Collapses and clamps a transcript quotation to one bounded body line. */
@@ -117,6 +120,7 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
 
     const { onClose, onConfigureNewSession } = props;
     const handleConfigureNewSession = React.useCallback(() => {
+        if (!onConfigureNewSession) return;
         // New Session owns its own create/send progress from here on, so this
         // surface leaves rather than showing a second progress story.
         onClose();
@@ -215,17 +219,19 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                 ) : null}
             </ItemGroup>
 
-            <ItemGroup>
-                <Item
-                    testID="session-fork-strategy-configure"
-                    title={t('session.forking.strategy.configure.title')}
-                    subtitle={t('session.forking.strategy.configure.subtitle')}
-                    subtitleLines={0}
-                    icon={<Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />}
-                    disabled={choicesDisabled}
-                    onPress={handleConfigureNewSession}
-                />
-            </ItemGroup>
+            {onConfigureNewSession ? (
+                <ItemGroup>
+                    <Item
+                        testID="session-fork-strategy-configure"
+                        title={t('session.forking.strategy.configure.title')}
+                        subtitle={t('session.forking.strategy.configure.subtitle')}
+                        subtitleLines={0}
+                        icon={<Icon name="sliders-horizontal" size={20} color={theme.colors.text.secondary} />}
+                        disabled={choicesDisabled}
+                        onPress={handleConfigureNewSession}
+                    />
+                </ItemGroup>
+            ) : null}
 
             {failure && phase.type === 'choosing' ? (
                 <View style={styles.notice} testID="session-fork-strategy-failure">

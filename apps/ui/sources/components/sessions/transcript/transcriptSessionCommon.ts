@@ -4,6 +4,7 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import type { ReducerState } from '@/sync/reducer/reducer';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import {
@@ -63,6 +64,13 @@ export type TranscriptForkCommon = Pick<TranscriptSessionCommonSettings,
     | 'sessionReplaySummaryRunnerV1'
 > & Readonly<{
     executionRunsEnabled: boolean;
+    /**
+     * `sessions.agentSwitching` for THIS Session's server, resolved once for the
+     * whole transcript rather than per row. Source-context continuation is
+     * reachable from a message's fork launcher, so the row needs the same
+     * decision the in-Session picker uses.
+     */
+    agentSwitchingEnabled: boolean;
     sessionForkSupportSource: SessionForkSupportSource | null;
 }>;
 
@@ -117,6 +125,14 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     const messagesById = useSessionMessagesById(sessionId);
     const reducerState = useSessionMessagesReducerState(sessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    // The server the fork launchers spawn the child on, resolved through the one
+    // owner they already use, so the decision below is scoped to that exact
+    // server rather than to whatever the sidebar happens to have selected.
+    const forkSpawnServerId = usePreferredServerIdForSession(sessionId);
+    const agentSwitchingEnabled = useFeatureEnabled('sessions.agentSwitching', {
+        scopeKind: 'spawn',
+        serverId: forkSpawnServerId,
+    });
     const debugInformationEnabled = useSessionDebugInformationEnabled();
 
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
@@ -138,6 +154,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     const transcriptToolCallsGroupShowBackground = useSetting('transcriptToolCallsGroupShowBackground');
 
     const fork = React.useMemo<TranscriptForkCommon>(() => ({
+            agentSwitchingEnabled,
             executionRunsEnabled,
             sessionForkSupportSource,
             sessionReplayEnabled,
@@ -145,6 +162,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
             sessionReplayStrategy,
             sessionReplaySummaryRunnerV1,
         }), [
+            agentSwitchingEnabled,
             executionRunsEnabled,
             sessionForkSupportSource,
             sessionReplayEnabled,
