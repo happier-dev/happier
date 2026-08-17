@@ -8,6 +8,7 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 
 import {
+    resolveSessionMutationMaxAttempts,
     resolveSessionMutationRetryDelayMs,
     resolveSessionMutationTranscriptFlushBatchLimit,
 } from './sessionMutationBackoff';
@@ -49,7 +50,10 @@ import {
     validateTranscriptMessageAppendMutationProvenance,
 } from './sessionMutationTypes';
 import type { SessionMutationDeadLetterEntry } from './sessionMutationPersistence';
-import { isAuthoritativeSessionMutationKind } from './sessionMutationDurabilityPolicy';
+import {
+    isAuthoritativeSessionMutation,
+    isAuthoritativeSessionMutationKind,
+} from './sessionMutationDurabilityPolicy';
 import {
     supportsRuntimeActivityV2,
     type SessionSyncPendingInputServerContractResult,
@@ -533,6 +537,46 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
         settlement: null,
     };
     const runtimeActivityTailWaiters = new Set<() => void>();
+    const reportedPersistentlyBlockingMutationIds = new Set<string>();
+
+    function reportPersistentlyBlockingMutation(params: Readonly<{
+        mutation: QueuedSessionMutation;
+        blockedMutations: readonly QueuedSessionMutation[];
+        diagnostic: Readonly<Record<string, unknown>>;
+    }>): void {
+        if (!isAuthoritativeSessionMutation(params.mutation)) return;
+        if (params.blockedMutations.length === 0) return;
+        if (params.mutation.attempts < resolveSessionMutationMaxAttempts()) return;
+        if (reportedPersistentlyBlockingMutationIds.has(params.mutation.mutationId)) return;
+        reportedPersistentlyBlockingMutationIds.add(params.mutation.mutationId);
+
+        const blockedMutationKinds: Record<string, number> = {};
+        for (const blocked of params.blockedMutations) {
+            blockedMutationKinds[blocked.kind] = (blockedMutationKinds[blocked.kind] ?? 0) + 1;
+        }
+        const turn = params.mutation.kind === 'session_turn' ? params.mutation.payload : null;
+        logger.infoFile(
+            '[API] Authoritative session mutation remains queued and is blocking later mutations',
+            {
+                sessionId: params.mutation.payload.sessionId,
+                mutationId: params.mutation.mutationId,
+                mutationKind: params.mutation.kind,
+                attempts: params.mutation.attempts,
+                ageMs: Math.max(0, Date.now() - params.mutation.createdAt),
+                ...(turn ? {
+                    action: turn.action,
+                    ...(turn.turnId ? { turnId: turn.turnId } : {}),
+                    ...(turn.provider ? { provider: turn.provider } : {}),
+                } : {}),
+                ...params.diagnostic,
+                blockedMutationCount: params.blockedMutations.length,
+                blockedMutationKinds,
+                serverContractMode: sessionSyncPendingInputServerContract?.mode ?? 'unknown',
+                runtimeActivityServerContract: sessionSyncPendingInputServerContract?.runtimeActivity ?? 'unknown',
+                pendingInputServerContract: sessionSyncPendingInputServerContract?.pendingInput ?? 'unknown',
+            },
+        );
+    }
 
     function publishRuntimeActivityTail(next: Omit<RuntimeActivitySnapshotTail, 'sequence'>): void {
         runtimeActivityTail = {
@@ -872,7 +916,9 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                         deadLetters.push(createSessionMutationDeadLetterEntry({
                             sessionId: params.sessionId,
                             mutation: failedMutation,
-                            reason: 'retry_exhausted',
+                            reason: outcome.status === 'permanent_invalid_payload'
+                                ? 'permanent_invalid_payload'
+                                : 'retry_exhausted',
                             diagnostic: createDeliveryDiagnostic(outcome),
                         }));
                         const nextIndex = deadLetterDependentMutations({
@@ -886,6 +932,11 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                         didChange = true;
                         continue;
                     }
+                    reportPersistentlyBlockingMutation({
+                        mutation: failedMutation,
+                        blockedMutations: batch.slice(index + 1),
+                        diagnostic: createDeliveryDiagnostic(outcome),
+                    });
                     remaining.push(failedMutation);
                     remaining.push(...batch.slice(index + 1));
                     inFlightBatch = null;
@@ -938,6 +989,14 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                     didChange = true;
                     continue;
                 }
+                reportPersistentlyBlockingMutation({
+                    mutation: failedMutation,
+                    blockedMutations: batch.slice(index + 1),
+                    diagnostic: {
+                        deliveryStatus: 'retryable',
+                        reason: 'delivery_exception',
+                    },
+                });
                 remaining.push(failedMutation);
                 remaining.push(...batch.slice(index + 1));
                 inFlightBatch = null;

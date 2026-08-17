@@ -49,6 +49,7 @@ export function shouldDeadLetterFailedMutation(
     now: number,
     outcome?: Exclude<SessionMutationDeliveryOutcome, { status: 'delivered' }>,
 ): boolean {
+    if (outcome?.status === 'permanent_invalid_payload') return true;
     if (isAuthoritativeSessionMutation(mutation)) return false;
     if (outcome?.status === 'unsupported_capability' && mutation.kind === 'session_turn') return false;
     const maxAgeMs = resolveSessionMutationMaxAgeMs();

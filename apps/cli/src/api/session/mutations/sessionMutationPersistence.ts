@@ -623,6 +623,7 @@ function readRecoverableQueuedMutation(
     context: SessionMutationPersistenceContext,
 ): QueuedSessionMutation | null {
     if (!isAuthoritativeSessionMutationKind(entry.kind as QueuedSessionMutation['kind'])) return null;
+    if (entry.reason === 'permanent_invalid_payload') return null;
     if (typeof entry.recoveryAttemptedAt === 'number') return null;
     const record = entry as unknown as Record<string, unknown>;
     const rawQueuedMutation = record.queuedMutation ?? record.mutation ?? (

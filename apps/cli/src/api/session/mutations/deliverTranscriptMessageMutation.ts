@@ -23,6 +23,10 @@ type TranscriptMessageMutationSocket = {
 export type TranscriptMessageMutationDeliveryResult =
     | Readonly<{ status: 'delivered'; path: 'socket' }>
     | Readonly<{
+        status: 'permanent_invalid_payload';
+        reason: 'transcript_observation_invalid';
+    }>
+    | Readonly<{
         status: 'retryable';
         reason: 'transcript_observation_transport_unavailable';
     }>
@@ -108,9 +112,13 @@ export async function deliverTranscriptMessageMutation(params: Readonly<{
             return { status: 'retryable', reason: 'transcript_observation_transport_unavailable' };
         }
         if (!parsed.data.ok) {
-            return parsed.data.error === 'forbidden'
-                ? { status: 'unsupported_capability', reason: 'transcript_observation_transport_unsupported' }
-                : { status: 'retryable', reason: 'transcript_observation_transport_unavailable' };
+            if (parsed.data.error === 'forbidden') {
+                return { status: 'unsupported_capability', reason: 'transcript_observation_transport_unsupported' };
+            }
+            if (parsed.data.error === 'invalid_observation') {
+                return { status: 'permanent_invalid_payload', reason: 'transcript_observation_invalid' };
+            }
+            return { status: 'retryable', reason: 'transcript_observation_transport_unavailable' };
         }
         return { status: 'delivered', path: 'socket' };
     } catch (error) {

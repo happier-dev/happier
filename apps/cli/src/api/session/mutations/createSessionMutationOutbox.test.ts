@@ -1188,6 +1188,96 @@ describe('createSessionMutationOutbox', () => {
         await outbox.close();
     });
 
+    it('reports a persistently blocking authoritative mutation once without changing its retry custody', async () => {
+        const { logger } = await import('@/ui/logger');
+        const infoFileSpy = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+        vi.mocked(axios.post).mockRejectedValue({ response: { status: 422 } });
+        const socket = createApiSessionSocketStub({ connected: false });
+        const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
+        const { createSessionTurnMutation, createTranscriptMessageAppendMutation } = await import('./sessionMutationTypes');
+        const { saveSessionMutationOutbox } = await import('./sessionMutationPersistence');
+        const sessionId = 's-authoritative-blocked-warning';
+        const blocked = createSessionTurnMutation({
+            sessionId,
+            action: 'begin',
+            turnId: 'turn-blocked',
+            provider: 'claude',
+            mutationId: 'mutation-blocked-begin-warning',
+            observedAt: 1_000,
+        });
+        const following = createTranscriptMessageAppendMutation({
+            sessionId,
+            provenance: { kind: 'non_dependent', source: 'history' },
+            localId: 'following-transcript-row',
+            messageRole: 'agent',
+            content: 'following',
+            createdAt: 1_100,
+            updatedAt: 1_100,
+        });
+        await saveSessionMutationOutbox(await createRuntimePersistenceContext(sessionId), [
+            {
+                kind: 'session_turn',
+                mutationId: blocked.mutationId,
+                payload: blocked,
+                createdAt: 1_000,
+                attempts: 1,
+                nextAttemptAt: 0,
+            },
+            {
+                kind: 'transcript_message_append',
+                mutationId: following.mutationId,
+                payload: following,
+                intentOrder: 1,
+                createdAt: 1_100,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+        ]);
+        const outbox = createSessionMutationOutbox({
+            token: 'tok',
+            sessionId,
+            getSocket: () => socket,
+            requestReconnect: () => {},
+        });
+
+        try {
+            await outbox.flush('flush');
+            await outbox.flush('flush');
+
+            expect(infoFileSpy).toHaveBeenCalledTimes(1);
+            expect(infoFileSpy).toHaveBeenCalledWith(
+                '[API] Authoritative session mutation remains queued and is blocking later mutations',
+                expect.objectContaining({
+                    sessionId,
+                    mutationId: blocked.mutationId,
+                    mutationKind: 'session_turn',
+                    action: 'begin',
+                    turnId: 'turn-blocked',
+                    provider: 'claude',
+                    attempts: 2,
+                    deliveryStatus: 'retryable',
+                    reason: 'incompatible_session_turn_mutation_http',
+                    httpStatus: 422,
+                    blockedMutationCount: 1,
+                    blockedMutationKinds: { transcript_message_append: 1 },
+                }),
+            );
+            const persisted = await readPersistedOutboxMutations(sessionId);
+            expect(persisted).toEqual([
+                expect.objectContaining({
+                    mutationId: blocked.mutationId,
+                }),
+                expect.objectContaining({ mutationId: following.mutationId }),
+            ]);
+            expect((persisted[0] as { attempts?: unknown }).attempts).toEqual(expect.any(Number));
+            expect((persisted[0] as { attempts: number }).attempts).toBeGreaterThanOrEqual(2);
+            await expect(readDeadLetterEntries(sessionId)).resolves.toEqual([]);
+        } finally {
+            infoFileSpy.mockRestore();
+            await outbox.close();
+        }
+    });
+
     it('re-resolves the live server URL and retries a terminal turn mutation after a local endpoint refusal', async () => {
         const attemptedUrls: string[] = [];
         vi.stubEnv('HAPPIER_SERVER_URL', 'http://127.0.0.1:41001');
@@ -1577,6 +1667,62 @@ describe('createSessionMutationOutbox', () => {
             }),
         ]);
         expect(vi.mocked(axios.post)).not.toHaveBeenCalled();
+        await outbox.close();
+    });
+
+    it('quarantines a permanently invalid transcript row without blocking the following row', async () => {
+        const observedLocalIds: string[] = [];
+        const socket = createObservationSocket({
+            observe: (payload) => {
+                const localId = String((payload as { localId?: unknown }).localId ?? '');
+                observedLocalIds.push(localId);
+                return localId === 'invalid-history-row'
+                    ? { ok: false, error: 'invalid_observation' }
+                    : {
+                        ok: true,
+                        status: 'observed',
+                        id: `server-${localId}`,
+                        seq: 2,
+                        localId,
+                        didWrite: true,
+                        ingestedAt: 2_000,
+                    };
+            },
+        });
+        const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
+        const { createTranscriptMessageAppendMutation } = await import('./sessionMutationTypes');
+        const outbox = createSessionMutationOutbox({
+            token: 'tok',
+            sessionId: 's-invalid-history',
+            getSocket: () => socket,
+            requestReconnect: () => {},
+        });
+        const transcriptMutation = (localId: string) => createTranscriptMessageAppendMutation({
+            sessionId: 's-invalid-history',
+            provenance: { kind: 'non_dependent', source: 'history' },
+            localId,
+            messageRole: 'agent',
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: localId } } },
+            createdAt: 1_000,
+            updatedAt: 1_000,
+        });
+
+        await outbox.enqueueTranscriptMessage(transcriptMutation('invalid-history-row'));
+        await outbox.enqueueTranscriptMessage(transcriptMutation('following-history-row'));
+        await outbox.flush('flush');
+
+        await expect(readPersistedOutboxMutations('s-invalid-history')).resolves.toEqual([]);
+        await expect(readDeadLetterEntries('s-invalid-history')).resolves.toEqual([
+            expect.objectContaining({
+                mutationId: 'transcript:s-invalid-history:invalid-history-row',
+                reason: 'permanent_invalid_payload',
+                diagnostic: expect.objectContaining({
+                    deliveryStatus: 'permanent_invalid_payload',
+                    reason: 'transcript_observation_invalid',
+                }),
+            }),
+        ]);
+        expect(observedLocalIds.filter((localId) => localId === 'following-history-row')).toHaveLength(1);
         await outbox.close();
     });
 
