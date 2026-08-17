@@ -5,6 +5,7 @@ export {
   type SessionMetadataLegacyOwnerTupleMutationSnapshotV1,
   type SessionMetadataLegacyOwnerTupleMutationValueV1,
   type SessionMetadataOwnerTupleMutationValueV1,
+  type SessionMetadataOwnerMigrationCurrentnessV1,
   type SessionMetadataSharedEditorTupleMutationValueV1,
   type SessionMetadataOwnerTupleMutationSnapshotV1,
   type SessionMetadataSharedEditorTupleMutationSnapshotV1,

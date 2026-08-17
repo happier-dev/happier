@@ -3,7 +3,9 @@ import {
   ExternalSessionOperationProgressV1Schema,
   projectExternalSessionOperationSharedPresentationV1,
   projectSessionSharedMetadataV1,
+  type SessionOwnerMetadataEnvelopeV1,
   type SessionOwnerMetadataV1,
+  type SessionMetadataTuplePatchV1,
   type SessionSharedMetadataV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
@@ -22,7 +24,7 @@ function ownerSnapshot(params: Readonly<{
   agentState?: AgentState | null;
   metadataVersion?: number;
   sharedMetadataCiphertext?: string;
-  ownerMetadataCiphertext?: string;
+  ownerMetadataEnvelope?: SessionOwnerMetadataEnvelopeV1;
   agentStateVersion?: number;
   agentStateCiphertext?: string | null;
 }> = {}): SessionMetadataTupleMutationSnapshotV1<Metadata, AgentState> {
@@ -39,8 +41,11 @@ function ownerSnapshot(params: Readonly<{
     metadataVersion: params.metadataVersion ?? 2,
     sharedMetadataCiphertext:
       params.sharedMetadataCiphertext ?? 'shared-before',
-    ownerMetadataCiphertext:
-      params.ownerMetadataCiphertext ?? 'owner-before',
+    ownerMetadataEnvelope:
+      params.ownerMetadataEnvelope ?? {
+        t: 'plain',
+        v: created.ownerMetadata,
+      },
     agentStateVersion: params.agentStateVersion ?? 4,
     agentStateCiphertext:
       params.agentStateCiphertext ?? null,
@@ -60,8 +65,10 @@ function cryptoAdapter() {
   return {
     encryptPayload: vi.fn(async (payload: unknown) =>
       `encrypted:${JSON.stringify(payload)}`),
-    sealOwnerMetadata: vi.fn(async (owner: SessionOwnerMetadataV1) =>
-      `sealed:${JSON.stringify(owner)}`),
+    encodeOwnerMetadata: vi.fn(async (owner: SessionOwnerMetadataV1) => ({
+      t: 'plain' as const,
+      v: owner,
+    })),
   };
 }
 
@@ -147,7 +154,12 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     expect(commit).toHaveBeenCalledOnce();
     expect(commit).toHaveBeenCalledWith(expect.objectContaining({
       ownerMetadata: expect.objectContaining({
-        ciphertext: expect.stringContaining('"sourcePagesRead":3'),
+        t: 'plain',
+        v: expect.objectContaining({
+          runtime: expect.objectContaining({
+            externalSessionOperationV1: { v: 1, progress },
+          }),
+        }),
       }),
       sharedMetadata: expect.objectContaining({
         ciphertext: expect.stringContaining(
@@ -180,7 +192,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
   });
 
-  it('preserves exact owner ciphertext for a shared-only metadata mutation', async () => {
+  it('preserves the exact owner envelope for a shared-only metadata mutation', async () => {
     const crypto = cryptoAdapter();
     const commit = vi.fn(async () => ({
       result: 'success' as const,
@@ -201,14 +213,14 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       commit,
     });
 
-    expect(crypto.sealOwnerMetadata).not.toHaveBeenCalled();
+    expect(crypto.encodeOwnerMetadata).not.toHaveBeenCalled();
     expect(commit).toHaveBeenCalledWith(expect.objectContaining({
-      expectedOwnerMetadataCiphertext: 'owner-before',
-      ownerMetadata: { ciphertext: 'owner-before' },
+      expectedOwnerMetadata: expect.objectContaining({ t: 'plain' }),
+      ownerMetadata: expect.objectContaining({ t: 'plain' }),
     }));
     expect(result).toMatchObject({
       mode: 'owner',
-      ownerMetadataCiphertext: 'owner-before',
+      ownerMetadataEnvelope: { t: 'plain' },
       value: {
         metadata: {
           path: '/workspace',
@@ -259,9 +271,9 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       commit,
     });
 
-    expect(crypto.sealOwnerMetadata).not.toHaveBeenCalled();
+    expect(crypto.encodeOwnerMetadata).not.toHaveBeenCalled();
     expect(commit).toHaveBeenCalledWith(expect.objectContaining({
-      ownerMetadata: { ciphertext: 'owner-before' },
+      ownerMetadata: expect.objectContaining({ t: 'plain' }),
     }));
   });
 
@@ -286,12 +298,17 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       commit,
     });
 
-    expect(crypto.sealOwnerMetadata).toHaveBeenCalledTimes(1);
+    expect(crypto.encodeOwnerMetadata).toHaveBeenCalledTimes(1);
     expect(commit).toHaveBeenCalledWith(expect.objectContaining({
-      expectedOwnerMetadataCiphertext: 'owner-before',
-      ownerMetadata: {
-        ciphertext: expect.stringContaining('workspace/changed'),
-      },
+      expectedOwnerMetadata: expect.objectContaining({ t: 'plain' }),
+      ownerMetadata: expect.objectContaining({
+        t: 'plain',
+        v: expect.objectContaining({
+          workspace: expect.objectContaining({
+            path: '/workspace/changed',
+          }),
+        }),
+      }),
     }));
     expect(result).toMatchObject({
       mode: 'owner',
@@ -344,7 +361,14 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
     expect(
       (result.value.metadata as Metadata).agentRuntimeDescriptorV1,
-    ).toBeUndefined();
+    ).toEqual({
+      v: 1,
+      providerId: 'codex',
+      provider: {
+        backendMode: 'appServer',
+        vendorSessionId: 'native-1',
+      },
+    });
   });
 
   it('accepts its projected host-session runtime descriptor on a second owner mutation', async () => {
@@ -435,7 +459,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
   });
 
-  it('reprojects shared metadata for an Agent-state-only mutation while preserving owner ciphertext', async () => {
+  it('reprojects shared metadata for an Agent-state-only mutation while preserving the owner envelope', async () => {
     const crypto = cryptoAdapter();
     const commit = vi.fn(async () => ({
       result: 'success' as const,
@@ -467,11 +491,11 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       commit,
     });
 
-    expect(crypto.sealOwnerMetadata).not.toHaveBeenCalled();
+    expect(crypto.encodeOwnerMetadata).not.toHaveBeenCalled();
     expect(crypto.encryptPayload).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       mode: 'owner',
-      ownerMetadataCiphertext: 'owner-before',
+      ownerMetadataEnvelope: expect.objectContaining({ t: 'plain' }),
       value: {
         agentState: { controlledByUser: true },
       },
@@ -488,7 +512,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
         summary: { text: 'concurrent', updatedAt: 3 },
       },
       metadataVersion: 3,
-      ownerMetadataCiphertext: 'owner-authoritative',
+      ownerMetadataEnvelope: {
+        t: 'encrypted',
+        c: 'owner-authoritative',
+      },
       agentStateVersion: 5,
     });
     const commit = vi.fn()
@@ -516,7 +543,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
 
     expect(commit).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      expectedOwnerMetadataCiphertext: 'owner-authoritative',
+      expectedOwnerMetadata: {
+        t: 'encrypted',
+        c: 'owner-authoritative',
+      },
     }));
     expect(result).toMatchObject({
       metadataVersion: 4,
@@ -552,7 +582,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
 
     expect(crypto.encryptPayload).not.toHaveBeenCalled();
-    expect(crypto.sealOwnerMetadata).not.toHaveBeenCalled();
+    expect(crypto.encodeOwnerMetadata).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
   });
 
@@ -665,7 +695,7 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
-  it('delegates an ordinary layout-0 metadata mutation without building an owner-migration tuple', async () => {
+  it('atomically migrates a layout-0 owner while applying its metadata mutation', async () => {
     const initial = legacyOwnerSnapshot({
       metadata: {
         path: '/workspace',
@@ -678,21 +708,12 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       agentStateVersion: 4,
       agentStateCiphertext: 'agent-exact-source',
     });
-    const updated = {
-      ...initial,
-      metadataVersion: 3,
-      metadataCiphertext: 'metadata-legacy-next',
-      value: {
-        ...initial.value,
-        metadata: {
-          ...initial.value.metadata,
-          summary: { text: 'After', updatedAt: 2 },
-        },
-      },
-    };
     const crypto = cryptoAdapter();
-    const commit = vi.fn();
-    const mutateLegacy = vi.fn(async () => updated);
+    const commit = vi.fn(async () => ({
+      result: 'success' as const,
+      metadataVersion: 3,
+      agentStateVersion: 5,
+    }));
 
     const result = await updateSessionMetadataTupleWithRetry({
       initialSnapshot: initial,
@@ -705,22 +726,54 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       },
       crypto,
       commit,
-      mutateLegacy,
+      ownerMigrationCurrentness: {
+        expectedAccountEncryptionMode: 'plain',
+        expectedAccountContentPublicKeyFingerprint: null,
+      },
     });
 
-    expect(result).toBe(updated);
-    expect(mutateLegacy).toHaveBeenCalledWith({
-      kind: 'metadata',
-      current: initial,
-      updatedMetadata: updated.value.metadata,
-      mutation: expect.objectContaining({ kind: 'metadata' }),
+    expect(commit).toHaveBeenCalledWith({
+      mode: 'owner_migration',
+      expectedAccountEncryptionMode: 'plain',
+      expectedAccountContentPublicKeyFingerprint: null,
+      source: {
+        metadataLayoutVersion: 0,
+        metadata: {
+          version: 2,
+          ciphertext: 'metadata-exact-source',
+        },
+        ownerMetadata: null,
+        agentState: {
+          version: 4,
+          ciphertext: 'agent-exact-source',
+        },
+      },
+      target: {
+        metadataLayoutVersion: 1,
+        sharedMetadata: {
+          ciphertext: expect.stringContaining('"After"'),
+        },
+        ownerMetadata: expect.objectContaining({ t: 'plain' }),
+        agentState: {
+          ciphertext: expect.stringContaining('"controlledByUser":false'),
+        },
+      },
     });
-    expect(crypto.encryptPayload).not.toHaveBeenCalled();
-    expect(crypto.sealOwnerMetadata).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      mode: 'owner',
+      metadataLayoutVersion: 1,
+      metadataVersion: 3,
+      agentStateVersion: 5,
+      value: {
+        metadata: {
+          summary: { text: 'After', updatedAt: 2 },
+        },
+        agentState: { controlledByUser: false },
+      },
+    });
   });
 
-  it('delegates an ordinary layout-0 Agent-state mutation without building an owner-migration tuple', async () => {
+  it('atomically migrates a layout-0 owner while applying its Agent-state mutation', async () => {
     const initial = legacyOwnerSnapshot({
       metadata: {
         path: '/workspace',
@@ -732,18 +785,12 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       agentStateVersion: 4,
       agentStateCiphertext: 'agent-exact-source',
     });
-    const updated = {
-      ...initial,
-      agentStateVersion: 5,
-      agentStateCiphertext: 'agent-legacy-next',
-      value: {
-        ...initial.value,
-        agentState: { controlledByUser: true },
-      },
-    };
     const crypto = cryptoAdapter();
-    const commit = vi.fn();
-    const mutateLegacy = vi.fn(async () => updated);
+    const commit = vi.fn(async () => ({
+      result: 'success' as const,
+      metadataVersion: 3,
+      agentStateVersion: 5,
+    }));
 
     const result = await updateSessionMetadataTupleWithRetry({
       initialSnapshot: initial,
@@ -756,19 +803,174 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       },
       crypto,
       commit,
-      mutateLegacy,
+      ownerMigrationCurrentness: {
+        expectedAccountEncryptionMode: 'e2ee',
+        expectedAccountContentPublicKeyFingerprint:
+          `content-public-key-sha256:${'a'.repeat(64)}`,
+      },
     });
 
-    expect(result).toBe(updated);
-    expect(mutateLegacy).toHaveBeenCalledWith({
-      kind: 'agentState',
-      current: initial,
-      updatedAgentState: updated.value.agentState,
-      mutation: expect.objectContaining({ kind: 'agentState' }),
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'owner_migration',
+      expectedAccountEncryptionMode: 'e2ee',
+      expectedAccountContentPublicKeyFingerprint:
+        `content-public-key-sha256:${'a'.repeat(64)}`,
+      target: expect.objectContaining({
+        agentState: {
+          ciphertext: expect.stringContaining('"controlledByUser":true'),
+        },
+      }),
+    }));
+    expect(result).toMatchObject({
+      mode: 'owner',
+      metadataLayoutVersion: 1,
+      value: {
+        agentState: { controlledByUser: true },
+      },
     });
-    expect(crypto.encryptPayload).not.toHaveBeenCalled();
-    expect(crypto.sealOwnerMetadata).not.toHaveBeenCalled();
-    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('re-resolves owner-migration currentness after a conflict refresh', async () => {
+    const initial = legacyOwnerSnapshot({
+      metadata: { path: '/workspace', host: 'local' },
+      agentState: null,
+      metadataVersion: 2,
+      metadataCiphertext: 'metadata-source-v2',
+      agentStateVersion: 4,
+      agentStateCiphertext: null,
+    });
+    const refreshed = legacyOwnerSnapshot({
+      metadata: { path: '/workspace', host: 'local' },
+      agentState: null,
+      metadataVersion: 3,
+      metadataCiphertext: 'metadata-source-v3',
+      agentStateVersion: 4,
+      agentStateCiphertext: null,
+    });
+    const resolveOwnerMigrationCurrentness = vi.fn()
+      .mockResolvedValueOnce({
+        expectedAccountEncryptionMode: 'plain' as const,
+        expectedAccountContentPublicKeyFingerprint: null,
+      })
+      .mockResolvedValueOnce({
+        expectedAccountEncryptionMode: 'e2ee' as const,
+        expectedAccountContentPublicKeyFingerprint:
+          `content-public-key-sha256:${'b'.repeat(64)}`,
+      });
+    const commit = vi.fn()
+      .mockResolvedValueOnce({ result: 'conflict' as const })
+      .mockResolvedValueOnce({
+        result: 'success' as const,
+        metadataVersion: 4,
+        agentStateVersion: 5,
+      });
+
+    await updateSessionMetadataTupleWithRetry({
+      initialSnapshot: initial,
+      mutation: {
+        kind: 'metadata',
+        update: (metadata) => ({ ...metadata, path: '/workspace/after' }),
+      },
+      crypto: cryptoAdapter(),
+      commit,
+      resolveOwnerMigrationCurrentness,
+      refreshAfterConflict: async () => refreshed,
+      maxAttempts: 2,
+    });
+
+    expect(resolveOwnerMigrationCurrentness).toHaveBeenCalledTimes(2);
+    expect(commit.mock.calls.map(([request]) => ({
+      mode: request.expectedAccountEncryptionMode,
+      fingerprint: request.expectedAccountContentPublicKeyFingerprint,
+      sourceVersion: request.source.metadata.version,
+    }))).toEqual([
+      { mode: 'plain', fingerprint: null, sourceVersion: 2 },
+      {
+        mode: 'e2ee',
+        fingerprint: `content-public-key-sha256:${'b'.repeat(64)}`,
+        sourceVersion: 3,
+      },
+    ]);
+  });
+
+  it('recognizes the exact migrated target after a lost owner-migration response', async () => {
+    const ambiguous = Object.assign(new Error('timeout after write'), {
+      code: 'transport_timeout',
+    });
+    const initial = legacyOwnerSnapshot({
+      metadata: { path: '/workspace', host: 'local' },
+      agentState: { controlledByUser: false },
+      metadataVersion: 2,
+      metadataCiphertext: 'metadata-exact-source',
+      agentStateVersion: 4,
+      agentStateCiphertext: 'agent-exact-source',
+    });
+    const crypto = cryptoAdapter();
+    let migrated: SessionMetadataTupleMutationSnapshotV1<
+      Metadata,
+      AgentState
+    > | null = null;
+    const commit = vi.fn(async (patch: SessionMetadataTuplePatchV1) => {
+      if (patch.mode !== 'owner_migration') {
+        throw new Error('expected owner migration');
+      }
+      const createdOwner = createSessionOwnerMetadataV1({
+        metadata: {
+          ...initial.value.metadata,
+          summary: { text: 'After', updatedAt: 2 },
+        },
+      });
+      if (!createdOwner.ok) {
+        throw new Error('invalid migrated owner fixture');
+      }
+      migrated = {
+        mode: 'owner',
+        metadataLayoutVersion: 1,
+        metadataVersion: 3,
+        sharedMetadataCiphertext: patch.target.sharedMetadata.ciphertext,
+        ownerMetadataEnvelope: patch.target.ownerMetadata,
+        agentStateVersion: 5,
+        agentStateCiphertext: patch.target.agentState.ciphertext,
+        value: {
+          metadata: {
+            ...initial.value.metadata,
+            summary: { text: 'After', updatedAt: 2 },
+          },
+          sharedMetadata: projectSessionSharedMetadataV1({
+            metadata: {
+              ...initial.value.metadata,
+              summary: { text: 'After', updatedAt: 2 },
+            },
+            agentState: initial.value.agentState,
+          }),
+          ownerMetadata: createdOwner.ownerMetadata,
+          agentState: initial.value.agentState,
+        },
+      };
+      throw ambiguous;
+    });
+
+    const result = await updateSessionMetadataTupleWithRetry({
+      initialSnapshot: initial,
+      mutation: {
+        kind: 'metadata',
+        update: (metadata) => ({
+          ...metadata,
+          summary: { text: 'After', updatedAt: 2 },
+        }),
+      },
+      crypto,
+      commit,
+      ownerMigrationCurrentness: {
+        expectedAccountEncryptionMode: 'plain',
+        expectedAccountContentPublicKeyFingerprint: null,
+      },
+      refreshAfterConflict: async () => migrated ?? initial,
+      isAmbiguousCommitError: (error) => error === ambiguous,
+    });
+
+    expect(result).toBe(migrated);
+    expect(commit).toHaveBeenCalledOnce();
   });
 
   it('replays after an ambiguous rejection only when the exact source is unchanged', async () => {
@@ -777,7 +979,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
     const initial = ownerSnapshot({
       sharedMetadataCiphertext: 'shared-source',
-      ownerMetadataCiphertext: 'owner-source',
+      ownerMetadataEnvelope: {
+        t: 'encrypted',
+        c: 'owner-source',
+      },
       agentStateCiphertext: null,
     });
     const commit = vi.fn()
@@ -813,7 +1018,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
     });
     const initial = ownerSnapshot({
       sharedMetadataCiphertext: 'shared-source',
-      ownerMetadataCiphertext: 'owner-source',
+      ownerMetadataEnvelope: {
+        t: 'encrypted',
+        c: 'owner-source',
+      },
       agentStateCiphertext: null,
     });
     const commit = vi.fn(async () => {
@@ -834,7 +1042,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       refreshAfterConflict: async () => ownerSnapshot({
         metadataVersion: 3,
         sharedMetadataCiphertext: 'shared-different',
-        ownerMetadataCiphertext: 'owner-different',
+        ownerMetadataEnvelope: {
+          t: 'encrypted',
+          c: 'owner-different',
+        },
         agentStateVersion: 5,
         agentStateCiphertext: 'agent-different',
       }),
@@ -854,7 +1065,10 @@ describe('updateSessionMetadataTupleWithRetry', () => {
       result: 'conflict' as const,
       currentSnapshot: ownerSnapshot({
         metadataVersion: 3,
-        ownerMetadataCiphertext: 'owner-authoritative',
+        ownerMetadataEnvelope: {
+          t: 'encrypted',
+          c: 'owner-authoritative',
+        },
         agentStateVersion: 5,
       }),
     }));
