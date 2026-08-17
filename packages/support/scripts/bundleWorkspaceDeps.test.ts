@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  unlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -20,6 +21,23 @@ const repoRoot = resolve(here, '..', '..', '..', '..');
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+async function waitForCondition(predicate: () => boolean, label: string, timeoutMs = 1_000): Promise<void> {
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const timeout = setTimeout(() => {
+      rejectPromise(new Error(`timed out waiting for ${label}`));
+    }, timeoutMs);
+    const check = () => {
+      if (predicate()) {
+        clearTimeout(timeout);
+        resolvePromise();
+        return;
+      }
+      setTimeout(check, 5);
+    };
+    check();
+  });
 }
 
 describe('bundleWorkspaceDeps', () => {
@@ -95,7 +113,37 @@ describe('bundleWorkspaceDeps', () => {
         'utf8',
       );
 
-      await bundleWorkspaceDeps({ repoRoot: sandbox, supportDir: resolve(sandbox, 'packages', 'support') });
+      const lockPath = resolve(sandbox, '.project', 'tmp', 'cli-dist-build.lock');
+      let nowMs = Date.now();
+      writeJson(lockPath, {
+        pid: process.pid,
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      });
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+      const defaultLockAttempt = bundleWorkspaceDeps({
+        repoRoot: sandbox,
+        supportDir: resolve(sandbox, 'packages', 'support'),
+      });
+      try {
+        await waitForCondition(
+          () => existsSync(`${lockPath}.priority-claim`),
+          'support workspace-bundle lock contender',
+        );
+        nowMs += 4 * 60_000 + 1;
+        const outcome = await Promise.race([
+          defaultLockAttempt.then(
+            () => 'fulfilled',
+            () => 'rejected',
+          ),
+          new Promise<'pending'>((resolvePromise) => setTimeout(() => resolvePromise('pending'), 1_100)),
+        ]);
+        expect(outcome).toBe('pending');
+      } finally {
+        nowSpy.mockRestore();
+        if (existsSync(lockPath)) unlinkSync(lockPath);
+      }
+      await defaultLockAttempt;
 
       for (const workspaceName of ['agents', 'cli-common', 'protocol', 'release-runtime']) {
         const bundledDir = resolve(sandbox, 'packages', 'support', 'node_modules', '@happier-dev', workspaceName);
