@@ -2,6 +2,7 @@ import {
   ConnectedServiceIdSchema,
   ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
+  readConnectedServiceCredentialRevisionBoundaryV1,
   ConnectedServiceUsageSourceV1Schema,
   isConnectedServiceCredentialHealthStatusUsable,
   type ConnectedServiceAuthGroupRuntimeStatePatchRequestV1,
@@ -3189,10 +3190,11 @@ export class ConnectedServiceQuotasCoordinator {
         signal: input.signal,
       }).catch(() => null);
       const record = plain?.content?.t === 'plain' ? plain.content.v : null;
-      if (record) {
+      if (plain && record) {
+        const revision = readConnectedServiceCredentialRevisionBoundaryV1(plain);
         return {
           storageMode: 'plain',
-          credentialRevision: plain.revisionSemantics === 'revisioned' ? plain.credentialRevision : null,
+          credentialRevision: revision?.revisionSemantics === 'revisioned' ? revision.credentialRevision : null,
           record: assertConnectedServiceCredentialRecordBinding({
             binding: input,
             record: ConnectedServiceCredentialRecordV1Schema.parse(record),
@@ -3216,9 +3218,10 @@ export class ConnectedServiceQuotasCoordinator {
       material: input.material,
       ciphertext: sealed.sealed.ciphertext,
     });
+    const revision = readConnectedServiceCredentialRevisionBoundaryV1(sealed);
     return {
       storageMode: 'e2ee',
-      credentialRevision: sealed.revisionSemantics === 'revisioned' ? sealed.credentialRevision : null,
+      credentialRevision: revision?.revisionSemantics === 'revisioned' ? revision.credentialRevision : null,
       record: opened?.value
         ? assertConnectedServiceCredentialRecordBinding({
             binding: input,
