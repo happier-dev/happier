@@ -125,6 +125,12 @@ export function createClaudeUnifiedDialogChoiceScreenProbe(params: Readonly<{
   };
 
   const cancelPendingIfResolved = async (): Promise<void> => {
+    if (
+      (params.isResumeStartupActive?.() ?? true)
+      && params.broker.hasPendingChoice('resume_choice')
+    ) {
+      return;
+    }
     await params.broker.noteDialogResolvedInTerminal('claude_dialog_resolved_in_terminal');
   };
 

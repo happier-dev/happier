@@ -232,6 +232,28 @@ describe('createClaudeUnifiedDialogChoiceScreenProbe', () => {
     await broker.dispose();
   });
 
+  it('does not cancel the startup-owned resume request from a transient no-dialog observation', async () => {
+    const { broker, client, port, probe } = createHarness({
+      captures: [RESUME_DIALOG],
+      resumeStartupActive: true,
+    });
+    const dialog = resolveClaudeUnifiedVisibleDialog(parseClaudeScreenState(RESUME_DIALOG));
+    expect(dialog?.dialogId).toBe('resume_choice');
+    void broker.requestDialogChoice({ dialog: dialog! }).catch(() => undefined);
+    await vi.waitFor(() => {
+      expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_dialog_choice_1']);
+    });
+
+    await expect(probe.evaluateScreenState(parseClaudeScreenState(IDLE))).resolves.toEqual({ kind: 'not_visible' });
+
+    expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual(['claude_dialog_choice_1']);
+    expect(client.getAgentStateSnapshot().completedRequests.claude_dialog_choice_1).toBeUndefined();
+    expect(port.sentLiteral).toEqual([]);
+    expect(port.sentKeys).toEqual([]);
+
+    await broker.dispose();
+  });
+
   it('surfaces a TUI-initiated effort dialog after grace and injects the selected answer', async () => {
     const { client, port, probe } = createHarness({
       captures: [EFFORT_DIALOG, EFFORT_DIALOG, EFFORT_DIALOG, IDLE],
