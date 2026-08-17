@@ -387,15 +387,22 @@ async function requestAuthReadBoundedResponse(response) {
 
 async function requestAuthCall(path, body, signal) {
   const transport = requestAuthReadTransportTuple();
-  const response = await fetch("http://127.0.0.1:" + transport.httpPort + path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER]: transport.capability,
-    },
-    body: JSON.stringify(body),
-    signal: requestAuthComposeSignal(signal),
-  });
+  let response;
+  try {
+    response = await fetch("http://127.0.0.1:" + transport.httpPort + path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER]: transport.capability,
+      },
+      body: JSON.stringify(body),
+      redirect: "error",
+      signal: requestAuthComposeSignal(signal),
+    });
+  } catch (error) {
+    if (signal && signal.aborted) throw error;
+    throw new ConnectedAccountRequestAuthTransportError("request_auth_unavailable", 503);
+  }
   const decoded = await requestAuthReadBoundedResponse(response);
   if (response.status === 401) {
     throw new ConnectedAccountRequestAuthTransportError("request_auth_unavailable", 503);

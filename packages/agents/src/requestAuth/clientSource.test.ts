@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { createServer, type RequestListener } from 'node:http';
 import { readFileSync as readFileSyncNative, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -29,6 +30,33 @@ const purpose = {
 } as const;
 
 const requestAuthResponseMaxBytes = 256 * 1024;
+
+async function startLoopbackServer(listener: RequestListener): Promise<Readonly<{
+  port: number;
+  close: () => Promise<void>;
+}>> {
+  const server = createServer(listener);
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+    throw new Error('loopback_server_address_unavailable');
+  }
+  return {
+    port: address.port,
+    close: async () => await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    }),
+  };
+}
 
 function createChunkedResponse(
   body: string,
@@ -387,6 +415,79 @@ describe('generated connected-account request-auth client source', () => {
     expect(fetchRequestAuth).toHaveBeenCalledOnce();
     expect(new URL(String(fetchRequestAuth.mock.calls[0]?.[0])).pathname)
       .toBe('/connected-accounts/request-auth/lookup');
+  });
+
+  it('rejects a broker redirect without reaching its destination and keeps exact loopback delivery available', async () => {
+    let destinationRequests = 0;
+    const destination = await startLoopbackServer((_request, response) => {
+      destinationRequests += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        ok: true,
+        value: {
+          accessToken: 'redirect-destination-token',
+          credentialContext: {
+            account: {
+              service: {
+                pluginId: 'happier.connected-account.test',
+                localId: 'subscription',
+              },
+              accountId: 'work',
+            },
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+          },
+        },
+      }));
+    });
+    let brokerRequests = 0;
+    const broker = await startLoopbackServer((_request, response) => {
+      brokerRequests += 1;
+      if (brokerRequests === 1) {
+        response.writeHead(302, {
+          location: `http://127.0.0.1:${destination.port}/redirect-destination`,
+        });
+        response.end();
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        ok: true,
+        value: {
+          accessToken: 'exact-loopback-token',
+          credentialContext: {
+            account: {
+              service: {
+                pluginId: 'happier.connected-account.test',
+                localId: 'subscription',
+              },
+              accountId: 'work',
+            },
+            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+          },
+        },
+      }));
+    });
+    try {
+      const { root } = await configureFiles();
+      await writeTestCapabilityFile(root, 'run-1', broker.port);
+      const client = await loadGeneratedClient();
+
+      const redirectFailure = await client.lookupConnectedAccountRequestAuth({ purpose })
+        .then(() => null, (error: unknown) => error);
+      expect(destinationRequests).toBe(0);
+      expect(redirectFailure).toMatchObject({
+        name: 'ConnectedAccountRequestAuthTransportError',
+        code: 'request_auth_unavailable',
+        status: 503,
+      });
+
+      await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
+        .resolves.toMatchObject({ accessToken: 'exact-loopback-token' });
+      expect(brokerRequests).toBe(2);
+      expect(destinationRequests).toBe(0);
+    } finally {
+      await Promise.all([broker.close(), destination.close()]);
+    }
   });
 
   it.each([
