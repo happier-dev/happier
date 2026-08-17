@@ -265,6 +265,33 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.requestSessionStop).not.toHaveBeenCalled();
     });
 
+    // A stop request that never dispatched is a FAILED STOP, not an
+    // unsupported capability. All four `requestSessionStop` refusal codes are
+    // raised while resolving the Session id, before any signal, so the source
+    // is provably untouched — the exact state this result union's own doc
+    // comment reserves `source_stop_failed` for. Reporting
+    // `unsupported_operation` instead rendered "Switching Agents isn't
+    // supported for this Session", a permanent-sounding capability claim, for
+    // what is a transient stop-dispatch failure.
+    it.each([
+      ['session_not_found'],
+      ['session_id_ambiguous'],
+      ['session_lookup_timeout'],
+      ['unsupported'],
+    ] as const)(
+      'reports an undispatched stop (%s) as source_stop_failed, not as unsupported',
+      async (code) => {
+        primeHappyPath();
+        mocks.requestSessionStop.mockResolvedValue({ ok: false, code });
+
+        const result = await runSessionAgentTransition({ credentials, request: request() });
+
+        expect(result).toEqual({ type: 'rejected', code: 'source_stop_failed', sourceEffect: 'none' });
+        expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
+        expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+      },
+    );
+
     it('rejects a direct-transcript Session as unsupported', async () => {
       primeHappyPath(sourceMetadata({ directSessionV1: { v: 1 } }));
 

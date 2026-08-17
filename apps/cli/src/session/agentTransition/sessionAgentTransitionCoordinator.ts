@@ -450,7 +450,14 @@ export async function runSessionAgentTransition(params: Readonly<{
     credentials: params.credentials,
     idOrPrefix: request.sessionId,
   });
-  if (!stop.ok) return effects.rejected('unsupported_operation');
+  // Resolution failed BEFORE any stop attempt (`session_not_found`,
+  // `session_id_ambiguous`, `session_lookup_timeout`, `unsupported`), so the
+  // source is provably still running — the one stop outcome whose
+  // `sourceEffect: 'none'` promise is truthful, and the state this union's own
+  // doc comment reserves `source_stop_failed` for. Reporting
+  // `unsupported_operation` here told the user "Switching Agents isn't
+  // supported for this Session" for what is a failed stop request.
+  if (!stop.ok) return effects.rejected('source_stop_failed');
   // Section 7.2 step 6: only the fully confirmed stopped outcome permits
   // proceeding, and every unconfirmed one surfaces as `outcome_unknown` — the
   // source may already be gone, so `rejected`'s `sourceEffect: 'none'`, which
