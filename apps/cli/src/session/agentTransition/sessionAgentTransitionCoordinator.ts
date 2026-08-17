@@ -3,6 +3,7 @@ import {
   beginSessionAgentTransitionEffects,
   buildSessionAgentTransitionDividerLocalId,
   readPendingLocalId,
+  readDisplayableSessionWorkStateV1,
   readSessionAgentTransitionDividerV1,
   rejectUndispatchedSessionAgentTransition,
   sanitizeSessionUserMessageSendMeta,
@@ -225,6 +226,25 @@ type DividerEvidence =
   | Readonly<{ status: 'absent' }>
   | Readonly<{ status: 'unknown' }>;
 
+/**
+ * The stored-record shape a row MUST have before this daemon will call it the
+ * transition's own divider.
+ *
+ * `readSessionAgentTransitionDividerV1` reads the agent-event PAYLOAD; on its
+ * own it says nothing about the record carrying that payload. The divider is
+ * always written as a `role:'agent'` / `content.type:'event'` record, so a
+ * user-role (or non-event) row planted at the reserved localId with a matching
+ * sidecar must never be read as ours.
+ */
+function readTransitionDividerFromStoredRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as { role?: unknown; content?: unknown };
+  if (record.role !== 'agent') return null;
+  const content = record.content as { type?: unknown; data?: unknown } | undefined;
+  if (!content || content.type !== 'event') return null;
+  return readSessionAgentTransitionDividerV1(content.data);
+}
+
 async function readDividerEvidence(params: Readonly<{
   token: string;
   sessionId: string;
@@ -252,9 +272,7 @@ async function readDividerEvidence(params: Readonly<{
   } catch {
     return { status: 'unknown' };
   }
-  const divider = readSessionAgentTransitionDividerV1(
-    (record as { content?: { data?: unknown } } | null)?.content?.data,
-  );
+  const divider = readTransitionDividerFromStoredRecord(record);
   if (!divider) return { status: 'unknown' };
   return {
     status: 'present',
@@ -413,16 +431,17 @@ export async function runSessionAgentTransition(params: Readonly<{
   const sourceAgentId = currentAgentId;
   const targetAgentId: AgentId = resolvedTarget.targetAgentId;
 
-  const idleTimeoutMs = params.deps?.idleTimeoutMs ?? resolveSessionControlStopTimeoutMs();
-  const idle = await waitForSessionIdle({
-    credentials: params.credentials,
-    idOrPrefix: request.sessionId,
-    timeoutMs: idleTimeoutMs,
-  });
-  if (!idle.ok) return effects.rejected('source_not_idle');
-
   // Sanitize the exact submitted input through the canonical owner before any
   // effect, so a rejected mention/attachment fails with the source untouched.
+  //
+  // This runs BEFORE the strict-idle proof, not between it and the stop. The
+  // resolver stats, reads and hashes every referenced local image, so on a large
+  // attachment set it is the longest step in the whole preflight — and this tree
+  // installs no admission fence, which makes the idle observation the only thing
+  // standing between a running source and the stop. Taking the proof after the
+  // preparation keeps the observation and the act it authorizes adjacent; the
+  // preparation consumes nothing the probe produces, so nothing is lost by
+  // hoisting it.
   const trustedLocalImagePaths = await resolveTrustedSessionAttachmentLocalImagePaths({
     cwd: workspacePath,
     metadata: request.input.meta,
@@ -431,6 +450,14 @@ export async function runSessionAgentTransition(params: Readonly<{
     allowedLocalImagePaths: trustedLocalImagePaths,
     text: request.input.text,
   });
+
+  const idleTimeoutMs = params.deps?.idleTimeoutMs ?? resolveSessionControlStopTimeoutMs();
+  const idle = await waitForSessionIdle({
+    credentials: params.credentials,
+    idOrPrefix: request.sessionId,
+    timeoutMs: idleTimeoutMs,
+  });
+  if (!idle.ok) return effects.rejected('source_not_idle');
 
   /* ---------------------------------------------------------------- 7.2 */
 
@@ -494,6 +521,29 @@ export async function runSessionAgentTransition(params: Readonly<{
   if (!stoppedSession) return stopped.sourceStopped('context_unavailable');
   if (stoppedSession.active === true) return stopped.sourceStopped('cutover_conflict');
 
+  // The target view is projected from THIS row's plaintext, not from the
+  // preflight metadata decrypted before the stop. The CAS versions committed
+  // below come from this same read, so pairing them with older bytes would seal
+  // a stale current view under a version number asserting it is current — a
+  // metadata write accepted during the stop window would be silently reverted
+  // with the CAS satisfied. Bytes and the version they are checked against are
+  // one observation.
+  const stoppedMetadata = asRecord(tryDecryptSessionMetadata({
+    credentials: params.credentials,
+    rawSession: stoppedSession,
+  }));
+  // Same depth as the failed read above: bounded source read failure, nothing
+  // written, source still the source Agent.
+  if (!stoppedMetadata) return stopped.sourceStopped('context_unavailable');
+  // Reading the current bytes is what makes the version meaningful, so the
+  // current-Agent check has to move with it: adopting this row's version means
+  // the CAS can no longer refuse a transition that committed its own cutover
+  // during the stop window (section 7.3 — a concurrent second transition loses
+  // the current-target or metadata-version check).
+  if (resolveAgentIdFromSessionMetadata(stoppedMetadata) !== sourceAgentId) {
+    return stopped.sourceStopped('cutover_conflict');
+  }
+
   // Bounded context through the existing Replay owner. The transcript head is
   // read AFTER the confirmed stop, so a late source row remains canonical
   // history even when it missed this brief.
@@ -504,14 +554,26 @@ export async function runSessionAgentTransition(params: Readonly<{
     credentials: params.credentials,
     cwd: workspacePath,
     source: {
-      kind: 'fork_chain',
-      previousSessionId: request.sessionId,
+      // The Session is the same one; only the Agent running it changed. Asking
+      // through `fork_chain` passed this Session as its own `previousSessionId`,
+      // and the seed then told the target Agent it was continuing from a
+      // previous Happy session — printing this Session's id as its predecessor.
+      // Retrieval is identical; only the framing the seed can honestly make
+      // differs.
+      kind: 'same_session_agent_change',
+      sessionId: request.sessionId,
       upToSeqInclusive: transcriptHeadSeq,
     },
     strategy: 'recent_messages',
     recentMessagesCount: configuration.replaySeedCandidateLimit,
     maxSeedChars: configuration.replaySeedMaxChars,
     candidateLimit: configuration.replaySeedCandidateLimit,
+    // Section 8's other half. The cutover projection clears `sessionWorkStateV1` — the target
+    // republishes its own — and the items are a structured projection rather than transcript
+    // prose, so this is the last reader that can carry the in-flight plan across. Read through the
+    // canonical display-safe reader: a malformed projection is no snapshot, not a raw object
+    // forwarded into another Agent's prompt.
+    workState: readDisplayableSessionWorkStateV1(stoppedMetadata.sessionWorkStateV1),
   }).catch((error: unknown): ReplaySeedDraftResolution => {
     if (isAuthenticationError(error)) throw error;
     return { status: 'unavailable' };
@@ -527,7 +589,7 @@ export async function runSessionAgentTransition(params: Readonly<{
 
   const nowMs = now();
   const targetMetadata = projectCurrentAgentSessionView({
-    metadata,
+    metadata: stoppedMetadata,
     target: {
       agentId: targetAgentId,
       ...(request.selection.modelId ? { modelId: request.selection.modelId } : {}),
@@ -538,6 +600,11 @@ export async function runSessionAgentTransition(params: Readonly<{
       updatedAtMs: nowMs,
     },
   });
+  // This projection is authoritative over the seed slot, not additive. An
+  // unconsumed `replaySeedV1` left by an earlier operation is addressed to a
+  // runtime that no longer exists, and leaving it in place lets the incoming
+  // Agent's first turn be prefixed with an unrelated operation's replay context.
+  // Either this operation's brief occupies the slot or nothing does.
   if (seed.status === 'seeded') {
     targetMetadata.replaySeedV1 = {
       v: 1,
@@ -546,6 +613,8 @@ export async function runSessionAgentTransition(params: Readonly<{
       sourceCutoffSeqInclusive: seed.sourceCutoffSeqInclusive,
       createdAtMs: nowMs,
     };
+  } else {
+    delete targetMetadata.replaySeedV1;
   }
 
   const dividerLocalId = buildSessionAgentTransitionDividerLocalId(localId);

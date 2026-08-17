@@ -330,6 +330,30 @@ describe('runSessionAgentTransition', () => {
       expect(mocks.callOrder).toEqual(['stop', 'cutover', 'admit', 'resume']);
     });
 
+    // This tree installs no admission fence, so the strict-idle observation is
+    // the ONLY thing standing between a running source and the stop. Attachment
+    // preparation resolves every referenced local image path, stats it, reads
+    // the whole file and hashes it, so running it between the proof and the
+    // stop makes "idle" a claim about an arbitrarily older instant than the one
+    // it is acted on. It consumes nothing the idle probe produces, so it belongs
+    // ABOVE the proof — where a rejected mention/attachment still fails with the
+    // source untouched.
+    it('prepares attachments before taking the strict-idle proof, so the proof stays adjacent to the stop', async () => {
+      primeHappyPath();
+      mocks.waitForSessionIdle.mockImplementation(async () => {
+        mocks.callOrder.push('idle');
+        return { ok: true, sessionId: SESSION_ID, idle: true, observedAt: 1 };
+      });
+      mocks.resolveTrustedSessionAttachmentLocalImagePaths.mockImplementation(async () => {
+        mocks.callOrder.push('attachments');
+        return new Set<string>();
+      });
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(mocks.callOrder).toEqual(['attachments', 'idle', 'stop', 'cutover', 'admit', 'resume']);
+    });
+
     it('treats an omitted stopOutcome from an older producer as unknown, not untouched', async () => {
       primeHappyPath();
       mocks.requestSessionStop.mockResolvedValue({ ok: true, sessionId: SESSION_ID, stopped: false });
@@ -422,6 +446,100 @@ describe('runSessionAgentTransition', () => {
       const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
       expect(written.replaySeedV1).toBeUndefined();
       expect(written.flavor).toBe('codex');
+    });
+
+    it('does not leave an unconsumed seed from an earlier operation in the target view', async () => {
+      // A seed the source Agent never consumed is addressed to a runtime that no
+      // longer exists. Leaving it in place lets the incoming Agent's first turn
+      // be prefixed with an unrelated operation's replay context.
+      primeHappyPath(sourceMetadata({
+        replaySeedV1: {
+          v: 1,
+          seedText: 'stale brief from an earlier operation',
+          sourceSessionId: 'some-other-session',
+          sourceCutoffSeqInclusive: 3,
+          createdAtMs: 1,
+        },
+      }));
+      mocks.resolveReplaySeedDraft.mockResolvedValue({ status: 'no_source_dialog' });
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+      const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+      expect(written.replaySeedV1).toBeUndefined();
+    });
+
+    it('replaces an unconsumed earlier seed with this operation\u2019s own brief', async () => {
+      primeHappyPath(sourceMetadata({
+        replaySeedV1: {
+          v: 1,
+          seedText: 'stale brief from an earlier operation',
+          sourceSessionId: 'some-other-session',
+          sourceCutoffSeqInclusive: 3,
+          createdAtMs: 1,
+        },
+      }));
+
+      await runSessionAgentTransition({ credentials, request: request() });
+
+      const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+      const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+      expect(written.replaySeedV1).toMatchObject({ seedText: 'bounded brief', sourceCutoffSeqInclusive: 100 });
+    });
+
+    /**
+     * Section 8 disposes of `sessionWorkStateV1` in two clauses — capture the snapshot into the
+     * brief, THEN clear the current field. The cutover projection owns the clear; this coordinator
+     * is the only reader of the source view left before the projection drops it, so the capture can
+     * happen nowhere else.
+     */
+    describe('departing work state', () => {
+      const WORK_STATE = {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 10,
+        items: [{
+          id: 'i1',
+          kind: 'task',
+          origin: 'vendor',
+          status: 'active',
+          title: 'Port the parser to the new decoder',
+          updatedAt: 10,
+        }],
+      };
+
+      const readWorkStateArgument = (): unknown =>
+        (mocks.resolveReplaySeedDraft.mock.calls[0]?.[0] as { workState?: unknown }).workState;
+
+      it('hands the departing Agent\u2019s tracked work to the brief owner', async () => {
+        // Without this the cutover deletes the in-flight plan and the target continues the same
+        // Session unaware of it: the items are a structured projection, so no amount of replayed
+        // prose brings them back.
+        primeHappyPath(sourceMetadata({ sessionWorkStateV1: WORK_STATE }));
+
+        const result = await runSessionAgentTransition({ credentials, request: request() });
+
+        expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+        expect(readWorkStateArgument()).toMatchObject({
+          items: [{ status: 'active', title: 'Port the parser to the new decoder' }],
+        });
+        // ...and the field itself does not survive into the committed target view.
+        const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+        const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+        expect(written.sessionWorkStateV1).toBeUndefined();
+      });
+
+      it('reads the snapshot through the canonical display-safe reader rather than copying the raw field', async () => {
+        // A malformed or placeholder projection is no snapshot, and forwarding it raw would put
+        // whatever the departing runtime last wrote into another Agent's prompt.
+        primeHappyPath(sourceMetadata({ sessionWorkStateV1: { v: 1 } }));
+
+        await runSessionAgentTransition({ credentials, request: request() });
+
+        expect(readWorkStateArgument()).toBeNull();
+      });
     });
 
     it('reports a bounded-context failure as source_stopped/context_unavailable', async () => {
@@ -568,12 +686,80 @@ describe('runSessionAgentTransition', () => {
         sourceSessionId: SESSION_ID,
         sourceCutoffSeqInclusive: 100,
       });
+      // This Session is not its own predecessor. Asking through `fork_chain`
+      // made the seed tell the target Agent it was continuing from a previous
+      // Happy session and print this Session's own id as that predecessor.
+      const seedRequest = mocks.resolveReplaySeedDraft.mock.calls[0]?.[0] as {
+        source: { kind: string; sessionId?: string; previousSessionId?: string };
+      };
+      expect(seedRequest.source).toMatchObject({ kind: 'same_session_agent_change', sessionId: SESSION_ID });
+      expect(seedRequest.source.previousSessionId).toBeUndefined();
       expect(cutover.currentView).toMatchObject({
         kind: 'legacy_v0',
         expectedMetadataVersion: 7,
         expectedAgentStateVersion: 3,
         agentStateCiphertext: null,
       });
+    });
+
+    // A metadata write accepted while the source was stopping is a silent LOST
+    // UPDATE when the sealed bytes come from the pre-stop read and the CAS
+    // version comes from the post-stop one: the version says "this is current"
+    // about content that is not. Bytes and the version they are checked against
+    // must be one observation.
+    it('seals the metadata observed after the stop, not the pre-stop bytes it pairs the post-stop version with', async () => {
+      primeHappyPath();
+      const postStop = rawSession(
+        sourceMetadata({ permissionMode: 'bypassPermissions' }),
+        { metadataVersion: 8, agentStateVersion: 4 },
+      );
+      mocks.fetchSessionByIdCompat.mockReset();
+      mocks.fetchSessionByIdCompat
+        // Pre-stop currentness recheck: still the version preflight observed.
+        .mockResolvedValueOnce(rawSession(sourceMetadata()))
+        // Post-stop seal basis, and the post-cutover activation refetch.
+        .mockResolvedValue(postStop);
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+      const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+      expect(written.permissionMode).toBe('bypassPermissions');
+      expect(cutover.currentView).toMatchObject({
+        expectedMetadataVersion: 8,
+        expectedAgentStateVersion: 4,
+      });
+      // The same stale read also decided the Session-global safety intent the
+      // exact submitted input is admitted under.
+      const enqueue = mocks.enqueuePendingQueueV2MessageViaHttp.mock.calls[0]?.[0];
+      expect((enqueue.body.content.v as { meta: Record<string, unknown> }).meta.permissionMode).toBe('yolo');
+    });
+
+    // With bytes and version taken from one post-stop observation, the CAS can
+    // no longer catch a transition that committed during the stop window — it
+    // would adopt that operation's version and overwrite its committed target.
+    // Section 7.3: a concurrent second transition loses the current-target or
+    // metadata-version check.
+    it('refuses to overwrite a transition that committed its own cutover during the stop window', async () => {
+      primeHappyPath();
+      mocks.fetchSessionByIdCompat.mockReset();
+      mocks.fetchSessionByIdCompat
+        .mockResolvedValueOnce(rawSession(sourceMetadata()))
+        .mockResolvedValue(rawSession(
+          sourceMetadata({ flavor: 'gemini', claudeSessionId: undefined, claudeTranscriptPath: undefined }),
+          { metadataVersion: 8 },
+        ));
+
+      const result = await runSessionAgentTransition({ credentials, request: request() });
+
+      expect(result).toEqual({
+        type: 'partially_applied',
+        localId: LOCAL_ID,
+        applied: 'source_stopped',
+        code: 'cutover_conflict',
+      });
+      expect(mocks.commitSessionAgentTransitionCutover).not.toHaveBeenCalled();
     });
 
     it('derives the divider identity from the submitted localId and carries the transition sidecar', async () => {
@@ -636,7 +822,10 @@ describe('runSessionAgentTransition', () => {
       );
     }
 
-    function dividerLookup(payload: Record<string, unknown> | null) {
+    function dividerLookup(
+      payload: Record<string, unknown> | null,
+      storedRecord: Readonly<{ role?: string; contentType?: string }> = {},
+    ) {
       return payload === null
         ? { type: 'not_found' as const }
         : {
@@ -651,8 +840,12 @@ describe('runSessionAgentTransition', () => {
               content: {
                 t: 'plain',
                 v: {
-                  role: 'agent',
-                  content: { type: 'event', id: `agent-transition:${LOCAL_ID}`, data: payload },
+                  role: storedRecord.role ?? 'agent',
+                  content: {
+                    type: storedRecord.contentType ?? 'event',
+                    id: `agent-transition:${LOCAL_ID}`,
+                    data: payload,
+                  },
                 },
               },
             },
@@ -749,6 +942,33 @@ describe('runSessionAgentTransition', () => {
         code: 'divider_conflict',
       });
       expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+    });
+
+    it('refuses a reserved-localId row whose stored payload is not an agent event', async () => {
+      // The server's cutover owner will not call a stored row this transition's
+      // divider unless it is a `role:'agent'` / `content.type:'event'` record.
+      // This reader answers the same question over a row it decrypts itself, so
+      // it applies the same two checks: a planted user-role (or non-event) row
+      // carrying a matching sidecar must never be read as our own divider.
+      for (const forged of [
+        { role: 'user', contentType: 'event' },
+        { role: 'agent', contentType: 'output' },
+      ] as const) {
+        primeAlreadyTargeted();
+        mocks.findTranscriptEncryptedMessageByLocalIdV2.mockResolvedValue(
+          dividerLookup(matchingDivider, forged),
+        );
+
+        const result = await runSessionAgentTransition({ credentials, request: request() });
+
+        expect(result).toEqual({
+          type: 'partially_applied',
+          localId: LOCAL_ID,
+          applied: 'current_view_committed',
+          code: 'divider_unknown',
+        });
+        expect(mocks.enqueuePendingQueueV2MessageViaHttp).not.toHaveBeenCalled();
+      }
     });
 
     it('reports the committed depth when the divider row cannot be read at all', async () => {

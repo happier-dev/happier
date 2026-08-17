@@ -1,5 +1,7 @@
+import { readDisplayableSessionWorkStateV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
+import { buildHappierReplayPromptFromDialog } from '../replay/happierReplayPrompt.js';
 import { AGENTS_CORE } from '../../manifest.js';
 import { AGENT_IDS } from '../../types.js';
 import {
@@ -234,6 +236,56 @@ describe('projectCurrentAgentSessionView — handoff carry policy', () => {
     expect(next.agentRuntimeDescriptorV1).toBeUndefined();
     expect(next.sessionWorkStateV1).toBeUndefined();
     expect(next.modelOverrideV1).toBeUndefined();
+  });
+
+  /**
+   * Section 8's work-state row has TWO clauses — "capture bounded display-safe snapshot into
+   * brief, THEN clear current field" — and asserting only the clear is how a half-implemented
+   * requirement stays green: the field disappears at the cutover, the in-flight plan goes with it,
+   * and no test can tell. The items live in a structured projection, not in the replayed prose, so
+   * the brief is the only thing that can carry them across.
+   *
+   * Both halves are asserted against the SAME metadata object, so neither the snapshot nor the
+   * clear can be satisfied by a different field.
+   */
+  it('captures the departing work state into the brief before clearing the current field', () => {
+    const metadata = {
+      ...HANDOFF_SOURCE,
+      sessionWorkStateV1: {
+        v: 1,
+        backendId: 'claude',
+        updatedAt: 10,
+        items: [{
+          id: 'i1',
+          kind: 'task',
+          origin: 'vendor',
+          status: 'active',
+          title: 'Port the parser to the new decoder',
+          updatedAt: 10,
+        }],
+      },
+    };
+
+    const workState = readDisplayableSessionWorkStateV1(metadata.sessionWorkStateV1);
+    expect(workState).not.toBeNull();
+
+    const brief = buildHappierReplayPromptFromDialog({
+      previousSessionId: 'sess_same',
+      continuity: 'same_session_agent_change',
+      strategy: 'recent_messages',
+      recentMessagesCount: 5,
+      dialog: [{ role: 'User', createdAt: 1, text: 'keep going' }],
+      workState,
+    });
+    expect(brief).toContain('[active] task: Port the parser to the new decoder');
+
+    const next = projectCurrentAgentSessionView({
+      metadata,
+      target: { agentId: 'codex', updatedAtMs: 42 },
+    });
+
+    expect(next.sessionWorkStateV1).toBeUndefined();
+    expect(JSON.stringify(next)).not.toContain('Port the parser to the new decoder');
   });
 
   it('leaves a fresh target with no flat resume key at all', () => {
