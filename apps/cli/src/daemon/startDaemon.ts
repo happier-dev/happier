@@ -724,39 +724,6 @@ function toConnectedServiceSwitchEffectiveBinding(
   };
 }
 
-async function canRepairMissingConnectedServiceMaterializationIdentityForSpawn(input: Readonly<{
-  agentId: CatalogAgentId;
-  sessionId: string;
-  bindings: ConnectedServiceBindingsV1;
-  vendorResumeId: string | null;
-}>): Promise<boolean> {
-  if (!input.vendorResumeId) return false;
-
-  const connectedBindings: ConnectedServiceSwitchEffectiveBinding[] = [];
-  for (const [serviceIdRaw, binding] of Object.entries(input.bindings.bindingsByServiceId)) {
-    const parsedServiceId = ConnectedServiceIdSchema.safeParse(serviceIdRaw);
-    if (!parsedServiceId.success) continue;
-    const effective = toConnectedServiceSwitchEffectiveBinding(parsedServiceId.data, binding);
-    if (effective) connectedBindings.push(effective);
-  }
-  if (connectedBindings.length === 0) return false;
-
-  for (const binding of connectedBindings) {
-    const continuity = await resolveConnectedServiceSwitchContinuity(input.agentId, {
-      sessionId: input.sessionId,
-      agentId: input.agentId,
-      serviceId: binding.serviceId,
-      previousBinding: binding,
-      nextBinding: binding,
-      fromBindings: input.bindings,
-      toBindings: input.bindings,
-      ...(input.vendorResumeId ? { vendorResumeId: input.vendorResumeId } : {}),
-    });
-    if (continuity.mode !== 'restart_same_home') return false;
-  }
-  return true;
-}
-
 function resolveConnectedServiceRestartProcessGroupPid(tracked: TrackedSession): number | null {
   return tracked.startedBy === 'daemon' && tracked.childProcess && Number.isInteger(tracked.pid) && tracked.pid > 0
     ? tracked.pid
@@ -3376,6 +3343,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   undefined;
 
                 if (shouldResolveConnectedServiceAuthForSpawn(normalizedOptions)) {
+                  let repairedMissingMaterializationIdentity: Readonly<{
+                    bindings: ConnectedServiceBindingsV1;
+                    identity: ConnectedServiceMaterializationIdentityV1;
+                  }> | null = null;
                   let connectedServiceMaterializationIdentityV1 =
                     readConnectedServiceMaterializationIdentityV1(
                       normalizedOptions.connectedServiceMaterializationIdentityV1,
@@ -3385,13 +3356,9 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       const normalizedConnectedServiceBindings = readConnectedServiceBindingsOrEmpty(
                         normalizedOptions.connectedServices,
                       );
-                      const canRepairMissingIdentity =
-                        await canRepairMissingConnectedServiceMaterializationIdentityForSpawn({
-                          agentId: catalogAgentId,
-                          sessionId: normalizedExistingSessionId,
-                          bindings: normalizedConnectedServiceBindings,
-                          vendorResumeId: effectiveResume || null,
-                        });
+                      const canRepairMissingIdentity = Boolean(effectiveResume) && Object.values(
+                        normalizedConnectedServiceBindings.bindingsByServiceId,
+                      ).some((binding) => binding.source === 'connected');
                       if (!canRepairMissingIdentity) {
                         return buildMaterializationIdentityMissingSpawnErrorResult({
                           agentId: catalogAgentId,
@@ -3399,24 +3366,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                         });
                       }
                       connectedServiceMaterializationIdentityV1 = createConnectedServiceMaterializationIdentity();
-                      try {
-                        await persistSessionConnectedServiceBindings({
-                          credentials,
-                          sessionId: normalizedExistingSessionId,
-                          normalizedBindings: normalizedConnectedServiceBindings,
-                          connectedServiceMaterializationIdentityV1,
-                        });
-                      } catch (error) {
-                        logger.warn('[DAEMON RUN] Failed to repair missing connected-service materialization identity before existing-session spawn', error);
-                        return buildMaterializationIdentityMissingSpawnErrorResult({
-                          agentId: catalogAgentId,
-                          reason: 'identity_repair_persist_failed',
-                        });
-                      }
-                      logger.warn('[DAEMON RUN] Repaired missing connected-service materialization identity before existing-session spawn', {
-                        sessionId: normalizedExistingSessionId,
-                        agentId: catalogAgentId,
-                      });
+                      repairedMissingMaterializationIdentity = {
+                        bindings: normalizedConnectedServiceBindings,
+                        identity: connectedServiceMaterializationIdentityV1,
+                      };
                     } else {
                       connectedServiceMaterializationIdentityV1 = createConnectedServiceMaterializationIdentity();
                     }
@@ -3510,6 +3463,31 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                         existingSessionPersistedMetadata,
                       ),
                     });
+                    if (repairedMissingMaterializationIdentity && normalizedExistingSessionId) {
+                      try {
+                        await persistSessionConnectedServiceBindings({
+                          credentials,
+                          sessionId: normalizedExistingSessionId,
+                          normalizedBindings: repairedMissingMaterializationIdentity.bindings,
+                          connectedServiceMaterializationIdentityV1:
+                            repairedMissingMaterializationIdentity.identity,
+                        });
+                      } catch (error) {
+                        const cleanup = connectedServiceAuth?.cleanupOnFailure
+                          ?? connectedServiceAuth?.cleanupMaterializationRoot
+                          ?? null;
+                        cleanup?.();
+                        logger.warn('[DAEMON RUN] Failed to persist repaired connected-service materialization identity after exact existing-session materialization', error);
+                        return buildMaterializationIdentityMissingSpawnErrorResult({
+                          agentId: catalogAgentId,
+                          reason: 'identity_repair_persist_failed',
+                        });
+                      }
+                      logger.warn('[DAEMON RUN] Repaired missing connected-service materialization identity after exact existing-session materialization', {
+                        sessionId: normalizedExistingSessionId,
+                        agentId: catalogAgentId,
+                      });
+                    }
                   } catch (error) {
                     // K1 §2: the post-materialization re-verify proved the resumed session is
                     // unreachable in the REAL materialized target. Fail closed BEFORE the vendor

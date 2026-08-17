@@ -4639,6 +4639,10 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    vi.mocked(resolveConnectedServiceSwitchContinuity).mockResolvedValueOnce({
+      mode: 'unsupported',
+      reason: 'provider_session_state_unavailable_for_resume',
+    });
 
     const storedSession = createSessionRecordFixture({
       id: 'sess_claude_repair',
@@ -4692,11 +4696,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         token: 'token-from-spawn-options',
       });
 
-      expect(resolveConnectedServiceSwitchContinuity).toHaveBeenCalledWith('claude', expect.objectContaining({
-        sessionId: 'sess_claude_repair',
-        serviceId: 'anthropic',
-        vendorResumeId: 'vendor-claude-repair',
-      }));
+      expect(resolveConnectedServiceSwitchContinuity).not.toHaveBeenCalled();
       expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'sess_claude_repair',
       }));
