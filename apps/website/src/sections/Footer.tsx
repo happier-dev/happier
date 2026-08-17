@@ -1,3 +1,4 @@
+import { AnalyticsNotice } from '../components/AnalyticsNotice';
 import { HappierMark } from '../components/HappierMark';
 import { useLocalePath } from '../i18n';
 import { rich } from '../i18n/rich';
@@ -86,7 +87,20 @@ export function Footer({ isHome = true }: { isHome?: boolean } = {}) {
                     className="mt-14 flex flex-col items-start justify-between gap-4 border-t pt-8 text-[13px] sm:flex-row sm:items-center"
                     style={{ borderColor: 'var(--card-border)', color: 'var(--muted)' }}
                 >
-                    <span>{rich(PAGE_PROSE.footer.p1, undefined, { BUILD_YEAR })}</span>
+                    <span className="flex flex-col items-start gap-2">
+                        {rich(PAGE_PROSE.footer.p1, undefined, { BUILD_YEAR })}
+                        {/*
+                            The analytics disclosure and its switch. See the
+                            docblock in AnalyticsNotice: it is deliberately a
+                            footer line rather than a banner, because a modal
+                            asking consent for something we do not do — no
+                            cookie, no identifier — is worse than a true
+                            sentence and a working control. It was written for
+                            this spot and had never been mounted anywhere, so
+                            the site was collecting with no reachable opt-out.
+                        */}
+                        <AnalyticsNotice />
+                    </span>
                     {/*
                         The switcher lives in the bottom bar rather than as a
                         fifth column: it is one control with ten settings, not
