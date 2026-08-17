@@ -1,9 +1,6 @@
 import {
-  AGENTS_CORE,
   AGENT_IDS,
-  resolveAgentIdFromFlavor,
-  resolveAgentIdFromSessionMetadata,
-  type AgentId,
+  resolveSessionMetadataAgentIdentity,
 } from '@happier-dev/agents';
 import {
   AgentRuntimeDescriptorV1Schema,
@@ -37,6 +34,20 @@ function comparableDirectoryIdentity(value: string): string {
     : normalized;
 }
 
+/**
+ * Resolves the exact Agent this inactive Session must be resumed as.
+ *
+ * Identity precedence is owned by `resolveSessionMetadataAgentIdentity`: a
+ * declared runtime identity wins, then `flavor`, then exactly one flat vendor
+ * resume key. Deriving it here from a union of every piece of evidence would be
+ * a second decision-maker, and the union's unanimity rule made any Session that
+ * had ever carried two flat resume keys permanently unresumable — Session
+ * metadata holds at most one non-empty flat key, so a second key is legacy
+ * residue, not a competing identity.
+ *
+ * Ambiguity still fails closed: several flat keys with no higher authority
+ * resolve to no Agent rather than to the first Agent in catalog order.
+ */
 function resolveExactPersistedRuntimeIdentity(
   metadata: Record<string, unknown>,
 ): Readonly<{
@@ -47,32 +58,23 @@ function resolveExactPersistedRuntimeIdentity(
   const configuredBackend = readAcpConfiguredBackendV1FromMetadata(metadata);
   if (hasConfiguredBackendMetadata && !configuredBackend) return null;
 
-  const resolvedAgentId = resolveAgentIdFromSessionMetadata(metadata);
-  const identityCandidates = new Set<AgentId>();
-  if (resolvedAgentId) identityCandidates.add(resolvedAgentId);
-  const flavorAgentId = resolveAgentIdFromFlavor(metadata.flavor);
-  if (flavorAgentId) identityCandidates.add(flavorAgentId);
-
   let agentRuntimeDescriptorV1: SpawnSessionOptions['agentRuntimeDescriptorV1'] | undefined;
   if (metadata.agentRuntimeDescriptorV1 !== undefined) {
     const parsed = AgentRuntimeDescriptorV1Schema.safeParse(metadata.agentRuntimeDescriptorV1);
     if (!parsed.success || !(AGENT_IDS as readonly string[]).includes(parsed.data.providerId)) return null;
     agentRuntimeDescriptorV1 = parsed.data;
-    identityCandidates.add(parsed.data.providerId as AgentId);
   }
 
-  for (const candidateAgentId of AGENT_IDS) {
-    const resumeField = 'vendorResumeIdField' in AGENTS_CORE[candidateAgentId].resume
-      ? AGENTS_CORE[candidateAgentId].resume.vendorResumeIdField ?? null
-      : null;
-    if (resumeField && readNonEmptyString(metadata[resumeField])) {
-      identityCandidates.add(candidateAgentId);
-    }
-  }
+  const identity = resolveSessionMetadataAgentIdentity(metadata);
 
   if (configuredBackend) {
-    identityCandidates.add('customAcp');
-    if (identityCandidates.size !== 1) return null;
+    // A configured ACP backend must carry no built-in Agent evidence; any is a
+    // contradiction between the persisted target and the identity. Generic ACP
+    // identity is not built-in evidence: a configured backend persists
+    // `flavor: 'acp:<backendId>'`, which reads back as `customAcp`.
+    if (identity.agentId !== null && identity.agentId !== 'customAcp') return null;
+    if (identity.vendorResumeKeyAgentIds.some((agentId) => agentId !== 'customAcp')) return null;
+    if (agentRuntimeDescriptorV1 && agentRuntimeDescriptorV1.providerId !== 'customAcp') return null;
     return {
       backendTarget: {
         kind: 'configuredAcpBackend',
@@ -81,10 +83,10 @@ function resolveExactPersistedRuntimeIdentity(
     };
   }
 
-  if (!resolvedAgentId) return null;
-  if (identityCandidates.size !== 1) return null;
+  if (!identity.agentId) return null;
+  if (agentRuntimeDescriptorV1 && agentRuntimeDescriptorV1.providerId !== identity.agentId) return null;
   return {
-    backendTarget: { kind: 'builtInAgent', agentId: resolvedAgentId },
+    backendTarget: { kind: 'builtInAgent', agentId: identity.agentId },
     ...(agentRuntimeDescriptorV1 ? { agentRuntimeDescriptorV1 } : {}),
   };
 }
