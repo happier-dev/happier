@@ -26,10 +26,16 @@ import {
  *
  * The two steps are DELIBERATELY not one transaction. The divider must be
  * written by `createSessionMessage`, because a raw in-transaction transcript
- * write would bypass its localId reconciliation, publisher fencing, access
- * checks, participant cursors, badge accounting and publication. This tree has
- * no transaction-local transcript-message writer at all, so there is nothing to
- * compose with even if those behaviors were expendable — which they are not.
+ * write would bypass its localId reconciliation, access checks, participant
+ * cursors, badge accounting and publication. This tree has no transaction-local
+ * transcript-message writer at all, so there is nothing to compose with even if
+ * those behaviors were expendable — which they are not.
+ *
+ * Publisher fencing is deliberately NOT in that list, and naming it here was
+ * wrong: the fence compares against a CURRENT session publisher, and the source
+ * publisher is gone by the time the cutover runs. Owner-only reachability plus
+ * the reserved-localId prefix every generic client ingress refuses is what
+ * protects this write instead.
  *
  * The accepted consequence is one narrow crash window: current view committed,
  * divider absent. That is reported honestly as
@@ -42,8 +48,8 @@ import {
  * unique violation and reconciles either way. This write has no trusted provenance
  * and cannot acquire any — that path is gated on
  * `trustedTranscriptObservationProvenance`, not on actor-is-owner plus role
- * `event`, and it fences on a current publisher that no longer exists after the
- * planned stop.
+ * `event`, and its fence is against a current publisher that no longer exists
+ * after the planned stop.
  * The owner overwrites a same-localId row whose content differs, so this service
  * refuses that case itself: divider content is a pure function of the committed
  * target view, so differing content at the reserved localId means a conflicting

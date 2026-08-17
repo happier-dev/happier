@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createEnvPatcher } from "@/testkit/env";
+import { buildSessionAgentTransitionDividerLocalId } from "@happier-dev/protocol";
 
 let currentTx: any;
 
@@ -187,6 +188,49 @@ describe("pendingMessageService", () => {
                 }),
             }),
         );
+    });
+
+    it("refuses the reserved Agent-transition divider namespace at the Pending admission owner", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "e2ee", pendingCount: 0, pendingVersion: 0 });
+        currentTx.sessionPendingMessage.findUnique.mockResolvedValue(null);
+        currentTx.sessionPendingMessage.findFirst.mockResolvedValue(null);
+        currentTx.sessionPendingMessage.create.mockResolvedValue({
+            localId: "l1",
+            content: { t: "encrypted", c: "cipher" },
+            messageRole: "user",
+            status: "queued",
+            position: 1,
+            createdAt,
+            updatedAt: createdAt,
+            discardedAt: null,
+            discardedReason: null,
+            authorAccountId: "u1",
+        });
+
+        // A Pending row materializes into a transcript row under its own
+        // localId, so a row planted at the deterministic divider id would
+        // permanently conflict every future Agent transition for this Session.
+        // The refusal belongs to the admission owner every adapter reaches, not
+        // to any one route.
+        await expect(enqueuePendingMessageCompat({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: buildSessionAgentTransitionDividerLocalId("submitted-1"),
+            requestedAction: enqueueRequestedAction,
+            ciphertext: "cipher",
+        })).resolves.toEqual({ ok: false, error: "invalid-params" });
+        expect(currentTx.sessionPendingMessage.create).not.toHaveBeenCalled();
+        expect(resolveSessionPendingEditAccess).not.toHaveBeenCalled();
+
+        await expect(enqueuePendingMessageCompat({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: "l1",
+            requestedAction: enqueueRequestedAction,
+            ciphertext: "cipher",
+        })).resolves.toMatchObject({ ok: true });
+        expect(currentTx.sessionPendingMessage.create).toHaveBeenCalledTimes(1);
     });
 
     it("stores supplied encrypted pending message role metadata", async () => {

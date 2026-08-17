@@ -15,6 +15,7 @@ import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
     isPendingDeliveryProviderEffectPossibleV1,
     isPendingDeliveryStatusTransitionAllowedV1,
+    isSessionAgentTransitionDividerLocalId,
     PENDING_DELIVERY_HIDDEN_DISCARDED_REASONS_V1,
     normalizePendingDeliveryBlockedReason,
     normalizePendingDeliveryStatusV1,
@@ -311,6 +312,18 @@ export async function enqueuePendingMessage(params: {
     }
     if (content.t === "encrypted" && (!content.c || typeof content.c !== "string")) return { ok: false, error: "invalid-params" };
     if (content.t === "plain" && !("v" in content)) return { ok: false, error: "invalid-params" };
+    // A Pending row materializes into a transcript row under its own localId,
+    // so every Pending ingress is a generic client-facing message ingress. The
+    // reserved Agent-transition divider namespace is refused HERE, at the
+    // admission owner every Pending adapter funnels through, so no present or
+    // future adapter can pre-plant a row at the deterministic divider id and
+    // permanently conflict every later cutover for that Session. The route's
+    // own early refusal answers identically and cannot disagree: same protocol
+    // predicate, same `invalid-params`, and this check likewise precedes the
+    // access resolution.
+    if (isSessionAgentTransitionDividerLocalId(localId)) {
+        return { ok: false, error: "invalid-params" };
+    }
 
     const access = await resolveSessionPendingEditAccess(actorUserId, sessionId);
     if (!access.ok) return { ok: false, error: access.error };
