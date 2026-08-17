@@ -1,0 +1,55 @@
+{
+  "name": "@happier-dev/plugins-channels",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./happier-plugin-ui/*": "./dist/happier-plugin-ui/*"
+  },
+  "files": [
+    "dist",
+    ".happier-plugin/plugin.json",
+    "package.json"
+  ],
+  "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",
+    "build:ui": "happier-plugin-build-ui",
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run --config vitest.config.ts --testTimeout 15000",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/channels-protocol": "0.0.0",
+    "@happier-dev/plugin-sdk": "0.0.0",
+    "@happier-dev/plugin-ui": "0.0.0"
+  },
+  "devDependencies": {
+    "@callstack/repack": "5.2.5",
+    "@happier-dev/plugins-channel-discord": "0.0.0",
+    "@happier-dev/plugins-channel-telegram": "0.0.0",
+    "@happier-dev/plugins-scm-github": "0.0.0",
+    "@react-native-community/cli": "20.1.2",
+    "@react-native/metro-config": "0.83.5",
+    "@rspack/core": "2.1.3",
+    "@swc/helpers": "0.5.23",
+    "@types/react": "19.2.0",
+    "react": "19.2.0",
+    "react-native": "0.83.5",
+    "react-native-web": "^0.21.0",
+    "typescript": "^5.9.2",
+    "vite": "7.3.1",
+    "vitest": "^3.2.4"
+  }
+}

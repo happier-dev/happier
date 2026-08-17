@@ -314,6 +314,7 @@ describe('protocol composable schema kernel', () => {
     expectTypeOf(values.parse({})).toEqualTypeOf<Readonly<Record<string, 'ready'>>>();
     expect(values.parse({ first: 'ready' })).toEqual({ first: 'ready' });
     expect(values.safeParse({ first: 'other' }).success).toBe(false);
+    expect(values.safeParse(['ready']).success).toBe(false);
   });
 
   it('keeps heterogeneous known fields constructible with typed preserved values', () => {

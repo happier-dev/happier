@@ -57,6 +57,7 @@ __pycache__/
 # Interrupted package copies, probes, and runner snapshots
 **/.tmp.*/
 /packages/*/.dist.build.*/
+/packages/plugins/*/.dist.build.*/
 **/.restore.*/
 **/.backup.*/
 **/.runner-snapshots/

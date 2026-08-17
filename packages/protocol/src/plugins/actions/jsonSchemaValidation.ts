@@ -398,7 +398,7 @@ const maxProtocolValidationPathSegments = 16;
 const maxProtocolValidationPathSegmentLength = 128;
 
 function isProtocolRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function boundedProtocolValidationPath(path: unknown): readonly (string | number)[] {

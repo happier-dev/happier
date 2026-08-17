@@ -1,0 +1,337 @@
+import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
+import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { describe, expect, it, vi } from 'vitest';
+
+import { activate } from './activate.js';
+import { TELEGRAM_BOT_CREDENTIAL_PURPOSE, TELEGRAM_CHANNEL_ACTION_IDS } from './constants.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
+
+const telegramAccount = Object.freeze({
+  service: Object.freeze({ pluginId: 'happier.channel.telegram', localId: 'telegram-bot' }),
+  accountId: 'bot:123',
+});
+const telegramSetupInput = Object.freeze({ credentialRef: telegramAccount });
+
+const TELEGRAM_CHANNEL_PROVIDER_OPERATIONS = Object.freeze({
+  setup: TELEGRAM_CHANNEL_ACTION_IDS.setup,
+  setupRemediation: TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
+  connectionTest: TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,
+  endpointResolve: TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve,
+  observationsPoll: TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll,
+  messageDeliver: TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver,
+});
+
+function response(value: unknown): Readonly<{
+  status: number;
+  finalUrl: string;
+  headers: Readonly<Record<string, string>>;
+  body: Uint8Array;
+}> {
+  return {
+    status: 200,
+    finalUrl: 'https://api.telegram.org/',
+    headers: { 'content-type': 'application/json' },
+    body: new TextEncoder().encode(JSON.stringify(value)),
+  };
+}
+
+function coreContext(services: Pick<PluginInvocationContext['services'], 'connectedAccounts' | 'http'>): PluginInvocationContext {
+  return {
+    plugin: { id: 'happier.channel.telegram', version: '0.0.0' },
+    contribution: {
+      id: TELEGRAM_CHANNEL_ACTION_IDS.setup,
+      qualifiedId: `happier.channel.telegram/actions/${TELEGRAM_CHANNEL_ACTION_IDS.setup}`,
+    },
+    surface: 'plugin',
+    caller: {
+      kind: 'plugin',
+      pluginId: 'happier.channels',
+      contribution: {
+        id: 'connection-setup-v1',
+        qualifiedId: 'happier.channels/actions/connection-setup-v1',
+      },
+    },
+    signal: new AbortController().signal,
+    // This fixture only supplies the two genuine system boundaries consumed by
+    // the provider Action; its host-stamped caller and cancellation are real.
+    services: services as PluginInvocationContext['services'],
+  };
+}
+
+describe('Telegram Channel plugin activation', () => {
+  it('serializes one checkpointed-pull provider contribution through arbitrary local Actions', async () => {
+    assertConversationProviderContributionV1(PLUGIN_MANIFEST);
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions).toEqual([{
+        id: 'telegram-provider',
+        target: { pluginId: 'happier.channels', pointId: 'providers' },
+        protocol: { id: 'happier.channels/providers', version: 1 },
+        operations: TELEGRAM_CHANNEL_PROVIDER_OPERATIONS,
+      }]);
+      expect(testkit.registrations()).toEqual([
+        ...Object.values(TELEGRAM_CHANNEL_ACTION_IDS).map((localId) => ({ family: 'actions' as const, localId })),
+        { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
+      ]);
+
+      expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
+        .not.toHaveProperty('connectionStop');
+      expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
+        .not.toHaveProperty('deliveryReconcile');
+      expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.[0]?.operations)
+        .not.toHaveProperty('principalResolve');
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+  it('declares remote Telegram delivery and setup remediation as writesRemote', () => {
+    const action = (id: string) => PLUGIN_MANIFEST.contributes.actions.find((candidate) => candidate.id === id);
+
+    for (const id of [
+      TELEGRAM_CHANNEL_ACTION_IDS.setup,
+      TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,
+      TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve,
+      TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll,
+    ]) {
+      expect(action(id)?.dangerLevel).toBe('safe');
+    }
+    expect(action(TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver)?.dangerLevel).toBe('writesRemote');
+    expect(action(TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation)).toMatchObject({
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: 'Remove Telegram webhook?',
+        confirmLabel: 'Remove webhook',
+      },
+    });
+  });
+
+  it('registers only its supported polling-provider roles and Connected Account runtime through the manifest', async () => {
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      expect(testkit.registrations()).toEqual([
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.setup },
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation },
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.connectionTest },
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve },
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll },
+        { family: 'actions', localId: TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver },
+        { family: 'connectedAccountDescriptors', localId: 'telegram-bot' },
+      ]);
+
+      const setup = PLUGIN_MANIFEST.contributes.actions.find(
+        ({ id }) => id === TELEGRAM_CHANNEL_ACTION_IDS.setup,
+      );
+      expect(setup?.resultSchema).toEqual(
+        ConversationProvidersContributionProtocolV1.operations.setup.declaration.resultSchema.jsonSchema,
+      );
+      expect(setup?.inputSchema).toEqual({
+        type: 'object',
+        properties: {
+          credentialRef: QualifiedConnectedAccountRefJsonSchema,
+        },
+        required: ['credentialRef'],
+        additionalProperties: false,
+      });
+      expect(setup).toMatchObject({
+        surfaces: ['plugin'],
+        hostAccess: ['telegram-bot-api', TELEGRAM_BOT_CREDENTIAL_PURPOSE],
+        inputHints: {
+          fields: [
+            {
+              path: 'credentialRef',
+              widget: 'select',
+              connectedAccountOptions: true,
+              required: true,
+            },
+          ],
+        },
+      });
+      expect(setup?.inputHints?.fields).not.toContainEqual(expect.objectContaining({ widget: 'secret' }));
+      expect(PLUGIN_MANIFEST.hostAccess.required.filter(({ capability }) => capability === 'connectedAccounts'))
+        .toEqual([expect.objectContaining({
+          id: TELEGRAM_BOT_CREDENTIAL_PURPOSE,
+          scope: {
+            serviceRefs: ['telegram-bot'],
+            operations: ['select', 'use'],
+            materializationKinds: ['environment'],
+          },
+        })]);
+      expect(PLUGIN_MANIFEST.contributes.actions.map(({ id }) => id)).toEqual([
+        TELEGRAM_CHANNEL_ACTION_IDS.setup,
+        TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
+        TELEGRAM_CHANNEL_ACTION_IDS.connectionTest,
+        TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve,
+        TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll,
+        TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver,
+      ]);
+      const setupRemediation = PLUGIN_MANIFEST.contributes.actions.find(
+        ({ id }) => id === TELEGRAM_CHANNEL_ACTION_IDS.setupRemediation,
+      );
+      expect(setupRemediation).toMatchObject({
+        inputSchema: {
+          type: 'object',
+          properties: {
+            credentialRef: QualifiedConnectedAccountRefJsonSchema,
+          },
+          required: ['credentialRef'],
+          additionalProperties: false,
+        },
+        resultSchema: ConversationProvidersContributionProtocolV1.operations.setupRemediation
+          .declaration.resultSchema.jsonSchema,
+        surfaces: ConversationProvidersContributionProtocolV1.operations.setupRemediation.declaration.surfaces,
+        dangerLevel: ConversationProvidersContributionProtocolV1.operations.setupRemediation.declaration.dangerLevel,
+      });
+      for (const [id, role] of [
+        [TELEGRAM_CHANNEL_ACTION_IDS.connectionTest, ConversationProvidersContributionProtocolV1.operations.connectionTest],
+        [TELEGRAM_CHANNEL_ACTION_IDS.endpointResolve, ConversationProvidersContributionProtocolV1.operations.endpointResolve],
+        [TELEGRAM_CHANNEL_ACTION_IDS.observationsPoll, ConversationProvidersContributionProtocolV1.operations.observationsPoll],
+        [TELEGRAM_CHANNEL_ACTION_IDS.messageDeliver, ConversationProvidersContributionProtocolV1.operations.messageDeliver],
+      ] as const) {
+        const action = PLUGIN_MANIFEST.contributes.actions.find((candidate) => candidate.id === id);
+        expect(action?.inputSchema).toEqual(role.declaration.input.schema.jsonSchema);
+        expect(action?.resultSchema).toEqual(role.declaration.resultSchema.jsonSchema);
+        expect(action?.surfaces).toEqual(role.declaration.surfaces);
+        expect(action?.dangerLevel).toBe(role.declaration.dangerLevel);
+      }
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+  it('requires a host-stamped Channels caller before a provider Action can use credentials', async () => {
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      await expect(testkit.invokeAction(
+        TELEGRAM_CHANNEL_ACTION_IDS.setup,
+        telegramSetupInput,
+        { surface: 'plugin' },
+      )).rejects.toMatchObject({ code: 'telegram_channels_core_caller_required' });
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+  it('rejects a setup credential reference outside the Telegram Connected Account service', async () => {
+    const connectedAccounts = {
+      materialize: vi.fn(),
+    };
+    const http = { request: vi.fn() };
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const setup = testkit.registration('actions', TELEGRAM_CHANNEL_ACTION_IDS.setup);
+      if (!setup) throw new Error('Expected the Telegram setup Action registration');
+
+      await expect(setup({
+        credentialRef: {
+          ...telegramAccount,
+          service: { ...telegramAccount.service, pluginId: 'happier.channel.other' },
+        },
+      }, coreContext({ connectedAccounts, http }))).rejects.toMatchObject({
+        code: 'telegram_setup_credential_invalid',
+      });
+      expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+      expect(http.request).not.toHaveBeenCalled();
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+  it('uses the declared selected bot account for setup and returns only setup facts', async () => {
+    const connectedAccounts = {
+      materialize: vi.fn(async () => ({
+        kind: 'environment' as const,
+        env: { TELEGRAM_BOT_TOKEN: '123:bot-token' },
+      })),
+    };
+    const http = {
+      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        input.url.endsWith('/getWebhookInfo')
+          ? { ok: true, result: { url: '', pending_update_count: 0 } }
+          : {
+              ok: true,
+              result: {
+                id: 123,
+                is_bot: true,
+                first_name: 'Happier Bot',
+                username: 'HappierBot',
+                can_read_all_group_messages: false,
+              },
+            },
+      )),
+    };
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const setup = testkit.registration('actions', TELEGRAM_CHANNEL_ACTION_IDS.setup);
+      if (!setup) throw new Error('Expected the Telegram setup Action registration');
+
+      await expect(setup(telegramSetupInput, coreContext({ connectedAccounts, http }))).resolves.toEqual({
+        v: 1,
+        credentialRef: telegramAccount,
+        providerConnectionKey: 'telegram-bot:123',
+        providerConfigVersion: 1,
+        providerConfig: {
+          botUsername: 'HappierBot',
+          canReadAllGroupMessages: false,
+        },
+        integrationPrincipal: { id: '123', label: 'Happier Bot' },
+        supportedTransports: ['checkpointedPull'],
+        recommendedTransport: 'checkpointedPull',
+        overlapSafety: 'providerExclusive',
+        replayContinuity: 'checkpointed',
+        outboundTextLimit: { maximum: 4096, unit: 'unicodeCodePoints' },
+        pairingDeepLinkTemplate: 'https://t.me/HappierBot?start={{token}}',
+      });
+      expect(connectedAccounts.materialize).toHaveBeenCalledWith(
+        TELEGRAM_BOT_CREDENTIAL_PURPOSE,
+        { kind: 'environment', keys: ['TELEGRAM_BOT_TOKEN'] },
+        expect.objectContaining({ expectedAccount: telegramAccount }),
+      );
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+  it('rejects an active Telegram webhook during polling setup without deleting it', async () => {
+    const connectedAccounts = {
+      materialize: vi.fn(async () => ({
+        kind: 'environment' as const,
+        env: { TELEGRAM_BOT_TOKEN: '123:bot-token' },
+      })),
+    };
+    const http = {
+      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        input.url.endsWith('/getWebhookInfo')
+          ? { ok: true, result: { url: 'https://other.example/telegram', pending_update_count: 2 } }
+          : {
+              ok: true,
+              result: {
+                id: 123,
+                is_bot: true,
+                first_name: 'Happier Bot',
+                username: 'HappierBot',
+              },
+            },
+      )),
+    };
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const setup = testkit.registration('actions', TELEGRAM_CHANNEL_ACTION_IDS.setup);
+      if (!setup) throw new Error('Expected the Telegram setup Action registration');
+
+      await expect(setup(telegramSetupInput, coreContext({ connectedAccounts, http }))).resolves.toEqual({
+        kind: 'requiresRemediation',
+      });
+      expect(http.request).toHaveBeenCalledTimes(2);
+      expect(http.request.mock.calls.map(([input]) => input.url)).not.toContain(
+        expect.stringContaining('/deleteWebhook'),
+      );
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
+});

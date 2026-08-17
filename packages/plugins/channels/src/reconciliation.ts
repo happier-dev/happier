@@ -1,0 +1,424 @@
+import {
+  PluginError,
+  type JsonValue,
+  type PluginInvocationCaller,
+  type PluginInvocationContext,
+} from '@happier-dev/plugin-sdk';
+import type {
+  ConversationEndpointAudienceV1,
+  ConversationProviderConnectionReadInputV1,
+  ConversationProviderConnectionReadResultV1,
+  ConversationProviderConnectionReconciliationSnapshotV1,
+  ConversationProviderConnectionsListInputV1,
+  ConversationProviderConnectionsSnapshotV1,
+  ConversationTransportKindV1,
+} from '@happier-dev/channels-protocol/v1';
+import {
+  MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
+  MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+} from '@happier-dev/channels-protocol/v1';
+
+import type { ConversationBindingInputModeV1 } from '@happier-dev/channels-protocol/v1';
+import {
+  CHANNEL_STATE_COLLECTION,
+  CHANNEL_STATE_FIELD,
+  CHANNEL_STATE_INDEX_ID,
+  CHANNEL_STATE_RECORD_KIND,
+} from './collections.js';
+import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import { hasUnsettledDestructiveOldTransportStop } from './connectionLifecycle.js';
+
+/*
+ * Keep the two Account-backed projections on one observed Account revision.
+ * A bounded retry fails closed under continuous mutation instead of publishing
+ * a connection/binding combination that never existed.
+ */
+const MAX_RECONCILIATION_SNAPSHOT_ATTEMPTS = 3;
+
+type ReconciliationCollectionRead = Readonly<{
+  values: readonly JsonValue[];
+  changeCursor: number | null;
+}>;
+
+type PluginCaller = Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
+
+/** Account Collection queries accept at most 200 rows per protocol page. */
+const MAX_RECONCILIATION_COLLECTION_QUERY_PAGE_SIZE = 200;
+
+type WithoutConnectionIdentity<T> = T extends unknown
+  ? Omit<T, 'connectionId' | 'v'>
+  : never;
+
+type ChannelStateConnectionRecordV1 = Readonly<{
+  'record-kind': typeof CHANNEL_STATE_RECORD_KIND.connection;
+  'connection-id': string;
+  v: 1;
+  payload: WithoutConnectionIdentity<ConversationReconciliationConnectionStateV1>;
+}>;
+
+type ChannelStateBindingRecordV1 = Readonly<{
+  'record-kind': typeof CHANNEL_STATE_RECORD_KIND.binding;
+  'connection-id': string;
+  payload: Readonly<{
+    enabled: boolean;
+    endpoint: Readonly<{ audience: ConversationEndpointAudienceV1 }>;
+    inputMode: ConversationBindingInputModeV1;
+  }>;
+}>;
+
+/**
+ * The current persisted connection row facts needed for reconciliation. Its
+ * transport origin is input authority only: it is checked against the
+ * host-stamped caller and never copied into a provider-facing snapshot.
+ */
+type WithoutReconciliationDemand<T> = T extends unknown
+  ? Omit<T, 'requiresFullSharedMessageContent'>
+  : never;
+
+export type ConversationReconciliationConnectionStateV1 =
+  WithoutReconciliationDemand<ConversationProviderConnectionReconciliationSnapshotV1> & Readonly<{
+    providerPluginId: string;
+    overlapSafety: 'safe' | 'providerExclusive' | 'destructive';
+    transport: Readonly<{ kind: ConversationTransportKindV1 }>;
+    transportOrigin: Readonly<{
+      materializationRef: PluginCaller['materialization'];
+    }>;
+    historyGap: JsonValue | null;
+    pendingOldTransportStop: Readonly<{
+      overlapSafety: 'safe' | 'providerExclusive' | 'destructive';
+      acceptedPossibleLoss: boolean;
+      stopRequest: Readonly<{
+        reason: 'transfer' | 'delete';
+        authorityEpoch: number;
+      }>;
+    }> | null;
+  }>;
+
+/**
+ * Minimal current binding policy needed by the core to derive reconciliation
+ * demand. It is private input to this owner, not a provider-facing binding or
+ * audience projection and is never persisted as the derived result.
+ */
+export type ConversationReconciliationBindingPolicyStateV1 = Readonly<{
+  connectionId: string;
+  enabled: boolean;
+  endpointAudience: ConversationEndpointAudienceV1;
+  inputMode: ConversationBindingInputModeV1;
+}>;
+
+function hasExactMaterialization(
+  left: PluginCaller['materialization'],
+  right: PluginCaller['materialization'],
+): boolean {
+  return left.machineId === right.machineId
+    && left.materializationId === right.materializationId
+    && left.pluginId === right.pluginId;
+}
+
+function stampedCallerMaterialization(
+  caller: PluginInvocationCaller | undefined,
+): PluginCaller['materialization'] | undefined {
+  if (caller?.kind !== 'plugin') return undefined;
+  const materialization: unknown = caller.materialization;
+  if (materialization === null || typeof materialization !== 'object') return undefined;
+  const stamped = materialization as PluginCaller['materialization'];
+  return stamped.pluginId === caller.pluginId ? stamped : undefined;
+}
+
+/**
+ * The one caller-proven materialization predicate shared by reconciliation
+ * projections and provider transport facts. It deliberately checks only the
+ * provenance that a host-stamped plugin caller can carry; execution-origin
+ * equality for outbound Action dispatch remains the generic SDK owner.
+ */
+export function hasCurrentConversationTransportCaller(input: Readonly<{
+  caller: PluginInvocationCaller | undefined;
+  providerPluginId: string;
+  transportOrigin: ConversationReconciliationConnectionStateV1['transportOrigin'];
+}>): boolean {
+  const materialization = stampedCallerMaterialization(input.caller);
+  return input.caller?.kind === 'plugin'
+    && input.caller.pluginId === input.providerPluginId
+    && materialization !== undefined
+    && hasExactMaterialization(materialization, input.transportOrigin.materializationRef);
+}
+
+function requiresFullSharedMessageContent(
+  connectionId: string,
+  bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[],
+): boolean {
+  return bindingPolicies.some((binding) => (
+    binding.connectionId === connectionId
+    && binding.enabled
+    && binding.endpointAudience === 'shared'
+    && (binding.inputMode === 'addressedMessages' || binding.inputMode === 'allAllowedMessages')
+  ));
+}
+
+/**
+ * The sole list/read projection gate. The persisted current row and the
+ * immediate host-stamped caller must carry the exact same materialization;
+ * output deliberately retains neither transport nor provenance authority.
+ */
+function projectReconciliationSnapshotForCaller(
+  connection: ConversationReconciliationConnectionStateV1,
+  caller: PluginInvocationCaller | undefined,
+  bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[],
+): ConversationProviderConnectionReconciliationSnapshotV1 | undefined {
+  if (
+    connection.transport.kind !== 'socket'
+    // The lifecycle owner records an incompatible replacement's gap before the
+    // replacement becomes visible to ordinary reconciliation.
+    || connection.historyGap !== null
+    // A `none` deletion state with a pending old stop is the Collection
+    // lifecycle's transfer-only shape. Destructive replacements cannot start
+    // reconciliation until that exact custody is proven or explicitly accepted.
+    || hasUnsettledDestructiveOldTransportStop(connection)
+    || !hasCurrentConversationTransportCaller({
+      caller,
+      providerPluginId: connection.providerPluginId,
+      transportOrigin: connection.transportOrigin,
+    })
+  ) return undefined;
+
+  const derivedDemand = requiresFullSharedMessageContent(
+    connection.connectionId,
+    bindingPolicies,
+  );
+  if (connection.deletionState === 'none') return {
+    v: connection.v,
+    connectionId: connection.connectionId,
+    providerConnectionKey: connection.providerConnectionKey,
+    providerConfigVersion: connection.providerConfigVersion,
+    providerConfig: connection.providerConfig,
+    credentialRef: connection.credentialRef,
+    authorityEpoch: connection.authorityEpoch,
+    enabled: connection.enabled,
+    deletionState: 'none',
+    requiresFullSharedMessageContent: derivedDemand,
+  };
+  return {
+    v: connection.v,
+    connectionId: connection.connectionId,
+    providerConnectionKey: connection.providerConnectionKey,
+    providerConfigVersion: connection.providerConfigVersion,
+    providerConfig: connection.providerConfig,
+    credentialRef: connection.credentialRef,
+    authorityEpoch: connection.authorityEpoch,
+    enabled: false,
+    deletionState: connection.deletionState,
+    requiresFullSharedMessageContent: derivedDemand,
+  };
+}
+
+function reconciliationSnapshotMap(
+  snapshots: readonly ConversationProviderConnectionReconciliationSnapshotV1[],
+): ConversationProviderConnectionsSnapshotV1 {
+  if (snapshots.length > MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT) {
+    throw new Error('Channel reconciliation snapshot exceeds the connection limit.');
+  }
+  const result = Object.create(null) as Record<
+    string,
+    ConversationProviderConnectionReconciliationSnapshotV1
+  >;
+  for (const snapshot of snapshots) {
+    if (typeof snapshot.connectionId !== 'string' || Object.hasOwn(result, snapshot.connectionId)) {
+      throw new Error('Channel reconciliation snapshot must have one exact key per connection ID.');
+    }
+    Object.defineProperty(result, snapshot.connectionId, {
+      value: snapshot,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return result;
+}
+
+function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonValue>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Account Collections validate the full manifest schema before this core
+ * receives a row. These narrowings only select the two reconciliation families
+ * and deliberately do not introduce a second persisted-row parser.
+ */
+function connectionStateFromCollectionValue(
+  value: JsonValue,
+): ConversationReconciliationConnectionStateV1 | undefined {
+  if (
+    !isJsonRecord(value)
+    || value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection
+  ) return undefined;
+  const row = value as unknown as ChannelStateConnectionRecordV1;
+  if (row.payload.deletionState === 'none') return {
+    ...row.payload,
+    connectionId: row['connection-id'],
+    v: row.v,
+  };
+  return {
+    ...row.payload,
+    connectionId: row['connection-id'],
+    v: row.v,
+  };
+}
+
+function bindingPolicyFromCollectionValue(
+  value: JsonValue,
+): ConversationReconciliationBindingPolicyStateV1 | undefined {
+  if (
+    !isJsonRecord(value)
+    || value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding
+  ) return undefined;
+  const row = value as unknown as ChannelStateBindingRecordV1;
+  return {
+    connectionId: row['connection-id'],
+    enabled: row.payload.enabled,
+    endpointAudience: row.payload.endpoint.audience,
+    inputMode: row.payload.inputMode,
+  };
+}
+
+async function readCollectionValuesByKind(input: Readonly<{
+  context: PluginInvocationContext;
+  kind: typeof CHANNEL_STATE_RECORD_KIND.connection | typeof CHANNEL_STATE_RECORD_KIND.binding;
+  limit: number;
+}>): Promise<ReconciliationCollectionRead> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  const values: JsonValue[] = [];
+  let cursor: string | undefined;
+  let changeCursor: number | undefined;
+
+  do {
+    const remaining = input.limit - values.length;
+    if (remaining <= 0) {
+      throw new Error(`Channel reconciliation ${input.kind} rows exceed the account limit.`);
+    }
+    const page = await collection.query({
+      index: CHANNEL_STATE_INDEX_ID.byKind,
+      prefix: [input.kind],
+      order: 'asc',
+      limit: Math.min(remaining, MAX_RECONCILIATION_COLLECTION_QUERY_PAGE_SIZE),
+      ...(cursor === undefined ? {} : { cursor }),
+    }, { signal: input.context.signal });
+    if (changeCursor !== undefined && page.changeCursor !== changeCursor) {
+      return { values: [], changeCursor: null };
+    }
+    changeCursor = page.changeCursor;
+    values.push(...page.rows.map((row) => row.value));
+    if (values.length > input.limit) {
+      throw new Error(`Channel reconciliation ${input.kind} rows exceed the account limit.`);
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+
+  return { values, changeCursor: changeCursor ?? null };
+}
+
+async function readCurrentReconciliationState(
+  context: PluginInvocationContext,
+): Promise<Readonly<{
+  connections: readonly ConversationReconciliationConnectionStateV1[];
+  bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
+}>> {
+  for (let attempt = 0; attempt < MAX_RECONCILIATION_SNAPSHOT_ATTEMPTS; attempt += 1) {
+    const [connectionRead, bindingRead] = await Promise.all([
+      readCollectionValuesByKind({
+        context,
+        kind: CHANNEL_STATE_RECORD_KIND.connection,
+        limit: MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+      }),
+      readCollectionValuesByKind({
+        context,
+        kind: CHANNEL_STATE_RECORD_KIND.binding,
+        limit: MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
+      }),
+    ]);
+    if (connectionRead.changeCursor === null
+      || connectionRead.changeCursor !== bindingRead.changeCursor) {
+      continue;
+    }
+    return {
+      connections: connectionRead.values.flatMap((value) => {
+        const connection = connectionStateFromCollectionValue(value);
+        return connection === undefined ? [] : [connection];
+      }),
+      bindingPolicies: bindingRead.values.flatMap((value) => {
+        const binding = bindingPolicyFromCollectionValue(value);
+        return binding === undefined ? [] : [binding];
+      }),
+    };
+  }
+  throw new PluginError({
+    code: 'channels_reconciliation_snapshot_changed',
+    message: 'Channel reconciliation state changed during its authoritative read.',
+    retryable: true,
+  });
+}
+
+export function listConversationProviderConnectionsForCaller(input: Readonly<{
+  caller: PluginInvocationCaller | undefined;
+  connections: readonly ConversationReconciliationConnectionStateV1[];
+  bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
+}>): ConversationProviderConnectionsSnapshotV1 {
+  const snapshots: ConversationProviderConnectionReconciliationSnapshotV1[] = [];
+  for (const connection of input.connections) {
+    const snapshot = projectReconciliationSnapshotForCaller(
+      connection,
+      input.caller,
+      input.bindingPolicies,
+    );
+    if (snapshot !== undefined) snapshots.push(snapshot);
+  }
+  return reconciliationSnapshotMap(snapshots);
+}
+
+/**
+ * An empty result intentionally conflates missing and caller-ineligible rows so a
+ * provider cannot use this Action as a cross-materialization state oracle.
+ */
+export function readConversationProviderConnectionForCaller(input: Readonly<{
+  caller: PluginInvocationCaller | undefined;
+  connections: readonly ConversationReconciliationConnectionStateV1[];
+  bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[];
+  connectionId: string;
+}>): ConversationProviderConnectionReadResultV1 {
+  const connection = input.connections.find((candidate) => candidate.connectionId === input.connectionId);
+  if (connection === undefined) return reconciliationSnapshotMap([]);
+  const snapshot = projectReconciliationSnapshotForCaller(
+    connection,
+    input.caller,
+    input.bindingPolicies,
+  );
+  return snapshot === undefined ? reconciliationSnapshotMap([]) : reconciliationSnapshotMap([snapshot]);
+}
+
+/**
+ * C1's Action handler reads the canonical Account Collection on demand. The
+ * caller provenance is host-stamped context, never a mutable Action selector.
+ */
+export async function listConversationProviderConnectionsForInvocation(
+  _input: ConversationProviderConnectionsListInputV1,
+  context: PluginInvocationContext,
+): Promise<ConversationProviderConnectionsSnapshotV1> {
+  const { connections, bindingPolicies } = await readCurrentReconciliationState(context);
+  return listConversationProviderConnectionsForCaller({
+    caller: context.caller,
+    connections,
+    bindingPolicies,
+  });
+}
+
+export async function readConversationProviderConnectionForInvocation(
+  input: ConversationProviderConnectionReadInputV1,
+  context: PluginInvocationContext,
+): Promise<ConversationProviderConnectionReadResultV1> {
+  const { connections, bindingPolicies } = await readCurrentReconciliationState(context);
+  return readConversationProviderConnectionForCaller({
+    caller: context.caller,
+    connections,
+    bindingPolicies,
+    connectionId: input.connectionId,
+  });
+}
