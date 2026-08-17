@@ -619,4 +619,47 @@ describe('createOnChildExited', () => {
     expect(pidToTrackedSession.has(pid)).toBe(false);
     expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(pid);
   });
+
+  it('hands a final tracked exit to terminal-host recovery only after durable exit staging', async () => {
+    const pid = 790;
+    const tracked = {
+      pid,
+      startedBy: 'terminal',
+      happySessionId: 'session-disconnected-host',
+      activeTurnId: 'turn-disconnected-host',
+    };
+    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const removeSessionMarkerFn = vi.fn(async () => {});
+    const stageObservedExitFn = vi.fn(async () => ({ status: 'staged' as const, markerPid: pid }));
+    const onFinalTrackedSessionExitStaged = vi.fn(async () => {});
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid: new Map(),
+      sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => ({
+        enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => {}),
+      }) as any,
+      stageObservedExitFn,
+      removeSessionMarkerFn,
+      shouldPreserveSessionMarkerOnExit: () => true,
+      onFinalTrackedSessionExitStaged,
+    } as any);
+
+    const exit = { reason: 'process-missing', code: null, signal: null };
+    await onChildExited(pid, exit);
+
+    expect(stageObservedExitFn).toHaveBeenCalledOnce();
+    expect(onFinalTrackedSessionExitStaged).toHaveBeenCalledWith({
+      pid,
+      trackedSession: tracked,
+      exit,
+      observedAt: expect.any(Number),
+    });
+    expect(stageObservedExitFn.mock.invocationCallOrder[0]).toBeLessThan(
+      onFinalTrackedSessionExitStaged.mock.invocationCallOrder[0]!,
+    );
+    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(pid);
+    expect(pidToTrackedSession.has(pid)).toBe(false);
+  });
 });

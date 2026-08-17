@@ -57,6 +57,7 @@ import {
   resolveConnectedServiceSwitchContinuity,
   resolveAgentCliSubcommand,
   resolveCatalogAgentId,
+  hasTerminalAttachmentControlDescriptorThroughCatalog,
   notifyTerminalAttachmentRetiredThroughCatalog,
 } from '@/backends/catalog';
 import { CATALOG_AGENT_IDS } from '@/backends/types';
@@ -126,6 +127,7 @@ import { publishOrphanedStartupSessionEnds } from './sessions/publishOrphanedSta
 import {
   resolveDisconnectedTerminalHostResumeGate,
   superviseDisconnectedTerminalHostCandidate,
+  type DisconnectedTerminalHostCandidate,
   type DisconnectedTerminalHostSupervisionResult,
 } from './sessions/disconnectedTerminalHostSupervision';
 import {
@@ -207,6 +209,7 @@ import {
   clearSessionMarkerConnectedServiceRestartIntent,
   readSessionMarkerForPid,
   refreshSessionMarkerRespawn,
+  removeSessionMarker,
   writeSessionMarker,
 } from './sessionRegistry';
 import {
@@ -2620,18 +2623,39 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const unresolvedTerminalHostSessionIds = new Set(startupReattachResult.unresolvedTerminalHostSessionIds ?? []);
         const terminalizedDisconnectedTerminalHostIds = new Set<string>();
         const disconnectedTerminalHostResultsBySessionId = new Map<string, DisconnectedTerminalHostSupervisionResult>();
-        const retireDisconnectedTerminalHostCandidate = (input: Readonly<{
+        const registerDisconnectedTerminalHostCandidate = (candidate: DisconnectedTerminalHostCandidate): void => {
+          disconnectedTerminalHostResultsBySessionId.delete(candidate.sessionId);
+          terminalizedDisconnectedTerminalHostIds.delete(candidate.attachmentId);
+          for (let index = disconnectedTerminalHostCandidates.length - 1; index >= 0; index -= 1) {
+            if (disconnectedTerminalHostCandidates[index]?.sessionId === candidate.sessionId) {
+              disconnectedTerminalHostCandidates.splice(index, 1);
+            }
+          }
+          disconnectedTerminalHostCandidates.push(candidate);
+        };
+        const retireDisconnectedTerminalHostCandidate = async (input: Readonly<{
           sessionId: string;
           attachmentId?: string;
-        }>): void => {
+        }>): Promise<void> => {
           disconnectedTerminalHostResultsBySessionId.delete(input.sessionId);
+          const retiredMarkerPids: number[] = [];
           for (let index = disconnectedTerminalHostCandidates.length - 1; index >= 0; index -= 1) {
             const candidate = disconnectedTerminalHostCandidates[index];
             if (!candidate || candidate.sessionId !== input.sessionId) continue;
             if (input.attachmentId && candidate.attachmentId !== input.attachmentId) continue;
             terminalizedDisconnectedTerminalHostIds.add(candidate.attachmentId);
+            retiredMarkerPids.push(candidate.pid);
             disconnectedTerminalHostCandidates.splice(index, 1);
           }
+          await Promise.all(retiredMarkerPids.map(async (pid) => {
+            await removeSessionMarker(pid).catch((error) => {
+              logger.debug('[DAEMON RUN] Retired terminal host but failed to remove its disconnected marker', {
+                sessionId: input.sessionId,
+                pid,
+                error,
+              });
+            });
+          }));
         };
         let disconnectedTerminalHostSupervisionInFlight: Promise<void> | null = null;
         const publishedStartupOrphanedSessionIds = new Set<string>();
@@ -5356,8 +5380,59 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
             connectedServiceRestartAmplificationGuard.transferPid(fromPid, toPid);
           },
-          shouldPreserveSessionMarkerOnExit: ({ pid }) =>
-            connectedServicesRestartRequestedPids.has(pid),
+          shouldPreserveSessionMarkerOnExit: ({ pid, trackedSession }) => {
+            if (connectedServicesRestartRequestedPids.has(pid)) return true;
+            const terminal = trackedSession.happySessionMetadataFromLocalWebhook?.terminal
+              ?? trackedSession.hostedTerminal;
+            return Boolean(trackedSession.publishedTerminalControlServiceabilityAttachmentId)
+              || Boolean(terminal?.mode && terminal.mode !== 'plain');
+          },
+          onFinalTrackedSessionExitStaged: async ({ pid, trackedSession }) => {
+            if (connectedServicesRestartRequestedPids.has(pid)) return;
+            const sessionId = typeof trackedSession.happySessionId === 'string'
+              ? trackedSession.happySessionId.trim()
+              : '';
+            if (!sessionId) return;
+            const terminal = trackedSession.happySessionMetadataFromLocalWebhook?.terminal
+              ?? trackedSession.hostedTerminal;
+
+            const attachmentInfo = await readTerminalAttachmentInfo({
+              happyHomeDir: configuration.happyHomeDir,
+              sessionId,
+            }).catch((error) => {
+              logger.debug('[DAEMON RUN] Preserved runner-exit marker but could not read its terminal attachment', {
+                sessionId,
+                pid,
+                error,
+              });
+              throw error;
+            });
+            if (attachmentInfo?.version !== 2) {
+              if (
+                trackedSession.publishedTerminalControlServiceabilityAttachmentId
+                || (terminal?.mode && terminal.mode !== 'plain')
+              ) {
+                throw new Error('terminal_attachment_unavailable_after_runner_exit');
+              }
+              return;
+            }
+
+            const agentId = resolveTrackedSessionCatalogAgentId(trackedSession);
+            const controlDescriptorAvailable = await hasTerminalAttachmentControlDescriptorThroughCatalog(agentId, {
+              happyHomeDir: configuration.happyHomeDir,
+              sessionId,
+              attachmentId: attachmentInfo.attachmentId,
+            }).catch(() => false);
+            registerDisconnectedTerminalHostCandidate({
+              sessionId,
+              pid,
+              ...(trackedSession.activeTurnId ? { activeTurnId: trackedSession.activeTurnId } : {}),
+              happyHomeDir: configuration.happyHomeDir,
+              attachmentId: attachmentInfo.attachmentId,
+              handle: attachmentInfo.handle,
+              controlDescriptorAvailable,
+            });
+          },
             });
         const onChildExited = async (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => {
           const trackedBeforeExit = pidToTrackedSession.get(pid) ?? null;
@@ -5444,7 +5519,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             const physicallyRetiredAttachmentId = physicallyRetiredTerminalAttachmentIdBySessionId.get(normalizedSessionId);
             physicallyRetiredTerminalAttachmentIdBySessionId.delete(normalizedSessionId);
             if (isTerminalHostPhysicallyRetiredStopResult(trackedStopResult) && physicallyRetiredAttachmentId) {
-              retireDisconnectedTerminalHostCandidate({
+              await retireDisconnectedTerminalHostCandidate({
                 sessionId: normalizedSessionId,
                 attachmentId: physicallyRetiredAttachmentId,
               });
@@ -5504,7 +5579,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             });
             const disconnectedStopResult = await stopDisconnectedHost(normalizedSessionId);
             if (isTerminalHostPhysicallyRetiredStopResult(disconnectedStopResult)) {
-              retireDisconnectedTerminalHostCandidate({
+              await retireDisconnectedTerminalHostCandidate({
                 sessionId: normalizedSessionId,
                 attachmentId: disconnectedHostCandidate.attachmentId,
               });

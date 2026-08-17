@@ -54,6 +54,12 @@ export function createOnChildExited(params: Readonly<{
   isExitUnexpectedOverride?: (trackedSession: TrackedSession, exit: ChildExit) => boolean | null | undefined;
   onPidPromoted?: (input: Readonly<{ fromPid: number; toPid: number; trackedSession: TrackedSession }>) => void;
   shouldPreserveSessionMarkerOnExit?: (input: Readonly<{ pid: number; trackedSession: TrackedSession; exit: ChildExit }>) => boolean;
+  onFinalTrackedSessionExitStaged?: (input: Readonly<{
+    pid: number;
+    trackedSession: TrackedSession;
+    exit: ChildExit;
+    observedAt: number;
+  }>) => Promise<void> | void;
   removeSessionMarkerFn?: typeof removeSessionMarker;
   updateSessionMarkerActiveTurnFn?: typeof updateSessionMarkerActiveTurn;
   stageObservedExitFn?: typeof stageObservedExit;
@@ -67,6 +73,7 @@ export function createOnChildExited(params: Readonly<{
     isExitUnexpectedOverride,
     onPidPromoted,
     shouldPreserveSessionMarkerOnExit,
+    onFinalTrackedSessionExitStaged,
     removeSessionMarkerFn = removeSessionMarker,
     updateSessionMarkerActiveTurnFn = updateSessionMarkerActiveTurn,
     stageObservedExitFn = stageObservedExit,
@@ -161,6 +168,23 @@ export function createOnChildExited(params: Readonly<{
           error,
         });
         throw error;
+      }
+      if (shouldReportSessionEnd && onFinalTrackedSessionExitStaged) {
+        try {
+          await onFinalTrackedSessionExitStaged({
+            pid,
+            trackedSession: tracked,
+            exit,
+            observedAt,
+          });
+        } catch (error) {
+          logger.warn('[DAEMON RUN] Failed to retain terminal-host recovery after observed runner exit', {
+            sessionId: tracked.happySessionId,
+            pid,
+            error,
+          });
+          throw error;
+        }
       }
       if (shouldReportSessionEnd && isUnexpected && typeof tracked.happySessionId === 'string' && tracked.happySessionId.trim().length > 0) {
         try {

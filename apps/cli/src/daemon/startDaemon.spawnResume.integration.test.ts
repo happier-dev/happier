@@ -2902,7 +2902,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('does not preserve stopped session markers as cold-start execution authority', async () => {
+  it('preserves an exact terminal-host exit marker and routes later Stop through disconnected-host retirement', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -2918,23 +2918,70 @@ describe('startDaemon spawn resume wiring (integration)', () => {
           trackedSession: unknown;
           exit: { reason: string; code: number | null; signal: string | null };
         }>) => boolean),
+        onFinalTrackedSessionExitStaged: null as null | ((input: Readonly<{
+          pid: number;
+          trackedSession: any;
+          exit: { reason: string; code: number | null; signal: string | null };
+          observedAt: number;
+        }>) => Promise<void>),
       };
       vi.mocked(onChildExitedModule.createOnChildExited).mockImplementation((params: any) => {
         captured.shouldPreserveSessionMarkerOnExit = params.shouldPreserveSessionMarkerOnExit ?? null;
+        captured.onFinalTrackedSessionExitStaged = params.onFinalTrackedSessionExitStaged ?? null;
         return vi.fn();
       });
+
+      const attachmentId = 'attachment-terminal-owned' as NonNullable<
+        import('@/integrations/terminalHost/_types').TerminalHostHandle['attachmentId']
+      >;
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockResolvedValue({
+        version: 2,
+        attachmentId,
+        sessionId: 'sess-terminal-owned',
+        handle: {
+          attachmentId,
+          kind: 'zellij',
+          sessionName: 'terminal-owned',
+          paneId: 'terminal_1',
+          socketDir: '/tmp/terminal-owned',
+          attachMetadata: {
+            attachStrategy: 'terminal_host',
+            topology: 'shared',
+            locality: 'same_machine',
+            liveProbe: 'required',
+          },
+        },
+        terminal: {
+          mode: 'zellij',
+          zellij: {
+            sessionName: 'terminal-owned',
+            paneId: 'terminal_1',
+            socketDirV1: '/tmp/terminal-owned',
+          },
+        },
+        updatedAt: 1,
+      });
+      stopSessionMocks.stopSession
+        .mockResolvedValueOnce({ status: 'incomplete', reason: 'tracked_runner_absent' })
+        .mockResolvedValueOnce({ status: 'stopped' });
 
       const { startDaemon } = await import('./startDaemon');
       run = startDaemon();
 
       for (let attempt = 0; attempt < 20; attempt += 1) {
-        if (harness.getPrepareStopSession() && captured.shouldPreserveSessionMarkerOnExit) break;
+        if (
+          harness.getPrepareStopSession()
+          && captured.shouldPreserveSessionMarkerOnExit
+          && captured.onFinalTrackedSessionExitStaged
+        ) break;
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
 
       const prepareStopSession = harness.getPrepareStopSession();
+      const stopSession = harness.getStopSession();
       const shouldPreserveSessionMarkerOnExit = captured.shouldPreserveSessionMarkerOnExit;
-      if (!prepareStopSession || !shouldPreserveSessionMarkerOnExit) {
+      const onFinalTrackedSessionExitStaged = captured.onFinalTrackedSessionExitStaged;
+      if (!prepareStopSession || !stopSession || !shouldPreserveSessionMarkerOnExit || !onFinalTrackedSessionExitStaged) {
         throw new Error('Expected daemon stop preparation and child-exit handler to be registered');
       }
 
@@ -2954,6 +3001,18 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         startedBy: 'terminal',
         pid: 7512,
         happySessionId: 'sess-terminal-owned',
+        happySessionMetadataFromLocalWebhook: {
+          path: '/tmp/workspace-claude',
+          terminal: {
+            mode: 'zellij',
+            zellij: {
+              sessionName: 'terminal-owned',
+              paneId: 'terminal_1',
+              socketDirV1: '/tmp/terminal-owned',
+            },
+          },
+        },
+        publishedTerminalControlServiceabilityAttachmentId: attachmentId,
       } as const;
       const missingResume = {
         ...eligible,
@@ -2980,17 +3039,47 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         pid: terminalOwned.pid,
         trackedSession: terminalOwned as any,
         exit,
-      })).toBe(false);
+      })).toBe(true);
       expect(shouldPreserveSessionMarkerOnExit({
         pid: missingResume.pid,
         trackedSession: missingResume as any,
         exit,
       })).toBe(false);
+
+      await onFinalTrackedSessionExitStaged({
+        pid: terminalOwned.pid,
+        trackedSession: terminalOwned,
+        exit,
+        observedAt: 2,
+      });
+      await expect(stopSession(terminalOwned.happySessionId)).resolves.toEqual({ status: 'stopped' });
+
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockResolvedValueOnce(null);
+      await expect(onFinalTrackedSessionExitStaged({
+        pid: terminalOwned.pid + 1,
+        trackedSession: {
+          ...terminalOwned,
+          pid: terminalOwned.pid + 1,
+          happySessionId: 'sess-terminal-descriptor-missing',
+        },
+        exit,
+        observedAt: 3,
+      })).rejects.toThrow('terminal_attachment_unavailable_after_runner_exit');
+
+      expect(stopSessionMocks.stopSession).toHaveBeenCalledTimes(2);
+      expect(stopSessionMocks.createStopSession).toHaveBeenCalledTimes(2);
+      const reconstructedStopInput = stopSessionMocks.createStopSession.mock.calls[1]?.[0];
+      expect(Array.from(reconstructedStopInput?.pidToTrackedSession.keys() ?? [])).toEqual([terminalOwned.pid]);
+      expect(reconstructedStopInput?.expectedTerminalAttachmentId).toBe(attachmentId);
+      expect(reconstructedStopInput?.requireTerminalTopologyProof).toBe(true);
+      expect(sessionRegistryCapture.removeSessionMarker).toHaveBeenCalledWith(terminalOwned.pid);
     } finally {
       if (run) {
         harness.requestShutdown('happier-cli');
         await run;
       }
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockReset();
+      claudeEndpointRecoveryBoundaryMocks.readTerminalAttachmentInfo.mockResolvedValue(null);
       if (refreshEnvOriginal === undefined) {
         delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       } else {
@@ -4238,10 +4327,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledWith(expect.objectContaining({
         sessionId,
       }));
-      const retirementUpdate = updateSessionMetadataWithRetryMock.mock.calls.find(
-        ([call]) => call && typeof call === 'object' && 'sessionId' in call && call.sessionId === sessionId,
-      )?.[0];
-      expect(retirementUpdate?.updater({
+      const recoverableServiceability = {
         terminal: {
           mode: 'zellij',
           controlServiceabilityV1: {
@@ -4252,7 +4338,18 @@ describe('startDaemon spawn resume wiring (integration)', () => {
             reason: 'control_descriptor_missing',
           },
         },
-      })).toMatchObject({
+      };
+      const retirementUpdate = updateSessionMetadataWithRetryMock.mock.calls
+        .map(([call]) => call)
+        .find((call) => {
+          if (!call || typeof call !== 'object' || !('sessionId' in call) || call.sessionId !== sessionId) return false;
+          const updated = call.updater(recoverableServiceability);
+          const terminal = updated.terminal;
+          if (!terminal || typeof terminal !== 'object' || !('controlServiceabilityV1' in terminal)) return false;
+          const serviceability = terminal.controlServiceabilityV1;
+          return Boolean(serviceability && typeof serviceability === 'object' && 'retired' in serviceability && serviceability.retired === true);
+        });
+      expect(retirementUpdate?.updater(recoverableServiceability)).toMatchObject({
         terminal: {
           mode: 'zellij',
           controlServiceabilityV1: {
