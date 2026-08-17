@@ -33,17 +33,22 @@ test('readProcessInstanceFingerprintSync uses the platform-owned incarnation sou
     },
   }), 'linux-proc:1234');
 
+  let darwinOptions = null;
   assert.equal(readProcessInstanceFingerprintSync(42, {
     platform: 'darwin',
-    spawnSyncImpl: () => ({ status: 0, signal: null, stdout: 'Mon Jul 20 12:34:56 2026\n' }),
+    spawnSyncImpl: (_command, _args, options) => {
+      darwinOptions = options;
+      return { status: 0, signal: null, stdout: 'Mon Jul 20 12:34:56 2026\n' };
+    },
   }), 'darwin-ps:Mon Jul 20 12:34:56 2026');
+  assert.equal(darwinOptions.timeout, 5_000);
 
   const windowsCalls = [];
   assert.equal(readProcessInstanceFingerprintSync(42, {
     platform: 'win32',
     windowsCreationDateFormat: 'dmtf',
-    spawnSyncImpl: (command, args) => {
-      windowsCalls.push({ command, args });
+    spawnSyncImpl: (command, args, options) => {
+      windowsCalls.push({ command, args, options });
       return {
         status: 0,
         signal: null,
@@ -54,6 +59,12 @@ test('readProcessInstanceFingerprintSync uses the platform-owned incarnation sou
   assert.deepEqual(windowsCalls, [{
     command: 'wmic.exe',
     args: ['process', 'where', 'processid=42', 'get', 'CreationDate', '/value'],
+    options: {
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: false,
+      timeout: 5_000,
+    },
   }]);
 });
 

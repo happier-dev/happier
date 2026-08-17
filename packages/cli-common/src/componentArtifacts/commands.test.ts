@@ -1,15 +1,17 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { spawnSyncMock } = vi.hoisted(() => ({
-    spawnSyncMock: vi.fn(),
+const { spawnMock } = vi.hoisted(() => ({
+    spawnMock: vi.fn(),
 }));
 
 vi.mock('node:child_process', () => ({
-    spawnSync: spawnSyncMock,
+    spawn: spawnMock,
 }));
 
 import { compileBunBinary, execOrThrow, resolveBunCommand } from './commands.js';
@@ -64,14 +66,62 @@ describe('resolveBunCommand', () => {
 describe('execOrThrow', () => {
     const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
+    function createChildProcess() {
+        const child = new EventEmitter() as EventEmitter & {
+            stdout: PassThrough;
+            stderr: PassThrough;
+            stdin: PassThrough;
+            kill: ReturnType<typeof vi.fn>;
+        };
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.stdin = new PassThrough();
+        child.kill = vi.fn();
+        return child;
+    }
+
+    function arrangeCompletion({ code = 0, stderr = '' }: { code?: number | null; stderr?: string } = {}) {
+        const child = createChildProcess();
+        spawnMock.mockReturnValue(child);
+        queueMicrotask(() => {
+            if (stderr) child.stderr.write(stderr);
+            child.emit('close', code, null);
+        });
+        return child;
+    }
+
     afterEach(() => {
-        spawnSyncMock.mockReset();
+        spawnMock.mockReset();
         if (originalPlatformDescriptor) {
             Object.defineProperty(process, 'platform', originalPlatformDescriptor);
         }
     });
 
-    it('wraps Windows shell shims through cmd.exe before spawning', () => {
+    it('returns an asynchronous completion instead of blocking its owner process', async () => {
+        arrangeCompletion();
+
+        const completion = execOrThrow(process.execPath, ['--version'], { stdio: 'pipe' });
+
+        expect(completion).toBeInstanceOf(Promise);
+        await completion;
+    });
+
+    it('preserves explicit stdout and stderr modes when piping command input', async () => {
+        const child = arrangeCompletion();
+
+        await execOrThrow('minisign', ['-S'], {
+            stdio: ['pipe', 'inherit', 'inherit'],
+            input: 'passphrase\n',
+        });
+
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        expect(spawnMock.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
+            stdio: ['pipe', 'inherit', 'inherit'],
+        }));
+        expect(child.stdin.read()).toEqual(Buffer.from('passphrase\n'));
+    });
+
+    it('wraps Windows shell shims through cmd.exe before spawning', async () => {
         if (!originalPlatformDescriptor) {
             throw new Error('Expected process.platform to be configurable for this test');
         }
@@ -83,9 +133,9 @@ describe('execOrThrow', () => {
             const yarnShimPath = join(shimDir, 'yarn.cmd');
             mkdirSync(shimDir, { recursive: true });
             writeFileSync(yarnShimPath, '@echo off\r\n', 'utf8');
-            spawnSyncMock.mockReturnValue({ status: 0, stderr: '' });
+            arrangeCompletion();
 
-            execOrThrow('yarn', ['--cwd', 'apps/cli', 'build'], {
+            await execOrThrow('yarn', ['--cwd', 'apps/cli', 'build'], {
                 cwd: 'C:\\repo',
                 env: {
                     PATH: shimDir,
@@ -95,8 +145,8 @@ describe('execOrThrow', () => {
                 stdio: 'pipe',
             });
 
-            expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-            const [command, args, options] = spawnSyncMock.mock.calls[0] ?? [];
+            expect(spawnMock).toHaveBeenCalledTimes(1);
+            const [command, args, options] = spawnMock.mock.calls[0] ?? [];
             expect(command).toBe('C:\\Windows\\System32\\cmd.exe');
             expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
             expect(String(args[3]).toLowerCase()).toContain(yarnShimPath.toLowerCase());
@@ -105,7 +155,6 @@ describe('execOrThrow', () => {
             expect(String(args[3])).toContain('build');
             expect(options).toEqual(expect.objectContaining({
                 cwd: 'C:\\repo',
-                encoding: 'utf-8',
                 stdio: 'pipe',
                 windowsVerbatimArguments: true,
             }));
@@ -114,34 +163,32 @@ describe('execOrThrow', () => {
         }
     });
 
-    it('forwards timeoutMs to the spawned process timeout option', () => {
-        spawnSyncMock.mockReturnValue({ status: 0, stderr: '' });
+    it('terminates and rejects a command that exceeds timeoutMs', async () => {
+        const child = createChildProcess();
+        spawnMock.mockReturnValue(child);
 
-        execOrThrow('tar', ['--version'], {
+        await expect(execOrThrow('tar', ['--version'], {
             cwd: process.cwd(),
             stdio: 'pipe',
-            timeoutMs: 1234,
-        });
+            timeoutMs: 1,
+        })).rejects.toMatchObject({ code: 'ETIMEDOUT' });
 
-        expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-        const [, , options] = spawnSyncMock.mock.calls[0] ?? [];
-        expect(options).toEqual(expect.objectContaining({
-            timeout: 1234,
-            stdio: 'pipe',
-            encoding: 'utf-8',
-        }));
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        expect(child.kill).toHaveBeenCalledTimes(1);
     });
 
-    it('preserves process error code for timeout-aware callers', () => {
-        const processError = Object.assign(new Error('spawnSync tar ETIMEDOUT'), { code: 'ETIMEDOUT' });
-        spawnSyncMock.mockReturnValue({ error: processError });
+    it('preserves process error code for timeout-aware callers', async () => {
+        const processError = Object.assign(new Error('spawn tar ETIMEDOUT'), { code: 'ETIMEDOUT' });
+        spawnMock.mockImplementationOnce(() => {
+            throw processError;
+        });
 
-        expect(() => execOrThrow('tar', ['-czf', 'artifact.tar.gz', 'payload'], {
+        await expect(execOrThrow('tar', ['-czf', 'artifact.tar.gz', 'payload'], {
             stdio: 'pipe',
             timeoutMs: 1,
-        })).toThrowError(expect.objectContaining({
+        })).rejects.toMatchObject({
             code: 'ETIMEDOUT',
-        }));
+        });
     });
 });
 

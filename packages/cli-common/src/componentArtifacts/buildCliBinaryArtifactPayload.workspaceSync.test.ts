@@ -355,6 +355,8 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         });
 
         expect(runCommandCalls).toHaveLength(1);
+        expect(runCommandCalls[0]?.args).toContain('build:prepared');
+        expect(runCommandCalls[0]?.args).not.toContain('build');
         expect(compileObservedContents).toEqual([currentSourceContent]);
         expect(compileObservedExternals).toEqual([[
             '@huggingface/transformers',

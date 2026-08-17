@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
+const PROCESS_INSTANCE_PROBE_TIMEOUT_MS = 5_000;
+
 function normalizePid(value) {
   const pid = Number(value);
   return Number.isInteger(pid) && pid > 1 ? pid : null;
@@ -40,7 +42,7 @@ function readWindowsProcessCreationDateDmtfSync(pid, spawnSyncImpl) {
   const wmicCreationDate = parseWindowsCreationDate(readSpawnOutput(spawnSyncImpl(
     'wmic.exe',
     ['process', 'where', `processid=${pid}`, 'get', 'CreationDate', '/value'],
-    { encoding: 'utf8', windowsHide: true, shell: false },
+    { encoding: 'utf8', windowsHide: true, shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS },
   )));
   if (wmicCreationDate) return wmicCreationDate;
 
@@ -52,7 +54,7 @@ function readWindowsProcessCreationDateDmtfSync(pid, spawnSyncImpl) {
   return parseWindowsCreationDate(readSpawnOutput(spawnSyncImpl(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, shell: false },
+    { encoding: 'utf8', windowsHide: true, shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS },
   )));
 }
 
@@ -65,7 +67,7 @@ function readWindowsProcessCreationDateLegacySync(pid, spawnSyncImpl) {
   return readSpawnOutput(spawnSyncImpl(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, shell: false },
+    { encoding: 'utf8', windowsHide: true, shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS },
   ));
 }
 
@@ -120,7 +122,7 @@ function readWindowsProcessCreationDatePredecessorIsoSync(
   return readSpawnOutput(spawnSyncImpl(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    { encoding: 'utf8', windowsHide: true, shell: false },
+    { encoding: 'utf8', windowsHide: true, shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS },
   ));
 }
 
@@ -172,7 +174,7 @@ export function readProcessInstanceFingerprintSync(
   const startedAt = readSpawnOutput(spawnSyncImpl(
     'ps',
     ['-o', 'lstart=', '-p', String(pid)],
-    { encoding: 'utf8', shell: false },
+    { encoding: 'utf8', shell: false, timeout: PROCESS_INSTANCE_PROBE_TIMEOUT_MS },
   ));
   return startedAt ? `${platform}-ps:${startedAt}` : null;
 }

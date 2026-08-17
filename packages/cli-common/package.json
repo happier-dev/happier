@@ -203,7 +203,7 @@
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
-    "test:local": "yarn -s build && node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts"
   },
   "dependencies": {
     "@noble/curves": "^1.9.0",

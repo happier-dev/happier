@@ -93,6 +93,7 @@ declare const cliDistBuildManifest: {
   writeCliDistWorkspaceRuntimeIdentity(params: Readonly<{
     entrypoint: string;
     workspaceRuntimeIdentity: string;
+    workspaceRuntimePackages?: readonly string[];
   }>): Readonly<{
     manifest: CliDistBuildManifest;
     manifestPath: string;

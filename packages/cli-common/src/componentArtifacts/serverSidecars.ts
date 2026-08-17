@@ -113,7 +113,7 @@ export async function prepareUiWebDist({
 }): Promise<string> {
   const uiDistPath = join(repoRoot, 'apps', 'ui', 'dist');
 
-  runCommand(process.execPath, ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'], {
+  await runCommand(process.execPath, ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'], {
     cwd: repoRoot,
     env: {
       ...env,
@@ -122,7 +122,7 @@ export async function prepareUiWebDist({
   });
 
   const yarn = resolveYarnCommand({ commandProbe });
-  runCommand(
+  await runCommand(
     yarn.cmd,
     [...yarn.args, '--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'],
     {
@@ -138,11 +138,11 @@ export async function prepareUiWebDist({
   if (!builtInfo?.isDirectory()) {
     throw new Error(`[component-artifacts] missing ui web dist directory: ${uiDistPath}`);
   }
-  precompressUiWebDist({ repoRoot, env, runCommand });
+  await precompressUiWebDist({ repoRoot, env, runCommand });
   return uiDistPath;
 }
 
-function precompressUiWebDist({
+async function precompressUiWebDist({
   repoRoot,
   env,
   runCommand,
@@ -150,8 +150,8 @@ function precompressUiWebDist({
   repoRoot: string;
   env: NodeJS.ProcessEnv;
   runCommand: RunCommand;
-}): void {
-  runCommand(process.execPath, ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'], {
+}): Promise<void> {
+  await runCommand(process.execPath, ['scripts/pipeline/release/precompress-ui-web-assets.mjs', '--dir', 'apps/ui/dist'], {
     cwd: repoRoot,
     env: {
       ...env,
@@ -275,7 +275,7 @@ export async function resolveServerRuntimeSupportEntries({
     buildDbProviders,
     env,
   });
-  runCommand(
+  await runCommand(
     yarn.cmd,
     [...yarn.args, '--cwd', 'apps/server', '-s', 'generate:providers'],
     {
@@ -293,7 +293,7 @@ export async function resolveServerRuntimeSupportEntries({
       throw new Error('[component-artifacts] a binary target is required for full-server migration artifacts');
     }
     const schemaEngine = resolvePrismaSchemaEngineTarget(target);
-    runCommand(
+    await runCommand(
       process.execPath,
       [
         'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',

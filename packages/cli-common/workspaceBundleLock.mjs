@@ -108,6 +108,10 @@ export function resolveWorkspaceBundleLockPath(repoRoot) {
   return resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
 }
 
+export function resolveCliSharedDepsBuildLockPath(repoRoot) {
+  return resolve(repoRoot, '.project', 'tmp', 'cli-shared-deps.lock');
+}
+
 function parseLockOwner(raw) {
   const text = String(raw ?? '').trim();
   if (!text) return null;

@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, type StdioOptions } from 'node:child_process';
 import { join } from 'node:path';
 import { rm, stat } from 'node:fs/promises';
 import { accessSync, constants as fsConstants } from 'node:fs';
@@ -13,7 +13,7 @@ export type RunCommand = (
   options?: {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
-    stdio?: 'inherit' | 'pipe' | 'ignore';
+    stdio?: StdioOptions;
     input?: string;
     timeoutMs?: number;
   },
@@ -22,46 +22,97 @@ export type RunCommand = (
 const DEFAULT_BUN_COMPILE_ATTEMPTS = 3;
 const MAX_BUN_COMPILE_ATTEMPTS = 5;
 
-export function execOrThrow(
+export async function execOrThrow(
   cmd: string,
   args: string[],
   { cwd = process.cwd(), env = process.env, stdio = 'inherit', input, timeoutMs }: {
     cwd?: string;
     env?: NodeJS.ProcessEnv;
-    stdio?: 'inherit' | 'pipe' | 'ignore';
+    stdio?: StdioOptions;
     input?: string;
     timeoutMs?: number;
   } = {},
-): void {
+): Promise<void> {
   const invocation = resolveWindowsCommandInvocation({
     command: cmd,
     args,
     env,
   });
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd,
-    env,
-    stdio,
-    encoding: 'utf-8',
-    input,
-    ...(typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) ? { timeout: timeoutMs } : {}),
-    ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
-  });
-  if (result.error) {
-    const wrapped = new Error(`[component-artifacts] failed to run ${cmd}: ${String(result.error.message || result.error)}`);
-    const errorCode = result.error && typeof result.error === 'object' && 'code' in result.error
-      ? String(result.error.code ?? '')
-      : '';
-    if (errorCode) {
-      Object.assign(wrapped, { code: errorCode });
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const childStdio: StdioOptions = input == null
+      ? stdio
+      : Array.isArray(stdio)
+        ? ['pipe', ...stdio.slice(1)]
+        : ['pipe', stdio, stdio];
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(invocation.command, invocation.args, {
+        cwd,
+        env,
+        stdio: childStdio,
+        ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+      });
+    } catch (error) {
+      const wrapped = new Error(`[component-artifacts] failed to run ${cmd}: ${error instanceof Error ? error.message : String(error)}`);
+      const errorCode = error && typeof error === 'object' && 'code' in error
+        ? String(error.code ?? '')
+        : '';
+      if (errorCode) Object.assign(wrapped, { code: errorCode });
+      Object.assign(wrapped, { cause: error });
+      rejectPromise(wrapped);
+      return;
     }
-    Object.assign(wrapped, { cause: result.error });
-    throw wrapped;
-  }
-  if (typeof result.status === 'number' && result.status !== 0) {
-    const stderr = String(result.stderr || '').trim();
-    throw new Error(`[component-artifacts] ${cmd} exited with status ${result.status}${stderr ? `: ${stderr}` : ''}`);
-  }
+
+    let stderr = '';
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const finish = (operation: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      operation();
+    };
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.stdout?.resume();
+    child.on('error', (error) => {
+      finish(() => {
+        const wrapped = new Error(`[component-artifacts] failed to run ${cmd}: ${String(error.message || error)}`);
+        const errorCode = error && typeof error === 'object' && 'code' in error
+          ? String(error.code ?? '')
+          : '';
+        if (errorCode) Object.assign(wrapped, { code: errorCode });
+        Object.assign(wrapped, { cause: error });
+        rejectPromise(wrapped);
+      });
+    });
+    child.on('close', (code) => {
+      finish(() => {
+        if (code === 0) {
+          resolvePromise();
+          return;
+        }
+        const diagnostic = stderr.trim();
+        rejectPromise(new Error(
+          `[component-artifacts] ${cmd} exited with status ${code ?? 'null'}${diagnostic ? `: ${diagnostic}` : ''}`,
+        ));
+      });
+    });
+    if (input != null) {
+      child.stdin?.end(input);
+    }
+    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timeout = setTimeout(() => {
+        finish(() => {
+          child.kill();
+          const error = new Error(`[component-artifacts] ${cmd} timed out after ${timeoutMs}ms`);
+          Object.assign(error, { code: 'ETIMEDOUT' });
+          rejectPromise(error);
+        });
+      }, timeoutMs);
+    }
+  });
 }
 
 export function commandExists(cmd: string): boolean {

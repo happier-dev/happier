@@ -594,6 +594,14 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
   removeTypeScriptIncrementalMetadata(bundledDistDir);
   writeJson(resolve(params.tempDir, 'package.json'), sanitizeBundledPackageJson(params.rawPackageJson));
 
+  // A bundled plugin's manifest is runtime input, not source-only package metadata. Preserve the
+  // reserved manifest directory even when this package is being copied from an already-sanitized
+  // workspace runtime whose package.json no longer carries the original `files` declaration.
+  copyIfExists(
+    resolve(params.srcDir, '.happier-plugin'),
+    resolve(params.tempDir, '.happier-plugin'),
+  );
+
   const files = params.includeFiles ?? ['README.md'];
   for (const f of files) {
     copyIfExists(resolve(params.srcDir, f), resolve(params.tempDir, f));

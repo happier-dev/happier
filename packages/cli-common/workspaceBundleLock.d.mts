@@ -42,6 +42,7 @@ export interface WorkspaceBundleLockOptions<T = unknown> {
 }
 
 export function resolveWorkspaceBundleLockPath(repoRoot: string): string;
+export function resolveCliSharedDepsBuildLockPath(repoRoot: string): string;
 export function isWorkspaceBundleLockActive(
   lockPath: string,
   options?: { staleAfterMs?: number; nowMs?: number },

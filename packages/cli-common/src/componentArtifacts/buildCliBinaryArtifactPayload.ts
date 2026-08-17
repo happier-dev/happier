@@ -12,6 +12,10 @@ import {
   resolveInstalledRuntimePackage,
 } from '../../workspaceRuntimeDependencies.mjs';
 import { createWorkspaceChildBuildEnv } from '../../workspaceChildBuildEnv.mjs';
+import {
+  resolveCliSharedDepsBuildLockPath,
+  withWorkspaceBundleLock,
+} from '../../workspaceBundleLock.mjs';
 import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
 import {
@@ -533,6 +537,15 @@ async function prepareCliDistSnapshot({
     repoRoot,
     hostPackageDir: cliDir,
   });
+  await ensureBundledWorkspacePackagesBuilt({
+    repoRoot,
+    bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
+    ensureWorkspacePackagesBuiltByName,
+  });
+  await withWorkspaceBundleLock(
+    () => syncCliBundledWorkspacePackagesForCompile(repoRoot, cliDir, workspaceBundles),
+    { lockPath: resolveCliSharedDepsBuildLockPath(repoRoot) },
+  );
   const prepared = await withCliDistBuildLock<{
     snapshotDistDir: string;
     workspaceRuntimeIdentity: string;
@@ -549,12 +562,6 @@ async function prepareCliDistSnapshot({
           heldLockValue,
         }),
       });
-      await ensureBundledWorkspacePackagesBuilt({
-        repoRoot,
-        bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
-        ensureWorkspacePackagesBuiltByName,
-      });
-      syncCliBundledWorkspacePackagesForCompile(repoRoot, cliDir, workspaceBundles);
       const workspaceRuntimeBeforeBuild = readCliNodeWorkspaceRuntimeIdentity({
         repoRoot,
         hostPackageDir: cliDir,
@@ -586,7 +593,7 @@ async function prepareCliDistSnapshot({
         distEntrypointPath: entrypoint,
         reuseExistingDistSnapshot,
         buildDist: async () => {
-          await runCommandWithHeldDistLock(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
+          await runCommandWithHeldDistLock(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build:prepared'], { cwd: repoRoot });
           await ensureFileExists(entrypoint);
         },
       });
