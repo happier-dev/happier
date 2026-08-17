@@ -3,6 +3,14 @@ import { resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyIn
 
 type JsonRecord = Record<string, unknown>;
 
+function quoteRemotePathWithHomeExpansion(path: string): string {
+  if (path === '$HOME') return '"$HOME"';
+  if (path.startsWith('$HOME/')) {
+    return `"$HOME"/${safeBashSingleQuote(path.slice('$HOME/'.length))}`;
+  }
+  return safeBashSingleQuote(path);
+}
+
 export type RemoteBootstrapCommandLabel =
   | 'preflight.platform'
   | 'server.configure'
@@ -156,6 +164,9 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
     const relayRuntimeEnv = data.relayRuntimeEnv && typeof data.relayRuntimeEnv === 'object' && !Array.isArray(data.relayRuntimeEnv)
       ? data.relayRuntimeEnv as Record<string, unknown>
       : {};
+    const relayRuntimeServerBinaryPath = typeof data.relayRuntimeServerBinaryPath === 'string'
+      ? data.relayRuntimeServerBinaryPath.trim()
+      : '';
     const envArgs = Object.entries(relayRuntimeEnv).flatMap(([key, value]) => {
       const normalizedKey = key.trim();
       if (!/^[A-Z_][A-Z0-9_]*$/u.test(normalizedKey)) {
@@ -168,6 +179,9 @@ export function buildRemoteBootstrapCommand(params: Readonly<{
       `--channel ${safeBashSingleQuote(params.channel ?? 'stable')}`,
       `--mode ${relayRuntimeMode}`,
       ...envArgs,
+      ...(relayRuntimeServerBinaryPath
+        ? [`--server-binary ${quoteRemotePathWithHomeExpansion(relayRuntimeServerBinaryPath)}`]
+        : []),
       '--preserve-active-server',
       '--yes',
       '--json',

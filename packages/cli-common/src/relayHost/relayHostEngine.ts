@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { rm, readFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
-import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, join, posix as posixPath } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join, posix as posixPath } from 'node:path';
 
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -19,8 +19,6 @@ import {
   type ServiceBackend,
   type ServiceSpec,
 } from '../service/index.js';
-import { buildLaunchdPlistXml } from '../service/launchd.js';
-import { renderSystemdServiceUnit } from '../service/systemd.js';
 import {
   checkRelayRuntimeHealth,
   resolveRelayRuntimeDefaults,
@@ -48,7 +46,8 @@ import type {
   RelayRuntimeTaskParams,
   SystemTaskSshConnectionConfig,
 } from '../systemTasks/kinds/relayRuntimeKinds.js';
-import { normalizeScpRemotePath } from '../systemTasks/ssh/scpRemotePath.js';
+import { buildRemoteBootstrapCommand } from '../systemTasks/ssh/remoteBootstrapCommandBuilder.js';
+import { parseJsonLinesBestEffort } from '../ssh/index.js';
 
 export type RelayHostRemoteCommandResult = Readonly<{ status: number; stdout: string; stderr: string }>;
 
@@ -357,42 +356,6 @@ async function resolveLocalDesiredRelayUrl(params: Readonly<{
   });
 }
 
-function resolveRemoteDesiredRelayUrl(params: Readonly<{
-  platform: 'linux' | 'darwin';
-  mode: 'user' | 'system';
-  channel: PublicReleaseRingId;
-  existingEnvText?: string;
-  envOverrides?: Record<string, string>;
-}>): string {
-  const defaults = resolveRelayDefaultsForRemote({
-    platform: params.platform,
-    channel: params.channel,
-    mode: params.mode,
-  });
-  const baseEnvText = renderSelfHostServerEnvTextFromResolvedValues({
-    port: defaults.serverPort,
-    host: defaults.serverHost,
-    dataDir: defaults.dataDir,
-    filesDir: `${defaults.dataDir}/files`,
-    dbDir: `${defaults.dataDir}/pglite`,
-    databaseUrl: renderRelaySqliteDatabaseUrl({
-      dbPath: `${defaults.dataDir}/happier-server-light.sqlite`,
-      platform: params.platform,
-      env: { ...process.env, ...parseEnvText(params.existingEnvText ?? ''), ...(params.envOverrides ?? {}) },
-    }),
-    sqliteAutoMigrate: resolveSelfHostSqliteAutoMigrateValue(),
-    sqliteMigrationsDir: `${defaults.dataDir}/migrations/sqlite`,
-  });
-  const envText = mergeSelfHostServerEnvText({
-    baseEnvText,
-    existingEnvText: params.existingEnvText,
-    overrides: params.envOverrides,
-  });
-  return resolveConfiguredSelfHostBaseUrl({
-    fallbackBaseUrl: `http://${defaults.serverHost}:${defaults.serverPort}`,
-    envText,
-  });
-}
 
 function createRelayLaneConflictError(params: Readonly<{
   requestedChannel: PublicReleaseRingId;
@@ -427,115 +390,12 @@ async function resolveRemoteRelayHealth(params: Readonly<{
   return probeResult.status === 0 || probeStdout.includes(RELAY_RUNTIME_HEALTH_OK_TOKEN);
 }
 
-function buildRemoteInstallBinaryShimCommand(params: Readonly<{ sourcePath: string; destPath: string; privilegedPrefix?: string }>): string {
-  const source = quoteRemoteShellArg(params.sourcePath);
-  const dest = quoteRemoteShellArg(params.destPath);
-  const privilegedPrefix = params.privilegedPrefix ?? '';
-  return [
-    'set -eu',
-    `${privilegedPrefix}rm -f ${dest}`,
-    `(${privilegedPrefix}ln -s ${source} ${dest} 2>/dev/null || ${privilegedPrefix}cp ${source} ${dest})`,
-    `${privilegedPrefix}chmod +x ${dest} 2>/dev/null || true`,
-  ].join('; ');
-}
 
 function buildRemoteProbeExistsCommand(params: Readonly<{ path: string; kind: 'file' | 'dir' }>): string {
   const testFlag = params.kind === 'dir' ? '-d' : '-f';
   return `if [ ${testFlag} ${quoteRemoteShellArg(params.path)} ]; then echo yes; fi`;
 }
 
-function buildRemoteRelayRuntimeEnvText(params: Readonly<{
-  platform: 'linux' | 'darwin';
-  arch: 'x64' | 'arm64';
-  defaults: RelayRuntimeDefaults;
-  envOverrides?: Record<string, string>;
-  existingEnvText?: string;
-  serverBinDir: string;
-  nodeModulesPath?: string;
-}>): Readonly<{ envText: string; parsed: Record<string, string> }> {
-  const normalizedDataDir = String(params.defaults.dataDir ?? '').replace(/\/+$/, '') || String(params.defaults.dataDir ?? '');
-  const migrationsDir = posixPath.join(params.serverBinDir, 'prisma', 'sqlite', 'migrations');
-  const dbPath = `${normalizedDataDir}/happier-server-light.sqlite`;
-  const databaseUrl = renderRelaySqliteDatabaseUrl({
-    dbPath,
-    platform: params.platform,
-    env: { ...process.env, ...parseEnvText(params.existingEnvText ?? ''), ...(params.envOverrides ?? {}) },
-  });
-  const filesDir = `${params.defaults.dataDir}/files`;
-  const dbDir = `${params.defaults.dataDir}/pglite`;
-
-  const baseText = renderSelfHostServerEnvTextFromResolvedValues({
-    port: params.defaults.serverPort,
-    host: params.defaults.serverHost,
-    dataDir: params.defaults.dataDir,
-    filesDir,
-    dbDir,
-    databaseUrl,
-    nodeModulesPath: params.nodeModulesPath,
-    sqliteAutoMigrate: resolveSelfHostSqliteAutoMigrateValue(),
-    sqliteMigrationsDir: migrationsDir,
-  });
-  const envText = mergeSelfHostServerEnvText({
-    baseEnvText: baseText,
-    existingEnvText: params.existingEnvText,
-    overrides: params.envOverrides,
-  });
-  return {
-    envText,
-    parsed: parseEnvText(envText),
-  };
-}
-
-function resolveRemoteEnvTextForConfigFile(params: Readonly<{ envText: string; remoteHomeDir: string }>): string {
-  const remoteHomeDir = String(params.remoteHomeDir ?? '').trim().replace(/\/+$/, '');
-  if (!remoteHomeDir) return params.envText;
-  return String(params.envText ?? '').replaceAll('$HOME', remoteHomeDir);
-}
-
-async function writeRemoteFilesViaScp(params: Readonly<{
-  deps: Pick<RemoteDeps, 'copyLocalDirectoryToRemote' | 'runRemoteText'>;
-  ssh: SystemTaskSshConnectionConfig;
-  knownHostsMode?: 'app' | 'system';
-  remoteStageParent: string;
-  files: readonly Readonly<{ relativePath: string; contents: string }>[];
-}>): Promise<Readonly<{ remoteRoot: string; cleanupRemoteCommand: string }>> {
-  const stageParent = String(params.remoteStageParent ?? '').trim();
-  if (!stageParent) {
-    throw new Error('remoteStageParent is required');
-  }
-  const stageParentForScp = normalizeScpRemotePath(stageParent);
-
-  const localRoot = await mkdtemp(join(tmpdir(), 'happier-relayhost-stage-'));
-  try {
-    for (const file of params.files) {
-      const rel = String(file.relativePath ?? '').trim().replace(/^\/+/u, '');
-      const target = join(localRoot, rel);
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, file.contents, 'utf8');
-    }
-
-    await params.deps.runRemoteText({
-      ssh: params.ssh,
-      knownHostsMode: params.knownHostsMode,
-      remoteCommand: `mkdir -p ${quoteRemoteShellArg(stageParent)}`,
-    });
-
-    await params.deps.copyLocalDirectoryToRemote({
-      ssh: params.ssh,
-      knownHostsMode: params.knownHostsMode,
-      localPath: localRoot,
-      remotePath: stageParentForScp,
-    });
-
-    const remoteRoot = `${stageParent}/${sanitizeRemotePathSegment(basename(localRoot))}`;
-    return {
-      remoteRoot,
-      cleanupRemoteCommand: `rm -rf ${quoteRemoteShellArg(stageParent)}`,
-    };
-  } finally {
-    await rm(localRoot, { recursive: true, force: true });
-  }
-}
 
 function buildRemoteReadJsonFileCommand(path: string): string {
   const quoted = quoteRemoteShellArg(path);
@@ -906,74 +766,6 @@ function resolveRemoteServiceDefinitionPath(params: Readonly<{
   throw new Error(`Unsupported backend: ${params.backend}`);
 }
 
-function resolveRemoteServiceDefinitionContents(params: Readonly<{
-  backend: ServiceBackend;
-  remoteHomeDir: string;
-  spec: ServiceSpec;
-  defaultPathEnv: string;
-}>): string {
-  const env = {
-    ...(params.spec.env ?? {}),
-    ...(params.defaultPathEnv ? { PATH: params.defaultPathEnv } : {}),
-  };
-
-	  if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
-	    const wantedBy = params.backend === 'systemd-system' ? 'multi-user.target' : 'default.target';
-	    const resolvedHomeDir = String(params.remoteHomeDir ?? '').trim();
-	    const materializeHome = (value: string): string => value.replaceAll('$HOME', resolvedHomeDir);
-	    const workingDirectoryCandidate = params.spec.workingDirectory;
-	    const workingDirectory = resolvedHomeDir.startsWith('/')
-	      ? (workingDirectoryCandidate ? materializeHome(workingDirectoryCandidate) : undefined)
-	      : workingDirectoryCandidate;
-	    const execStart = resolvedHomeDir.startsWith('/')
-	      ? params.spec.programArgs.map((arg) => materializeHome(String(arg)))
-	      : params.spec.programArgs;
-    const stdoutPath = resolvedHomeDir.startsWith('/') && params.spec.stdoutPath
-      ? materializeHome(params.spec.stdoutPath)
-      : params.spec.stdoutPath;
-    const stderrPath = resolvedHomeDir.startsWith('/') && params.spec.stderrPath
-      ? materializeHome(params.spec.stderrPath)
-      : params.spec.stderrPath;
-    const envMaterialized = resolvedHomeDir.startsWith('/')
-      ? Object.fromEntries(Object.entries(env).map(([key, value]) => [key, materializeHome(String(value))]))
-      : env;
-    return renderSystemdServiceUnit({
-      description: params.spec.description ?? params.spec.label,
-      execStart,
-      workingDirectory,
-      env: envMaterialized,
-      restart: 'always',
-      runAsUser: params.spec.runAsUser,
-      stdoutPath,
-      stderrPath,
-      wantedBy,
-    });
-  }
-
-  if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
-    const stdoutPath = params.spec.stdoutPath
-      ? params.spec.stdoutPath
-      : params.backend === 'launchd-system'
-        ? `/var/log/${params.spec.label}.out.log`
-        : `${params.remoteHomeDir}/.happier/logs/${params.spec.label}.out.log`;
-    const stderrPath = params.spec.stderrPath
-      ? params.spec.stderrPath
-      : params.backend === 'launchd-system'
-        ? `/var/log/${params.spec.label}.err.log`
-        : `${params.remoteHomeDir}/.happier/logs/${params.spec.label}.err.log`;
-    return buildLaunchdPlistXml({
-      label: params.spec.label,
-      programArgs: [...params.spec.programArgs],
-      env,
-      stdoutPath,
-      stderrPath,
-      workingDirectory: params.spec.workingDirectory,
-      keepAliveOnFailure: true,
-    });
-  }
-
-  throw new Error(`Unsupported backend: ${params.backend}`);
-}
 
 function buildRemoteRelayRuntimeCleanupCommand(params: Readonly<{
   definitionPath: string;
@@ -1002,112 +794,6 @@ function buildRemoteRelayRuntimeCleanupCommand(params: Readonly<{
   ].join('; ');
 }
 
-async function resolveRemotePathEnv(
-  deps: Pick<RemoteDeps, 'runRemoteText'>,
-  params: Readonly<{ ssh: SystemTaskSshConnectionConfig; knownHostsMode?: 'app' | 'system' }>,
-): Promise<string> {
-  const result = await deps.runRemoteText({
-    ssh: params.ssh,
-    knownHostsMode: params.knownHostsMode,
-    remoteCommand: `printf '%s\\n' \"$PATH\"`,
-  }).catch(() => ({ status: 1, stdout: '', stderr: '' }));
-  return result.status === 0 ? String(result.stdout ?? '').trim() : '';
-}
-
-async function installRemoteService(params: Readonly<{
-  deps: Pick<RemoteDeps, 'runRemoteText' | 'copyLocalDirectoryToRemote'>;
-  ssh: SystemTaskSshConnectionConfig;
-  knownHostsMode?: 'app' | 'system';
-  backend: ServiceBackend;
-  definitionPath: string;
-  definitionContents: string;
-  serviceName: string;
-  legacySystemdServiceNameToRemove?: string;
-  legacySystemdDefinitionPathToRemove?: string;
-  legacyLaunchdServiceNameToRemove?: string;
-  legacyLaunchdDefinitionPathToRemove?: string;
-}>): Promise<void> {
-  const stageParent = `${resolveRemoteHomeDirForComponents()}/bootstrap-staging/relay-service-${Date.now()}`;
-  const staged = await writeRemoteFilesViaScp({
-    deps: params.deps,
-    ssh: params.ssh,
-    knownHostsMode: params.knownHostsMode,
-    remoteStageParent: stageParent,
-    files: [
-      { relativePath: 'service-definition', contents: params.definitionContents },
-    ],
-  });
-
-  const remoteDefinitionPath = params.definitionPath;
-  const remoteStagedDefinitionPath = `${staged.remoteRoot}/service-definition`;
-  const installCommands: string[] = [];
-  const privilegedPrefix = params.backend === 'systemd-system' || params.backend === 'launchd-system'
-    ? '${SUDO_PREFIX}'
-    : '';
-  installCommands.push('set -eu');
-  if (privilegedPrefix) {
-    installCommands.push("SUDO_PREFIX=''");
-    installCommands.push('if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo -n "; fi');
-  }
-  installCommands.push(`${privilegedPrefix}mkdir -p ${quoteRemoteShellArg(dirname(remoteDefinitionPath))}`);
-  installCommands.push(`${privilegedPrefix}cp ${quoteRemoteShellArg(remoteStagedDefinitionPath)} ${quoteRemoteShellArg(remoteDefinitionPath)}`);
-
-  if (params.backend === 'systemd-user' || params.backend === 'systemd-system') {
-    const prefix = params.backend === 'systemd-user' ? '--user ' : '';
-    const legacyServiceName = String(params.legacySystemdServiceNameToRemove ?? '').trim();
-    const legacyDefinitionPath = String(params.legacySystemdDefinitionPathToRemove ?? '').trim();
-    if (legacyServiceName && legacyDefinitionPath) {
-      const legacySvc = `${legacyServiceName}.service`;
-      if (params.backend === 'systemd-user') {
-        installCommands.push(`${wrapRemoteSystemdUserCommand(`systemctl --user disable --now ${quoteRemoteShellArg(legacySvc)}`)} 2>/dev/null || true`);
-        installCommands.push(`rm -f ${quoteRemoteShellArg(legacyDefinitionPath)} 2>/dev/null || true`);
-      } else {
-        installCommands.push(`${privilegedPrefix}systemctl disable --now ${quoteRemoteShellArg(legacySvc)} 2>/dev/null || true`);
-        installCommands.push(`${privilegedPrefix}rm -f ${quoteRemoteShellArg(legacyDefinitionPath)} 2>/dev/null || true`);
-      }
-    }
-    if (params.backend === 'systemd-user') {
-      installCommands.push(wrapRemoteSystemdUserCommand('systemctl --user daemon-reload'));
-      installCommands.push(wrapRemoteSystemdUserCommand(`systemctl --user enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`));
-      installCommands.push(wrapRemoteSystemdUserCommand(`systemctl --user restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`));
-    } else {
-      installCommands.push(`${privilegedPrefix}systemctl ${prefix}daemon-reload`);
-      // Restart after install so updated unit/env changes take effect even when the service is already running.
-      // `systemctl enable --now` does not restart existing services.
-      installCommands.push(`${privilegedPrefix}systemctl ${prefix}enable ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
-      installCommands.push(`${privilegedPrefix}systemctl ${prefix}restart ${quoteRemoteShellArg(`${params.serviceName}.service`)}`);
-    }
-  } else if (params.backend === 'launchd-user' || params.backend === 'launchd-system') {
-    const legacyServiceName = String(params.legacyLaunchdServiceNameToRemove ?? '').trim();
-    const legacyDefinitionPath = String(params.legacyLaunchdDefinitionPathToRemove ?? '').trim();
-    if (legacyServiceName && legacyDefinitionPath) {
-      const legacyPlist = quoteRemoteShellArg(legacyDefinitionPath);
-      installCommands.push(`${privilegedPrefix}launchctl unload -w ${legacyPlist} 2>/dev/null || true`);
-      installCommands.push(`${privilegedPrefix}launchctl remove ${quoteRemoteShellArg(legacyServiceName)} 2>/dev/null || true`);
-      installCommands.push(`${privilegedPrefix}rm -f ${legacyPlist} 2>/dev/null || true`);
-    }
-    const plist = quoteRemoteShellArg(remoteDefinitionPath);
-    installCommands.push(`${privilegedPrefix}launchctl unload -w ${plist} 2>/dev/null || true`);
-    installCommands.push(`${privilegedPrefix}launchctl load -w ${plist}`);
-  } else {
-    throw new Error(`Unsupported remote backend: ${params.backend}`);
-  }
-
-  installCommands.push(staged.cleanupRemoteCommand);
-
-  const result = await params.deps.runRemoteText({
-    ssh: params.ssh,
-    knownHostsMode: params.knownHostsMode,
-    remoteCommand: installCommands.join('; '),
-  });
-  if (result.status !== 0) {
-    throw mapRelayRuntimeServiceControlError({
-      backend: params.backend,
-      stderr: result.stderr,
-      fallbackMessage: 'Failed to install relay service',
-    });
-  }
-}
 
 function mapRelayRuntimeServiceControlError(params: Readonly<{
   backend: ServiceBackend;
@@ -1992,281 +1678,75 @@ export function createRelayHostEngine(deps: RelayHostEngineDeps): RelayHostEngin
 
   async function installRemote(params: Readonly<{ parsed: RelayRuntimeTaskParams; ssh: SystemTaskSshConnectionConfig }>): Promise<Readonly<{ relayUrl: string; mode: 'user' | 'system' }>> {
     const knownHostsMode: 'app' | 'system' = params.ssh.knownHostsPath ? 'app' : 'system';
-    const target = await resolveRemoteTarget(params.ssh, knownHostsMode);
-    const platform = resolveRemotePlatform({ target });
-    const mode = normalizeMode(params.parsed.mode);
     const channel = normalizeChannel(params.parsed.channel);
-    const defaults = resolveRelayDefaultsForRemote({ platform, channel, mode });
-    const remoteHomeDir = await resolveRemoteUserHomeDir(deps, { ssh: params.ssh, knownHostsMode })
-      ?? resolveRemoteHomeDirForRuntime();
-    const remoteComponentHomeDir = resolveRemoteHomeDirForComponents();
-    const backend = resolveServiceBackend({ platform, mode });
-    const privilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
-      ? 'sudo -n '
-      : '';
-    const configEnvPath = `${defaults.configDir}/server.env`;
-    const existingEnvText = await deps.runRemoteText({
-      ssh: params.ssh,
-      knownHostsMode,
-      remoteCommand: buildRemoteReadTextFileCommand({ path: configEnvPath, privilegedPrefix }),
-    }).then((result) => String(result.stdout ?? '')).catch(() => '');
-    const desiredRelayUrl = resolveRemoteDesiredRelayUrl({
-      platform,
-      mode,
-      channel,
-      existingEnvText,
-      envOverrides: params.parsed.env,
-    });
-    const legacyServiceNameToRemove = await (async (): Promise<string | undefined> => {
-      if (channel === 'stable') return undefined;
-      if (
-        backend !== 'systemd-user'
-        && backend !== 'systemd-system'
-        && backend !== 'launchd-user'
-        && backend !== 'launchd-system'
-      ) return undefined;
-      const legacyUnitName = 'happier-server';
-      const legacyOwnedByInstallRoot = backend === 'systemd-user' || backend === 'systemd-system'
-        ? await resolveRemoteSystemdUnitOwnedByInstallRoot({
-          ssh: params.ssh,
-          knownHostsMode,
-          backend,
-          unitName: legacyUnitName,
-          remoteHomeDir,
-          installRoot: defaults.installRoot,
-        }).catch(() => false)
-        : await resolveRemoteLaunchdPlistOwnedByInstallRoot({
-          ssh: params.ssh,
-          knownHostsMode,
-          backend,
-          label: legacyUnitName,
-          remoteHomeDir,
-          installRoot: defaults.installRoot,
-        }).catch(() => false);
-      return legacyOwnedByInstallRoot ? legacyUnitName : undefined;
-    })();
-    const ignoreStableLaneConflict =
-      channel !== 'stable'
-      && (
-        backend === 'systemd-user'
-        || backend === 'systemd-system'
-        || backend === 'launchd-user'
-        || backend === 'launchd-system'
-      )
-      && legacyServiceNameToRemove === 'happier-server';
-    for (const otherChannel of listOtherRelayChannels(channel)) {
-      if (otherChannel === 'stable' && ignoreStableLaneConflict) continue;
-      const otherStatus = await readRemoteStatus({
-        parsed: {
-          ...params.parsed,
-          channel: formatRelayChannelLabel(otherChannel),
-        },
-        ssh: params.ssh,
-      });
-      const otherLaneOccupiesDesiredUrl =
-        otherStatus.baseUrl === desiredRelayUrl
-        && (
-          otherStatus.installed
-          || otherStatus.service.active === true
-          || otherStatus.service.enabled === true
-        );
-      if (otherLaneOccupiesDesiredUrl) {
-        throw createRelayLaneConflictError({
-          requestedChannel: channel,
-          conflictingChannel: otherChannel,
-          relayUrl: desiredRelayUrl,
-        });
-      }
-    }
+    const mode = normalizeMode(params.parsed.mode);
 
-    const remoteCli = await deps.installRemoteComponent({
+    await deps.installRemoteComponent({
       componentId: 'happier-cli',
       channel,
       ssh: params.ssh,
       knownHostsMode,
-      remoteHomeDir: remoteComponentHomeDir,
+      remoteHomeDir: resolveRemoteHomeDirForComponents(),
     });
 
-    const remoteServerOverride = typeof params.parsed.selfHostRelayBinaryOverride === 'string'
+    const localServerOverride = typeof params.parsed.selfHostRelayBinaryOverride === 'string'
       ? params.parsed.selfHostRelayBinaryOverride.trim()
       : '';
-    const remoteServer = await deps.installRemoteComponent({
-      componentId: 'happier-server',
-      channel,
-      ssh: params.ssh,
-      knownHostsMode,
-      remoteHomeDir: remoteComponentHomeDir,
-      ...(remoteServerOverride ? { localBinaryPath: remoteServerOverride } : {}),
-      ...(!remoteServerOverride ? { installerBinaryPath: remoteCli.binaryPath } : {}),
-    });
-
-    const installServerBinaryPath = `${defaults.installRoot}/bin/happier-server`;
-    const shimPath = `${defaults.binDir}/happier-server`;
-    const stdoutPath = `${defaults.logDir}/server.out.log`;
-    const stderrPath = `${defaults.logDir}/server.err.log`;
-    const statePath = `${defaults.installRoot}/self-host-state.json`;
-    const filesDir = `${defaults.dataDir}/files`;
-    const dbDir = `${defaults.dataDir}/pglite`;
-    const serverBinDir = posixPath.dirname(remoteServer.binaryPath);
-
-    const nodeModulesPath = await deps.runRemoteText({
-      ssh: params.ssh,
-      knownHostsMode,
-      remoteCommand: buildRemoteProbeExistsCommand({ path: `${serverBinDir}/node_modules`, kind: 'dir' }),
-    }).then((result) => String(result.stdout ?? '').trim() === 'yes'
-      ? `${serverBinDir}/node_modules`
-      : '').catch(() => '');
-
-    const effectiveServiceName = defaults.serviceName;
-    const legacySystemdServiceNameToRemove = legacyServiceNameToRemove && (backend === 'systemd-user' || backend === 'systemd-system')
-      ? legacyServiceNameToRemove
-      : undefined;
-    const legacySystemdDefinitionPathToRemove = legacySystemdServiceNameToRemove
-      ? resolveRemoteServiceDefinitionPath({
-        backend,
-        label: legacySystemdServiceNameToRemove,
-        remoteHomeDir,
-      })
-      : undefined;
-    const legacyLaunchdServiceNameToRemove = legacyServiceNameToRemove && (backend === 'launchd-user' || backend === 'launchd-system')
-      ? legacyServiceNameToRemove
-      : undefined;
-    const legacyLaunchdDefinitionPathToRemove = legacyLaunchdServiceNameToRemove
-      ? resolveRemoteServiceDefinitionPath({
-        backend,
-        label: legacyLaunchdServiceNameToRemove,
-        remoteHomeDir,
-      })
-      : undefined;
-
-    const renderedEnv = buildRemoteRelayRuntimeEnvText({
-      platform,
-      arch: target.arch,
-      defaults,
-      envOverrides: params.parsed.env,
-      existingEnvText,
-      serverBinDir,
-      nodeModulesPath: nodeModulesPath || undefined,
-    });
-
-    const serviceSpec: ServiceSpec = {
-      label: effectiveServiceName,
-      description: `Happier Relay Runtime (${effectiveServiceName})`,
-      programArgs: [installServerBinaryPath],
-      workingDirectory: defaults.installRoot,
-      env: renderedEnv.parsed,
-      stdoutPath,
-      stderrPath,
-    };
-    const remotePathEnv = await resolveRemotePathEnv(deps, { ssh: params.ssh, knownHostsMode });
-    const definitionPath = resolveRemoteServiceDefinitionPath({
-      backend,
-      label: serviceSpec.label,
-      remoteHomeDir,
-    });
-    const definitionContents = resolveRemoteServiceDefinitionContents({
-      backend,
-      remoteHomeDir,
-      spec: serviceSpec,
-      defaultPathEnv: remotePathEnv,
-    });
-
-    const stageParent = `${remoteComponentHomeDir}/bootstrap-staging/relay-runtime-${now()}`;
-    const staged = await writeRemoteFilesViaScp({
-      deps,
-      ssh: params.ssh,
-      knownHostsMode,
-      remoteStageParent: stageParent,
-      files: [
-        { relativePath: 'server.env', contents: resolveRemoteEnvTextForConfigFile({ envText: renderedEnv.envText, remoteHomeDir }) },
-        { relativePath: 'self-host-state.json', contents: `${JSON.stringify({
+    const uploadedServer = localServerOverride
+      ? await deps.installRemoteComponent({
+          componentId: 'happier-server',
           channel,
-          mode,
-          version: remoteServer.versionId || null,
-          updatedAt: new Date(now()).toISOString(),
-        }, null, 2)}\n` },
-      ],
-    });
+          ssh: params.ssh,
+          knownHostsMode,
+          remoteHomeDir: resolveRemoteHomeDirForComponents(),
+          localBinaryPath: localServerOverride,
+        })
+      : null;
 
-    const remoteEnvPath = `${staged.remoteRoot}/server.env`;
-    const remoteStatePath = `${staged.remoteRoot}/self-host-state.json`;
-
-    const setupPrivilegedPrefix = backend === 'systemd-system' || backend === 'launchd-system'
-      ? '${SUDO_PREFIX}'
-      : '';
-
-    const setupCommands = [
-      'set -eu',
-      ...(setupPrivilegedPrefix
-        ? [
-            "SUDO_PREFIX=''",
-            'if [ "$(id -u)" -ne 0 ]; then SUDO_PREFIX="sudo -n "; fi',
-          ]
-        : []),
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.installRoot)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.binDir)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.configDir)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.dataDir)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(filesDir)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(dbDir)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(defaults.logDir)}`,
-      `${setupPrivilegedPrefix}mkdir -p ${quoteRemoteShellArg(`${defaults.installRoot}/bin`)}`,
-      buildRemoteInstallBinaryShimCommand({ sourcePath: remoteServer.binaryPath, destPath: installServerBinaryPath, privilegedPrefix: setupPrivilegedPrefix }),
-      buildRemoteInstallBinaryShimCommand({ sourcePath: installServerBinaryPath, destPath: shimPath, privilegedPrefix: setupPrivilegedPrefix }),
-      `${setupPrivilegedPrefix}cp ${quoteRemoteShellArg(remoteEnvPath)} ${quoteRemoteShellArg(configEnvPath)}`,
-      `${setupPrivilegedPrefix}cp ${quoteRemoteShellArg(remoteStatePath)} ${quoteRemoteShellArg(statePath)}`,
-      staged.cleanupRemoteCommand,
-    ].join('; ');
-
-    const setupResult = await deps.runRemoteText({
+    const result = await deps.runRemoteText({
       ssh: params.ssh,
       knownHostsMode,
-      remoteCommand: setupCommands,
+      remoteCommand: buildRemoteBootstrapCommand({
+        label: 'relay.runtime.install',
+        serverUrl: 'https://api.happier.dev',
+        channel: formatRelayChannelLabel(channel),
+        data: {
+          relayRuntimeMode: mode,
+          relayRuntimeEnv: params.parsed.env ?? {},
+          ...(uploadedServer
+            ? { relayRuntimeServerBinaryPath: uploadedServer.binaryPath }
+            : {}),
+        },
+      }),
     });
-    if (setupResult.status !== 0) {
-      throw new Error(setupResult.stderr.trim() || 'Failed to install relay runtime files');
+
+    const envelope = parseJsonLinesBestEffort<{
+      ok?: unknown;
+      kind?: unknown;
+      data?: { relayUrl?: unknown; mode?: unknown };
+      error?: { message?: unknown };
+    }>(result.stdout);
+    if (result.status !== 0 || envelope?.ok !== true || envelope.kind !== 'relay_host_install') {
+      const remoteMessage = typeof envelope?.error?.message === 'string'
+        ? envelope.error.message.trim()
+        : '';
+      throw new Error(
+        remoteMessage
+        || result.stderr.trim()
+        || 'Remote canonical relay installer failed',
+      );
     }
 
-    await installRemoteService({
-      deps,
-      ssh: params.ssh,
-      knownHostsMode,
-      backend,
-      definitionPath,
-      definitionContents,
-      serviceName: effectiveServiceName,
-      legacySystemdServiceNameToRemove,
-      legacySystemdDefinitionPathToRemove,
-      legacyLaunchdServiceNameToRemove,
-      legacyLaunchdDefinitionPathToRemove,
-    });
+    const relayUrl = typeof envelope.data?.relayUrl === 'string'
+      ? envelope.data.relayUrl.trim()
+      : '';
+    const installedMode = envelope.data?.mode === 'system' ? 'system' : envelope.data?.mode === 'user' ? 'user' : null;
+    if (!relayUrl || !installedMode) {
+      throw new Error('Remote canonical relay installer returned an unsupported response');
+    }
 
-    const portRaw = renderedEnv.parsed.PORT;
-    const parsedPort = typeof portRaw === 'string' ? Number.parseInt(portRaw.trim(), 10) : Number.NaN;
-    const port = Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535
-      ? parsedPort
-      : defaults.serverPort;
-
-    const relayUrl = resolveConfiguredSelfHostBaseUrl({
-      fallbackBaseUrl: `http://127.0.0.1:${port}`,
-      envText: renderedEnv.envText,
-    });
-    await assertRemoteRelayRuntimeHealthy({
-      deps,
-      ssh: params.ssh,
-      knownHostsMode,
-      backend,
-      relayUrl,
-      healthPath: defaults.healthPath,
-      stderrPath,
-    });
-
-    return {
-      relayUrl,
-      mode,
-    };
+    return { relayUrl, mode: installedMode };
   }
-
   async function assertRemoteRelayRuntimeHealthy(params: Readonly<{
     deps: RelayHostEngineDeps;
     ssh: SystemTaskSshConnectionConfig;
