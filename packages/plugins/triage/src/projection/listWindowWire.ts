@@ -1,0 +1,159 @@
+import type {
+    TriageListEntriesResultV1,
+} from '../actions/listEntriesProtocol.js';
+import { MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1 } from '../actions/listEntriesProtocol.js';
+import type { ProjectedObservationV1 } from '../corpus/fold/projectedObservation.js';
+import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
+import type { TriageListRowV1, TriageListWindowV1 } from './listWindow.js';
+
+/**
+ * The one projection between the assembled window and the list Action's wire.
+ *
+ * Both directions live here because they are one contract. The window the fold
+ * produces holds every connection's complete answer; the wire cannot, because
+ * every Action result crosses a hard 1 MiB host gate that rejects the whole
+ * value rather than truncating it, and a maximal window already spends four
+ * fifths of that gate on one snapshot per row. So the wire carries the rendered
+ * connection's answer in full, every other connection's answer in one line, and
+ * the count that keeps a wider set honest.
+ *
+ * Keeping the inverse beside it is what makes the mounted store's rehydration
+ * checkable against the same rule instead of guessing at it.
+ */
+
+type WireRows = TriageListEntriesResultV1['window']['rows'];
+type WireRow = WireRows[number];
+
+function byInstanceIdAscending(left: string, right: string): number {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+}
+
+/**
+ * The one connection's answer the row is rendered from.
+ *
+ * It follows the decision the fold already made rather than making a second
+ * one: the selected connection when a connection was selectable, and otherwise
+ * the newest present answer — which is exactly the order the display projection
+ * reads in. A row with no present answer anywhere still carries its newest
+ * answer, so `presence` and the identity-only display have the observation they
+ * describe.
+ */
+function renderedObservation(row: TriageListRowV1): ProjectedObservationV1 | undefined {
+    if (row.selected.kind === 'selected') {
+        const selectedInstanceId = row.selected.sourceInstanceId;
+        for (const observation of row.observations) {
+            if (observation.sourceInstanceId !== selectedInstanceId) continue;
+            if (observation.outcome.kind === 'present') return observation;
+        }
+    }
+    let newestPresent: ProjectedObservationV1 | undefined;
+    let newest: ProjectedObservationV1 | undefined;
+    for (const observation of row.observations) {
+        if (newest === undefined || observation.observedAtMs > newest.observedAtMs) newest = observation;
+        if (observation.outcome.kind !== 'present') continue;
+        if (newestPresent === undefined || observation.observedAtMs > newestPresent.observedAtMs) {
+            newestPresent = observation;
+        }
+    }
+    return newestPresent ?? newest;
+}
+
+/**
+ * The newest answer of each connection that answered for this entry.
+ *
+ * One connection answering twice in a pass — the same entry on two pages — is
+ * one connection, not two: the row reports who observed it, and a duplicate
+ * would both overstate `observedByCount` and spend a slot another connection
+ * needs.
+ */
+function newestByConnection(row: TriageListRowV1): Map<string, ProjectedObservationV1> {
+    const byConnection = new Map<string, ProjectedObservationV1>();
+    for (const observation of row.observations) {
+        const current = byConnection.get(observation.sourceInstanceId);
+        if (current !== undefined && current.observedAtMs >= observation.observedAtMs) continue;
+        byConnection.set(observation.sourceInstanceId, observation);
+    }
+    return byConnection;
+}
+
+/**
+ * The other connections, attention first and then by stable id.
+ *
+ * The id order is deliberate: two connections' observation clocks come from two
+ * machines and are not comparable, so ordering by them would make the wire
+ * depend on a comparison the rest of this projection refuses to make. Putting
+ * the attention connection first is what keeps a row from naming a connection
+ * in `attention` that its own list omits.
+ */
+function otherObservations(
+    row: TriageListRowV1,
+    byConnection: ReadonlyMap<string, ProjectedObservationV1>,
+    renderedInstanceId: string,
+): WireRow['otherObservations'] {
+    const attentionInstanceId = row.attention?.fromSourceInstanceId;
+    const rest = [...byConnection.values()]
+        .filter((observation) => observation.sourceInstanceId !== renderedInstanceId
+            && observation.sourceInstanceId !== attentionInstanceId)
+        .sort((left, right) => byInstanceIdAscending(left.sourceInstanceId, right.sourceInstanceId));
+    const attention = attentionInstanceId === undefined || attentionInstanceId === renderedInstanceId
+        ? undefined
+        : byConnection.get(attentionInstanceId);
+    return (attention === undefined ? rest : [attention, ...rest])
+        .slice(0, MAX_TRIAGE_LIST_ROW_OTHER_OBSERVATIONS_V1)
+        .map((observation) => ({
+            sourceInstanceId: observation.sourceInstanceId,
+            observedAtMs: observation.observedAtMs,
+            kind: observation.outcome.kind,
+        }));
+}
+
+/** Project one assembled window's rows onto the list Action's wire. */
+export function toTriageListWireRows(window: TriageListWindowV1): WireRows {
+    const rows: WireRow[] = [];
+    for (const row of window.rows) {
+        const observation = renderedObservation(row);
+        // A row exists because some connection answered for it, so the fold
+        // cannot produce one without an observation; there is simply nothing to
+        // project when it somehow did.
+        if (observation === undefined) continue;
+        const byConnection = newestByConnection(row);
+        rows.push({
+            entryRef: row.entryRef,
+            lane: row.lane,
+            sortAtMs: row.sortAtMs,
+            presence: {
+                kind: row.presence.kind,
+                ...(row.presence.observedAtMs === null ? {} : { observedAtMs: row.presence.observedAtMs }),
+            },
+            ...(row.attention === null ? {} : { attention: row.attention }),
+            selected: row.selected,
+            observation,
+            otherObservations: otherObservations(row, byConnection, observation.sourceInstanceId),
+            observedByCount: byConnection.size,
+        });
+    }
+    return rows;
+}
+
+/**
+ * The observations of one connection, rehydrated with the canonical ref each
+ * row carries.
+ *
+ * It reads only the rendered observation, and that is exact rather than lossy
+ * for its one caller: the mounted store drives exactly one connection per pass,
+ * so every observation in that result belongs to that connection and is the one
+ * the row is rendered from. The compact members describe connections this store
+ * reads through their own passes, which is where their content comes from.
+ */
+export function laneObservationsFromWire(
+    result: TriageListEntriesResultV1,
+    sourceInstanceId: string,
+): readonly CorpusQualifiedObservationV1[] {
+    const observations: CorpusQualifiedObservationV1[] = [];
+    for (const row of result.window.rows) {
+        if (row.observation.sourceInstanceId !== sourceInstanceId) continue;
+        observations.push({ ...row.observation, entryRef: row.entryRef });
+    }
+    return observations;
+}

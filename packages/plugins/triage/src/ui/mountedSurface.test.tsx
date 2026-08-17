@@ -1,0 +1,390 @@
+// @vitest-environment jsdom
+import { act } from 'react';
+import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
+import {
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+    TriageConfiguredSourceInstanceV1Schema,
+    type TriageConfiguredSourceInstanceV1,
+    type TriageScanInputV1,
+    type TriageScanResultV1,
+    type TriageSourceScanObservationV1,
+} from '@happier-dev/triage-protocol/v1';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import {
+    listTriageEntries,
+    type TriageAdmittedOperationExecutorV1,
+    type TriageAdmittedSourceV1,
+} from '../actions/listEntries.js';
+import {
+    TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
+    TriageListEntriesInputV1Schema,
+} from '../actions/listEntriesProtocol.js';
+import { listTriagePinnedEntries } from '../actions/userMarks.js';
+import {
+    TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
+    TriageListPinnedEntriesInputV1Schema,
+} from '../actions/userMarksProtocol.js';
+import { renderSurface as renderPickerSurface } from '../composer/entryPicker.js';
+import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
+import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
+import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import {
+    testkitLocator,
+    testkitSnapshot,
+    testkitViewer,
+} from '../corpus/testkit/observations.test-support.js';
+import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { renderSurface as renderShellSurface } from './surface.js';
+
+/**
+ * The mounted PRs & Issues vertical, driven end to end through the real host
+ * boundary.
+ *
+ * Nothing here stands in for the aggregate: the surface invokes the published
+ * Action through the SDK's own mounted Host API client, which reaches the real
+ * `listTriageEntries` handler, which reads the real declared Collection, walks
+ * the real published `scan` protocol against fixture sources, folds through the
+ * real window owner, and comes back through the one mounted window store into a
+ * real React Native Web render. Only three genuine boundaries are replaced: the
+ * Account Collection store, the host's admitted-contribution view, and the
+ * fixture sources themselves.
+ *
+ * The second mount is the point of the test. The shell page and the Composer
+ * picker are independent surfaces of one plugin with independent host-stamped
+ * windows, and the vertical is only correct if opening the picker walks no
+ * source at all and says so, rather than silently starting a second walk of
+ * every configured source behind a popover.
+ */
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const SOURCE_A = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
+const SOURCE_B = Object.freeze({ pluginId: 'happier.other.source', localId: 'other-forge' });
+const INSTANCE_A = '11111111-1111-4111-8111-111111111111';
+const INSTANCE_B = '22222222-2222-4222-8222-222222222222';
+
+type ScanFn = (input: TriageScanInputV1) => Promise<TriageScanResultV1>;
+
+function configuredInstance(
+    source: Readonly<{ pluginId: string; localId: string }>,
+    sourceInstanceId: string,
+): TriageConfiguredSourceInstanceV1 {
+    return TriageConfiguredSourceInstanceV1Schema.parse({
+        v: 1,
+        instance: { source, sourceInstanceId },
+        binding: {
+            purpose: 'triage-source',
+            account: { service: { pluginId: source.pluginId, localId: 'accounts' }, accountId: 'account-1' },
+        },
+        localInstanceKey: 'example/repository',
+        configuration: { v: 1, token: 'routing-token' },
+        locator: { v: 1, displayLabel: 'example/repository' },
+    });
+}
+
+function instanceRow(
+    tagSeed: string,
+    source: Readonly<{ pluginId: string; localId: string }>,
+    sourceInstanceId: string,
+    configuredAtMs: number,
+): CorpusSourceInstanceRowV1 {
+    return {
+        instanceTag: `${tagSeed}${'0'.repeat(43 - tagSeed.length)}`,
+        sourceQualifiedId: `${source.pluginId}/${source.localId}`,
+        lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active,
+        configuredAtMs,
+        configured: configuredInstance(source, sourceInstanceId),
+    };
+}
+
+function presentObservation(input: Readonly<{
+    entryId: string;
+    title: string;
+    sourceUpdatedAtMs: number;
+    involvement?: readonly 'reviewRequested'[];
+}>): TriageSourceScanObservationV1 {
+    return {
+        kind: 'present',
+        localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: input.entryId },
+        locator: testkitLocator(),
+        snapshot: testkitSnapshot({ title: input.title }),
+        viewer: testkitViewer(input.involvement ? { involvement: input.involvement } : {}),
+        sourceUpdatedAtMs: input.sourceUpdatedAtMs,
+    };
+}
+
+function createHarness() {
+    const { collections, control } = createTestkitCorpusCollections();
+    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1)));
+    control.sourceInstances.seed(toCorpusStoredValue(instanceRow('b', SOURCE_B, INSTANCE_B, 2)));
+
+    const scans = new Map<object, ScanFn>();
+    const scanCalls = { count: 0 };
+    const state = { sourceBFails: false };
+
+    function admittedSource(
+        source: Readonly<{ pluginId: string; localId: string }>,
+        scan: ScanFn,
+    ): TriageAdmittedSourceV1 {
+        const handle = { role: 'scan', of: source.localId };
+        scans.set(handle, scan);
+        // The admitted entry is a host-created value whose operation handles are
+        // deliberately non-constructible; a fixture stands in for the host at
+        // that exact boundary and nowhere else.
+        return {
+            contributor: {
+                pluginId: source.pluginId,
+                contributionId: source.localId,
+                immutableGenerationId: 'generation-1',
+            },
+            protocol: {
+                id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+                version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+            },
+            descriptor: {
+                v: 1,
+                purpose: 'triage-source',
+                displayName: 'Example forge',
+                kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
+            },
+            operations: { listInstances: {}, scan: handle, get: {} },
+            surfaces: { detail: {} },
+        } as unknown as TriageAdmittedSourceV1;
+    }
+
+    const scanA: ScanFn = async (input) => {
+        scanCalls.count += 1;
+        if (input.page.kind === 'initial') {
+            return {
+                kind: 'page',
+                observations: [presentObservation({
+                    entryId: '1',
+                    title: 'Replace the duplicated normalizer',
+                    sourceUpdatedAtMs: 3_000,
+                    involvement: ['reviewRequested'],
+                })],
+                evidence: { kind: 'partial', reason: 'more-pages' },
+                continuation: { v: 1, token: 'page-2' },
+            };
+        }
+        return {
+            kind: 'complete',
+            observations: [presentObservation({ entryId: '2', title: 'Older change', sourceUpdatedAtMs: 1_000 })],
+            evidence: { kind: 'walkFinished' },
+        };
+    };
+
+    const scanB: ScanFn = async () => {
+        scanCalls.count += 1;
+        if (state.sourceBFails) {
+            return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } };
+        }
+        return {
+            kind: 'complete',
+            observations: [presentObservation({ entryId: '3', title: 'Middle change', sourceUpdatedAtMs: 2_000 })],
+            evidence: { kind: 'walkFinished' },
+        };
+    };
+
+    const admitted = [admittedSource(SOURCE_A, scanA), admittedSource(SOURCE_B, scanB)];
+    const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
+        const scan = scans.get(operation as unknown as object);
+        if (scan === undefined) throw new Error('No admitted scan handle for this operation.');
+        return await scan(input);
+    };
+
+    const actionCalls: string[] = [];
+
+    /**
+     * The host's Action dispatcher. It admits the surface's request through the
+     * published input schema before the handler sees it, so a surface that sent
+     * something the wire would reject fails here rather than rendering.
+     */
+    async function executeAction(request: Readonly<{ action: unknown; input: unknown }>) {
+        actionCalls.push(String(request.action));
+        // The shell also reads the reader's durable pins. It is a different
+        // Collection and a different Action, and it reaches no source at all.
+        if (String(request.action) === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
+            return await listTriagePinnedEntries(
+                TriageListPinnedEntriesInputV1Schema.parse(request.input),
+                { collections, nowMs: () => Date.now() },
+            );
+        }
+        const parsed = TriageListEntriesInputV1Schema.parse(request.input);
+        return await listTriageEntries(parsed, {
+            sourceInstances: collections.sourceInstances,
+            readAdmittedSources: async () => admitted,
+            executeScan,
+            nowMs: () => Date.now(),
+        });
+    }
+
+    return { actionCalls, executeAction, scanCalls, state };
+}
+
+const mounted: PluginUiTestkit[] = [];
+
+async function mountSurface(
+    surface: RenderSurface,
+    harness: ReturnType<typeof createHarness>,
+    viewId: string,
+): Promise<PluginUiTestkit> {
+    // Mounting starts the window's first cycle, so the whole mount is driven
+    // inside `act` — otherwise the render the cycle causes lands after the
+    // helper returns and React reports an unacted update.
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+        fixture = await createPluginUiTestkit({
+            identity: {
+                pluginId: 'happier.triage',
+                pluginVersion: '0.0.0',
+                viewId,
+                generation: `${viewId}-mount`,
+            },
+            surface,
+            surfaceContext: createSurfaceContextFixture(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            handlers: {
+                executeAction: async ({ action, input }) => (
+                    await harness.executeAction({ action, input })
+                ),
+            },
+        });
+    });
+    mounted.push(fixture);
+    return fixture;
+}
+
+/** Settle the cycle the mount already started; `flush` joins it rather than adding one. */
+async function settleWindow(trigger: 'view' | 'manual'): Promise<void> {
+    await act(async () => {
+        await refreshTriageListWindow(trigger);
+    });
+}
+
+async function visibleTexts(fixture: PluginUiTestkit, contents: readonly string[]): Promise<void> {
+    for (const content of contents) {
+        await expect(fixture.getByText(content)).resolves.toEqual({ content });
+    }
+}
+
+afterEach(async () => {
+    // Disposal is what releases each surface's acquisition, and the last release
+    // retires the shared window — so a leaked mount here would silently hand the
+    // next test a store bound to a retired host.
+    for (const fixture of mounted.splice(0)) await fixture.dispose();
+});
+
+describe('the mounted PRs & Issues surface', () => {
+    it('renders one window assembled from every configured source', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view');
+
+        await visibleTexts(shell, [
+            'Replace the duplicated normalizer',
+            'Middle change',
+            'Older change',
+            'Up to date',
+        ]);
+        // The window is the aggregate's, not one source's: source A walked two
+        // pages and source B one, all through a single Action invocation family.
+        expect(harness.scanCalls.count).toBe(3);
+        expect(harness.actionCalls).toContain(TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1);
+        // Everything else the mount asked for is the durable-pin read, which
+        // touches no source. A surprise Action would fail here.
+        const beyondTheWindow = harness.actionCalls
+            .filter((action) => action !== TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1);
+        expect(new Set(beyondTheWindow))
+            .toEqual(new Set([TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1]));
+    });
+
+    it('opens the Composer picker without walking a single source', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view');
+        const scansAfterList = harness.scanCalls.count;
+
+        const picker = await mountSurface(renderPickerSurface, harness, 'triage-entry-picker');
+
+        // `REQ-14`. Mounting the PRs & Issues page is a named materialization
+        // producer; opening a Composer control is not. The picker is its own UI
+        // artifact with its own host-stamped window, so it can never inherit
+        // this page's rows — and the honest answer to that is the cold state
+        // and an explicit Refresh, never an empty list and never a hidden walk.
+        expect(harness.scanCalls.count).toBe(scansAfterList);
+        await visibleTexts(picker, ['Refresh to read your connected sources.']);
+        await expect(picker.queryByText('No sources are configured')).resolves.toBeUndefined();
+        await visibleTexts(shell, ['Replace the duplicated normalizer']);
+
+        // The reader asks, and only then does the picker read.
+        await settleWindow('manual');
+        expect(harness.scanCalls.count).toBeGreaterThan(scansAfterList);
+        await visibleTexts(picker, ['Replace the duplicated normalizer', 'Middle change', 'Older change']);
+        expect(await picker.getAllByRole('button', { name: 'Attach Middle change' })).toHaveLength(1);
+    });
+
+    it('keeps the last known list on screen when a source fails to refresh', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view');
+
+        harness.state.sourceBFails = true;
+        await settleWindow('manual');
+
+        // The failing connection's entry is still listed: a transient provider
+        // error must never be shown as "nothing needs you". The reason is
+        // retained beside the rows, and the list stops claiming to be current.
+        await visibleTexts(shell, [
+            'Replace the duplicated normalizer',
+            'Middle change',
+            'Older change',
+            'Showing the last known list',
+            'Some sources could not be read',
+        ]);
+        await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
+    });
+
+    it('keeps serving the picker after the page that opened the window unmounts', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view');
+        const picker = await mountSurface(renderPickerSurface, harness, 'triage-entry-picker');
+        await settleWindow('view');
+
+        // The page that happened to create the window goes away while the
+        // picker is still open. A window that had captured that mount's Host API
+        // would now fail every pass it runs for the surface still on screen.
+        await mounted.splice(mounted.indexOf(shell), 1)[0]?.dispose();
+        const before = harness.scanCalls.count;
+        await settleWindow('manual');
+
+        expect(harness.scanCalls.count).toBeGreaterThan(before);
+        await visibleTexts(picker, ['Replace the duplicated normalizer', 'Middle change']);
+    });
+
+    it('reads the provider again only when the reader asks', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
+        await settleWindow('view');
+        const afterMount = harness.scanCalls.count;
+
+        // View demand inside the one shared minimum interval joins instead of
+        // multiplying. Nothing in this surface repeats on its own: there is no
+        // timer, interval or poller to wait out.
+        await settleWindow('view');
+        expect(harness.scanCalls.count).toBe(afterMount);
+
+        await shell.press(await shell.getByRole('button', { name: 'Refresh' }));
+        await settleWindow('manual');
+
+        // Explicit Refresh is the user asking, and the user is never paced.
+        expect(harness.scanCalls.count).toBeGreaterThan(afterMount);
+    });
+});

@@ -1,0 +1,21 @@
+{
+  "name": "@happier-dev/triage-qa",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Triage QA harness: the single closeout owner for QA-PROTOCOL section 3 coverage, section 4 recipe derivation, and the PLAN section 7.3 computable-count rule.",
+  "type": "module",
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "node bin/derive-qb-coverage.mjs --quiet && node bin/check-computable-counts.mjs --quiet && vitest run --config vitest.config.ts",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
+    "qb:coverage": "node bin/derive-qb-coverage.mjs",
+    "qb:counts": "node bin/check-computable-counts.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
