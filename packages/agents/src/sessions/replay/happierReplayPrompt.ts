@@ -425,7 +425,7 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
     params.workState,
     maxPromptChars ? Math.floor(maxPromptChars / WORK_STATE_BUDGET_SHARE) : null,
   );
-  const workStateLines = workStateBlock ? [WORK_STATE_SECTION_MARKER, workStateBlock, ''] : [];
+  let workStateLines = workStateBlock ? [WORK_STATE_SECTION_MARKER, workStateBlock, ''] : [];
 
   const buildPrefix = (summary: readonly string[]): string =>
     [
@@ -452,6 +452,14 @@ export function buildHappierReplayPromptFromDialog(params: Readonly<{
 
   if (!maxPromptChars) {
     return buildPrefix(summaryLines) + tailLines.join('\n') + buildSuffix(summaryLines.length > 0);
+  }
+
+  // The snapshot sits in the frame, and the frame is never cut — so at a cap that can carry a little
+  // conversation but not the frame PLUS the snapshot, charging the frame for it would return nothing
+  // at all. Trading a small brief for no brief is the very context loss the snapshot exists to
+  // prevent, so here the conversation outranks the snapshot.
+  if (workStateLines.length > 0 && maxPromptChars - (buildPrefix([]).length + buildSuffix(false).length) <= 0) {
+    workStateLines = [];
   }
 
   const framingLen = buildPrefix([]).length + buildSuffix(false).length;

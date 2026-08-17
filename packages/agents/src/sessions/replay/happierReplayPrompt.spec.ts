@@ -655,6 +655,38 @@ describe('buildHappierReplayPromptFromDialog — departing work-state snapshot',
     expect(offenders).toEqual([]);
   });
 
+  it('never turns a deliverable seed into no seed at all', () => {
+    // The snapshot lives in the frame, and the frame is never cut. At a tight configured cap that
+    // is enough to carry a little conversation but not the frame PLUS a snapshot, charging the
+    // frame for the snapshot would return '' — trading a small brief for no brief, which is the
+    // context loss the snapshot exists to prevent. The conversation outranks the snapshot here.
+    const workState = buildWorkState(
+      Array.from({ length: 6 }, (_unused, index) => ({
+        id: `i${index}`,
+        kind: 'task' as const,
+        status: 'active' as const,
+        title: `Work item ${index} `.padEnd(90, 'x'),
+      })),
+    );
+    const base = {
+      previousSessionId: '0123456789abcdef0123456789abcdef',
+      continuity: 'same_session_agent_change' as const,
+      strategy: 'recent_messages' as const,
+      recentMessagesCount: 16,
+      dialog: [{ role: 'User' as const, createdAt: 1, text: 'Please refactor the payment module.' }],
+    };
+
+    const offenders: number[] = [];
+    for (let maxPromptChars = 200; maxPromptChars <= 2_000; maxPromptChars += 1) {
+      const without = buildHappierReplayPromptFromDialog({ ...base, maxPromptChars });
+      const withSnapshot = buildHappierReplayPromptFromDialog({ ...base, maxPromptChars, workState });
+      if (without && !withSnapshot) offenders.push(maxPromptChars);
+      if (withSnapshot.length > maxPromptChars) offenders.push(maxPromptChars);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
   it('keeps the work-state snapshot when the dispatch-time reservation shrinks the seed', () => {
     const maxPromptChars = 900;
     const seedText = buildHappierReplayPromptFromDialog({
