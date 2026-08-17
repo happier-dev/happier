@@ -662,4 +662,43 @@ describe('createOnChildExited', () => {
     expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(pid);
     expect(pidToTrackedSession.has(pid)).toBe(false);
   });
+
+  it('completes the exit lifecycle when terminal-host recovery registration fails', async () => {
+    const pid = 791;
+    const tracked = {
+      pid,
+      startedBy: 'daemon',
+      happySessionId: 'session-recovery-registration-failed',
+    };
+    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const spawnCleanup = vi.fn();
+    const spawnResourceCleanupByPid = new Map<number, () => void>([[pid, spawnCleanup]]);
+    const removeSessionMarkerFn = vi.fn(async () => {});
+    const stageObservedExitFn = vi.fn(async () => ({ status: 'staged' as const, markerPid: pid }));
+    const onFinalTrackedSessionExitStaged = vi.fn(async () => {
+      throw new Error('terminal_attachment_unavailable_after_runner_exit');
+    });
+
+    const onChildExited = createOnChildExited({
+      pidToTrackedSession,
+      spawnResourceCleanupByPid,
+      sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => ({
+        enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => {}),
+      }) as any,
+      stageObservedExitFn,
+      removeSessionMarkerFn,
+      shouldPreserveSessionMarkerOnExit: () => true,
+      onFinalTrackedSessionExitStaged,
+    } as any);
+
+    // A retention failure is a lost recovery affordance, not an un-observed exit:
+    // the runner is provably gone, so `stop-session` must still be able to prove it.
+    await expect(onChildExited(pid, { reason: 'process-exited', code: 0, signal: null }))
+      .resolves.toBeUndefined();
+
+    expect(onFinalTrackedSessionExitStaged).toHaveBeenCalledOnce();
+    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(spawnCleanup).toHaveBeenCalledOnce();
+  });
 });

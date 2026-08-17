@@ -178,12 +178,19 @@ export function createOnChildExited(params: Readonly<{
             observedAt,
           });
         } catch (error) {
-          logger.warn('[DAEMON RUN] Failed to retain terminal-host recovery after observed runner exit', {
+          // The runner exit is already durably staged above; this step only
+          // registers the disconnected terminal host as a RECOVERY candidate.
+          // Losing that affordance must not un-observe a proven exit: aborting
+          // here left the dead pid tracked forever, so every later
+          // `stop-session` re-entered this path, could never prove the runner
+          // had exited, and the Session became permanently unstoppable — and
+          // therefore unswitchable. A host that outlives its runner is still
+          // reachable through `stopSession`'s stranded-terminal recovery.
+          logger.warn('[DAEMON RUN] Failed to retain terminal-host recovery after observed runner exit; completing the exit lifecycle', {
             sessionId: tracked.happySessionId,
             pid,
             error,
           });
-          throw error;
         }
       }
       if (shouldReportSessionEnd && isUnexpected && typeof tracked.happySessionId === 'string' && tracked.happySessionId.trim().length > 0) {
