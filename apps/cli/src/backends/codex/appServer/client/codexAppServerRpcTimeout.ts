@@ -1,4 +1,5 @@
 const STARTUP_RPC_METHODS = new Set(['thread/start', 'thread/resume']);
+const FORK_RPC_METHODS = new Set(['thread/fork', 'conversation/fork']);
 
 function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number): number {
     const raw = Number.parseInt(String(rawValue ?? ''), 10);
@@ -28,10 +29,23 @@ export function readCodexAppServerResumeRecoveryTimeoutMs(env?: NodeJS.ProcessEn
     return Math.max(startupTimeoutMs, configured);
 }
 
+export function readCodexAppServerForkRpcTimeoutMs(env?: NodeJS.ProcessEnv, baseTimeoutMs?: number): number {
+    const base = baseTimeoutMs ?? readCodexAppServerRpcTimeoutMs(env);
+    const configured = clampRpcTimeoutMs(
+        env?.HAPPIER_CODEX_APP_SERVER_FORK_RPC_TIMEOUT_MS,
+        5 * 60_000,
+        5 * 60_000,
+    );
+    return Math.max(base, configured);
+}
+
 export function readCodexAppServerRequestTimeoutMs(method: string, env?: NodeJS.ProcessEnv): number {
     const baseTimeoutMs = readCodexAppServerRpcTimeoutMs(env);
     if (STARTUP_RPC_METHODS.has(method)) {
         return readCodexAppServerStartupRpcTimeoutMs(env, baseTimeoutMs);
+    }
+    if (FORK_RPC_METHODS.has(method)) {
+        return readCodexAppServerForkRpcTimeoutMs(env, baseTimeoutMs);
     }
     return baseTimeoutMs;
 }

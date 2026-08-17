@@ -29,6 +29,16 @@ describe('codexAppServerRpcTimeout', () => {
         expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);
     });
 
+    it('gives native fork requests a dedicated five-minute window without inflating ordinary RPCs', () => {
+        const env = {
+            HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '1200',
+        } as NodeJS.ProcessEnv;
+
+        expect(readCodexAppServerRequestTimeoutMs('thread/fork', env)).toBe(5 * 60_000);
+        expect(readCodexAppServerRequestTimeoutMs('conversation/fork', env)).toBe(5 * 60_000);
+        expect(readCodexAppServerRequestTimeoutMs('model/list', env)).toBe(1200);
+    });
+
     it('ensures startup timeout is never lower than the base timeout', () => {
         const env = {
             HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '25000',
