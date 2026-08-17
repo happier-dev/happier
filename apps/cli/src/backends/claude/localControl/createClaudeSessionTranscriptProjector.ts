@@ -353,8 +353,8 @@ export function createClaudeSessionTranscriptProjector(params: Readonly<{
           updatedAt: visibleTimestampMs,
           provenance: { kind: 'non_dependent', source: 'history' },
         }).then((result) => {
-          if (!result.persisted || !result.delivered) {
-            throw new Error('Claude historical transcript observation was not server-acknowledged');
+          if (!result.persisted) {
+            throw new Error('Claude historical transcript observation did not reach durable custody');
           }
         }));
       }, { historicalReplay: true });

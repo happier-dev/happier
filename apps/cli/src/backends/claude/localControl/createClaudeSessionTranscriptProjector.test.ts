@@ -258,7 +258,7 @@ describe('createClaudeSessionTranscriptProjector model adoption', () => {
     expect(fixture.session.client.sendClaudeSessionMessageCommitted).not.toHaveBeenCalled();
   });
 
-  it('does not release historical recovery before the observation is server-acknowledged', async () => {
+  it('releases file replay after durable local custody even when server delivery is still pending', async () => {
     const fixture = createSessionFixture();
     vi.mocked(fixture.session.client.sendClaudeSessionMessageCommitted!).mockResolvedValueOnce({
       persisted: true,
@@ -272,7 +272,7 @@ describe('createClaudeSessionTranscriptProjector model adoption', () => {
     await expect(projector.observeCommitted(buildAssistantRow({
       uuid: 'historical-assistant-awaiting-delivery',
       timestamp: '2026-08-04T10:11:12.345Z',
-    }))).rejects.toThrow('server-acknowledged');
+    }))).resolves.toBeUndefined();
   });
 
   it('adopts the effective model from non-sidechain assistant transcript rows into session models metadata', () => {
