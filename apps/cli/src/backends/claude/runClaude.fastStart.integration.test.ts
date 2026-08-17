@@ -329,7 +329,7 @@ vi.mock('@/agent/runtime/permission/startupPermissionModeSeed', () => ({
 }));
 
 vi.mock('@/agent/runtime/runnerTerminationOutcome', () => ({
-  computeRunnerTerminationOutcome: vi.fn(() => ({ kind: 'exit', code: 0 })),
+  computeRunnerTerminationOutcome: vi.fn(() => ({ exitCode: 0, terminationReason: 'Exited normally' })),
 }));
 
 vi.mock('@/backends/claude/sdk/metadataExtractor', () => ({
@@ -1169,7 +1169,7 @@ describe('runClaude fast-start', () => {
 
       const terminationPromise = terminationHandler.onTerminate(
         { kind: 'signal', signal: 'SIGTERM' },
-        { exitCode: 0, archive: true, archiveReason: 'Signal SIGTERM' } as RunnerTerminationOutcome,
+        { exitCode: 0, terminationReason: 'Signal SIGTERM' } as RunnerTerminationOutcome,
       );
       loopExit.resolve(0);
       await terminationPromise;
@@ -1399,7 +1399,7 @@ describe('runClaude fast-start', () => {
       if (testError) throw testError;
       expect(lastTerminationHandlerParams).not.toBeNull();
       const event: RunnerTerminationEvent = { kind: 'signal', signal: 'SIGTERM' };
-      const outcome: RunnerTerminationOutcome = { exitCode: 0, archive: false };
+      const outcome: RunnerTerminationOutcome = { exitCode: 0, terminationReason: 'Signal SIGTERM' };
       let cleanupCompleted = false;
       const cleanupPromise = Promise.resolve(lastTerminationHandlerParams!.onTerminate(event, outcome))
         .then(() => {

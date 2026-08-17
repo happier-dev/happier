@@ -133,7 +133,6 @@ import { runCodexLocalModePass } from './runtime/localModePass';
 import { resolveCodexQueuedPromptForDispatch } from './runtime/resolveCodexQueuedPromptForDispatch';
 import type { StructuredInputCatalogReaders } from '@/agent/runtime/prompt/resolveStructuredInputProviderContext';
 import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
-import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import {
     emitReadyIfIdle,
     extractCodexToolErrorText,
@@ -145,7 +144,6 @@ import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
 import { resolveRemoteModeControlSurface } from '@/ui/remoteControl/remoteModeControl';
 import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
 import { createSwitchToLocalAbortPromise } from './localControl/createSwitchToLocalAbortPromise';
-import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 import { requestSwitchToLocal as requestCodexSwitchToLocal } from './localControl/requestSwitchToLocal';
 import { runMetadataOverridesWatcherLoop } from './utils/metadataOverridesWatcher';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
@@ -1417,19 +1415,8 @@ export async function runCodex(opts: {
             });
             shouldExit = true;
             await handleAbort();
-            const archiveDecision = resolveTerminationArchiveDecision({
-                startedBy: opts.startedBy,
-                event,
-                outcome,
-            });
-
-            try {
-                if (archiveDecision.archive) {
-                    await archiveAndCloseRuntimeSession(session, opts.credentials, archiveDecision.archiveReason);
-                }
-            } catch (e) {
-                logger.debug('[Codex] Failed to archive session during termination (non-fatal)', e);
-            }
+            // A terminated runtime leaves the Session inactive, never archived: archiving is a
+            // user-intent action owned by setSessionArchivedState.
 
             try {
                 await cleanupRunResourcesOnce();

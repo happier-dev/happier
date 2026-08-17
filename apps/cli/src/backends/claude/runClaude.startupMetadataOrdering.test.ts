@@ -244,7 +244,7 @@ vi.mock('@/backends/claude/sessionControls/probeClaudeInstalledRuntimeCapabiliti
 });
 
 vi.mock('@/agent/runtime/runnerTerminationOutcome', () => ({
-    computeRunnerTerminationOutcome: vi.fn(() => ({ exitCode: 0, archive: false, archiveReason: null })),
+    computeRunnerTerminationOutcome: vi.fn(() => ({ exitCode: 0, terminationReason: 'Exited normally' })),
 }));
 
 vi.mock('@/agent/runtime/runnerTerminationHandlers', () => ({

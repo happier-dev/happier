@@ -3,6 +3,27 @@ import { buildBackendTargetKey } from '@happier-dev/protocol';
 
 import { runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from './runStandardAcpProvider';
 
+/**
+ * Observes the Session itself rather than any single archive helper: every archive
+ * path ultimately writes an `archived` lifecycle through `updateMetadata`, so this
+ * catches a re-introduced archive-on-termination however it is wired.
+ */
+function sessionWasArchived(session: { updateMetadata: ReturnType<typeof vi.fn> }): boolean {
+  return session.updateMetadata.mock.calls.some((call: readonly unknown[]) => {
+    const updater = call[0];
+    if (typeof updater !== 'function') return false;
+    let next: unknown;
+    try {
+      next = (updater as (metadata: Record<string, unknown>) => unknown)({});
+    } catch {
+      return false;
+    }
+    return typeof next === 'object'
+      && next !== null
+      && (next as Record<string, unknown>).lifecycleState === 'archived';
+  });
+}
+
 function createHarness() {
   let defaultReadyCalls = 0;
   let customReadyCalls = 0;
@@ -13,7 +34,6 @@ function createHarness() {
   let permissionResetCalls = 0;
   let permissionAbortCalls = 0;
   let queueResetCalls = 0;
-  let archiveCalls = 0;
   let lastReadyNotificationPayload: Record<string, unknown> | null = null;
   let killHandler: (() => void | Promise<void>) | null = null;
   let permissionAbortError: Error | null = null;
@@ -165,9 +185,6 @@ function createHarness() {
     registerKillSessionHandlerFn: (_manager: unknown, handler: () => void | Promise<void>) => {
       killHandler = handler;
     },
-    archiveAndCloseRuntimeSessionFn: async () => {
-      archiveCalls += 1;
-    },
     cleanupBackendRunResourcesFn: async ({ keepAliveInterval, unmountUi }: any) => {
       cleanupCalls += 1;
       callOrder.push('backend-cleanup');
@@ -216,9 +233,6 @@ function createHarness() {
       },
       get queueResetCalls() {
         return queueResetCalls;
-      },
-      get archiveCalls() {
-        return archiveCalls;
       },
       get lastReadyNotificationPayload() {
         return lastReadyNotificationPayload;
@@ -951,7 +965,7 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.queueResetCalls).toBe(0);
     expect(harness.metrics.permissionAbortReasons).toEqual(['Aborted by user', 'Session ended']);
     expect(harness.metrics.permissionResetCalls).toBe(0);
-    expect(harness.metrics.archiveCalls).toBe(0);
+    expect(sessionWasArchived(harness.session)).toBe(false);
   });
 
   it('keeps final cleanup idempotent after abort cancels pending permissions', async () => {
@@ -1002,7 +1016,30 @@ describe('runStandardAcpProvider', () => {
       exitSpy.mockRestore();
     }
 
-    expect(harness.metrics.archiveCalls).toBe(0);
+    expect(sessionWasArchived(harness.session)).toBe(false);
+    expect(harness.metrics.cleanupCalls).toBe(1);
+  });
+
+  // Archiving is a user-intent action, never a lifecycle consequence. A terminal-started
+  // Session whose runtime terminates must stay unarchived so it remains listed and
+  // resumable, exactly like a daemon-started one.
+  it('leaves a terminal-started session unarchived and closed when its runtime terminates', async () => {
+    const harness = createHarness();
+    harness.opts.startedBy = 'terminal';
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(harness.metrics.killHandler).toBeTypeOf('function');
+      await harness.metrics.killHandler?.();
+    };
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(sessionWasArchived(harness.session)).toBe(false);
+    expect(harness.session.close).toHaveBeenCalled();
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
 

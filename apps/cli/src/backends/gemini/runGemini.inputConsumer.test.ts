@@ -337,14 +337,6 @@ vi.mock('@/agent/runtime/resolveAttachedRunRuntimeContext', () => ({
   })),
 }));
 
-vi.mock('@/session/services/archiveAndCloseRuntimeSession', () => ({
-  archiveAndCloseRuntimeSession: vi.fn(async () => undefined),
-}));
-
-vi.mock('@/agent/runtime/terminationArchivePolicy', () => ({
-  resolveTerminationArchiveDecision: vi.fn(() => ({ archive: false })),
-}));
-
 vi.mock('@/backends/gemini/utils/diffProcessor', () => ({
   GeminiDiffProcessor: class {
     reset(): void {}

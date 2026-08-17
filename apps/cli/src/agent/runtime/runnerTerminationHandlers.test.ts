@@ -171,11 +171,14 @@ describe('registerRunnerTerminationHandlers', () => {
     }
   });
 
-  it('archives on SIGTERM (exit 0) by default outcome', async () => {
+  it('hands SIGTERM to cleanup as a clean exit that directs no archive', async () => {
     const fakeProcess = createFakeProcess();
     const exit = vi.fn();
+    // An assertion thrown inside the async onTerminate is swallowed by the handler's own
+    // catch, so capture the outcome and assert after termination settles.
+    let observedOutcome: unknown = null;
     const onTerminate = vi.fn(async (_event, outcome) => {
-      expect(outcome.archive).toBe(true);
+      observedOutcome = outcome;
     });
 
     const handlers = registerRunnerTerminationHandlers({
@@ -189,6 +192,7 @@ describe('registerRunnerTerminationHandlers', () => {
       await handlers.whenTerminated;
 
       expect(exit).toHaveBeenCalledWith(0);
+      expect(observedOutcome).toEqual({ exitCode: 0, terminationReason: 'Signal SIGTERM' });
     } finally {
       handlers.dispose();
     }

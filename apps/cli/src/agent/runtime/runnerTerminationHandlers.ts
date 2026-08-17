@@ -53,7 +53,7 @@ function writeRunnerTerminationSessionExitReport(params: Readonly<{
         terminationKind: params.event.kind,
         terminationSignal: params.event.kind === 'signal' ? params.event.signal : null,
         terminationRequestedAt: observedAt,
-        terminationReason: params.outcome.archiveReason ?? null,
+        terminationReason: params.outcome.terminationReason,
       },
     });
   } catch {

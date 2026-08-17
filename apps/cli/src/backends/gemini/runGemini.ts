@@ -58,8 +58,6 @@ import { initializeRuntimeOverridesSynchronizer } from '@/agent/runtime/runtimeO
 import { resolvePermissionModeSeedForAgentStart } from '@/settings/permissions/permissionModeSeed';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
-import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
-import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { startSessionHeartbeatLoop } from '@/agent/runtime/session/startSessionHeartbeatLoop';
 import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
@@ -635,22 +633,11 @@ export async function runGemini(opts: {
       session.beginRuntimeTermination?.();
       void closeProviderInputAdmission();
     },
-    onTerminate: async (event, outcome) => {
+    onTerminate: async () => {
       shouldExit = true;
       await handleAbort();
-      const archiveDecision = resolveTerminationArchiveDecision({
-        startedBy: opts.startedBy,
-        event,
-        outcome,
-      });
-
-      try {
-        if (archiveDecision.archive) {
-          await archiveAndCloseRuntimeSession(session, opts.credentials, archiveDecision.archiveReason);
-        }
-      } catch (e) {
-        logger.debug('[Gemini] Failed to archive session during termination (non-fatal)', e);
-      }
+      // A terminated runtime leaves the Session inactive, never archived: archiving is a
+      // user-intent action owned by setSessionArchivedState.
 
       stopCaffeinate();
 

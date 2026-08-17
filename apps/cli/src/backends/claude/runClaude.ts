@@ -92,7 +92,6 @@ import { resolveInitialClaudeSystemPromptText } from './utils/resolveInitialClau
 import { shouldStartClaudeSessionCaffeinate } from './sessionCaffeinatePolicy';
 import { ensureManagedJavaScriptRuntimeCommand } from '@/runtime/js/managedJavaScriptRuntime';
 import { createClaudeRawMessageTurnDiffBridge } from './utils/createClaudeRawMessageTurnDiffBridge';
-import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
 import { createSessionMetadataShutdownDeadline } from '@/session/services/sessionMetadataShutdownDeadline';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
 import { publishClaudeSessionModelsMetadataBestEffort } from '@/backends/claude/sessionControls/publishClaudeSessionModelsMetadataBestEffort';
@@ -104,7 +103,6 @@ import {
     createClaudeModelEffortLevelsTracker,
     type ClaudeModelEffortLevelsTracker,
 } from '@/backends/claude/models/claudeModelEffortLevelsTracker';
-import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import { buildClaudeAgentState } from '@/backends/claude/localControl/buildClaudeAgentState';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { SessionRuntimeActivityContributionHandle } from '@/session/runtimeActivity/types';
@@ -1110,18 +1108,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
     // Setup signal handlers for graceful shutdown and crash reporting.
     const cleanup = async (event: RunnerTerminationEvent, outcome: ReturnType<typeof computeRunnerTerminationOutcome>) => {
-        const archiveDecision = resolveTerminationArchiveDecision({
-            startedBy: options.startedBy,
-            event,
-            outcome,
-        });
         restoreStdinBestEffort({ stdin: process.stdin as any });
         logger.debug('[START] Cleanup initiated', {
             kind: event.kind,
             ...(event.kind === 'signal' ? { signal: event.signal } : {}),
             exitCode: outcome.exitCode,
-            archive: archiveDecision.archive,
-            archiveReason: archiveDecision.archiveReason,
+            terminationReason: outcome.terminationReason,
             ...(event.kind === 'unhandledRejection' ? { cause: formatErrorForUi(event.reason) } : {}),
             ...(event.kind === 'uncaughtException' ? { cause: formatErrorForUi(event.error) } : {}),
         });
@@ -1144,24 +1136,18 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                     // Dispose the local permission bridge while the session transport is still alive so it can
                     // cancel and persist any outstanding local-mode permission requests.
                     disposeLocalPermissionBridge();
-                    // Share one metadata budget across drain -> archive so shutdown cannot stack waits.
+                    // Bound the critical metadata drain so shutdown cannot stack waits.
                     const metadataDeadline = createSessionMetadataShutdownDeadline();
                     await currentSession?.drainCriticalMetadataWrites({ timeoutMs: metadataDeadline.remainingMs() });
-                    if (archiveDecision.archive) {
-                        await archiveAndCloseRuntimeSession(session, credentials, archiveDecision.archiveReason, {
-                            metadataTimeoutMs: metadataDeadline.remainingMs(),
-                        });
-                    }
 
                     // Cleanup session resources (intervals, callbacks)
                     currentSession?.cleanup();
 
-                    if (!archiveDecision.archive) {
-                        // Send session death message
-                        session.sendSessionDeath();
-                        await session.flush();
-                        await session.close();
-                    }
+                    // A terminated runtime leaves the Session inactive, never archived:
+                    // archiving is a user-intent action owned by setSessionArchivedState.
+                    session.sendSessionDeath();
+                    await session.flush();
+                    await session.close();
                 } finally {
                     await runtimeActivity.lifecycle.dispose();
                 }

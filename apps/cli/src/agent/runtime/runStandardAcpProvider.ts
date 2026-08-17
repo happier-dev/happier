@@ -50,8 +50,6 @@ import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/promptLibrary/res
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import type { AgentToolsDeliveryAvailabilityResolver } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
-import { archiveAndCloseRuntimeSession } from '@/session/services/archiveAndCloseRuntimeSession';
-import { resolveTerminationArchiveDecision } from '@/agent/runtime/terminationArchivePolicy';
 import { configuration } from '@/configuration';
 
 type RuntimeForLoop = {
@@ -174,7 +172,6 @@ type StandardAcpProviderDeps = {
   runPermissionModePromptLoopFn?: typeof runPermissionModePromptLoop;
   sendReadyWithPushNotificationFn?: typeof sendReadyWithPushNotification;
   registerKillSessionHandlerFn?: typeof registerKillSessionHandler;
-  archiveAndCloseRuntimeSessionFn?: typeof archiveAndCloseRuntimeSession;
   cleanupBackendRunResourcesFn?: typeof cleanupBackendRunResources;
   renderFn?: typeof render;
 };
@@ -194,7 +191,6 @@ export async function runStandardAcpProvider(
   const runPermissionModePromptLoopFn = deps.runPermissionModePromptLoopFn ?? runPermissionModePromptLoop;
   const sendReadyWithPushNotificationFn = deps.sendReadyWithPushNotificationFn ?? sendReadyWithPushNotification;
   const registerKillSessionHandlerFn = deps.registerKillSessionHandlerFn ?? registerKillSessionHandler;
-  const archiveAndCloseRuntimeSessionFn = deps.archiveAndCloseRuntimeSessionFn ?? archiveAndCloseRuntimeSession;
   const cleanupBackendRunResourcesFn = deps.cleanupBackendRunResourcesFn ?? cleanupBackendRunResources;
   const renderFn = deps.renderFn ?? render;
 
@@ -578,22 +574,13 @@ export async function runStandardAcpProvider(
       session.beginRuntimeTermination?.();
       void closeProviderInputAdmission();
     },
-    onTerminate: async (event, outcome) => {
+    onTerminate: async () => {
       shouldExit = true;
       await handleAbort();
-      const archiveDecision = resolveTerminationArchiveDecision({
-        startedBy: opts.startedBy,
-        event,
-        outcome,
-      });
-      try {
-        if (archiveDecision.archive) {
-          await archiveAndCloseRuntimeSessionFn(session, opts.credentials, archiveDecision.archiveReason);
-          apiSessionClosedForCleanup = true;
-        }
-      } finally {
-        await cleanupOnce();
-      }
+      // A terminated runtime leaves the Session inactive, never archived: archiving is a
+      // user-intent action owned by setSessionArchivedState. cleanupOnce closes the API
+      // session so the Session projection becomes inactive and stays resumable.
+      await cleanupOnce();
     },
   });
 
