@@ -110,7 +110,13 @@ export {
   type TerminalSpecialKey,
 } from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
+export {
+  inferAgentIdFromSessionMetadata,
+  resolveAgentIdFromSessionMetadata,
+  resolveSessionMetadataAgentIdentity,
+  type SessionMetadataAgentIdentityBasis,
+  type SessionMetadataAgentIdentityV1,
+} from './resolveAgentIdFromSessionMetadata.js';
 export {
   AGENT_MODEL_CONFIG,
   getAgentModelConfig,
@@ -390,6 +396,12 @@ export {
   type HappierReplayDialogItem,
   type HappierReplayStrategy,
 } from './sessions/replay/happierReplayPrompt.js';
+export {
+  listVendorResumeIdMetadataKeys,
+  projectCurrentAgentSessionView,
+  type CurrentAgentSessionViewStatePolicyV1,
+  type CurrentAgentSessionViewTargetV1,
+} from './sessions/state/projectCurrentAgentSessionView.js';
 export { normalizeVoiceAgentTurnTranscriptText } from './voice/normalizeVoiceAgentTurnTranscriptText.js';
 
 // Provider CLI runtime surface (used by bundled products like apps/cli via @happier-dev/cli-common).
