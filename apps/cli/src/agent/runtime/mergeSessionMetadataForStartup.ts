@@ -2,6 +2,7 @@ import type { Metadata, PermissionMode } from '@/api/types';
 import {
     computeMonotonicUpdatedAt,
     LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
+    resolveMetadataStringOverrideStateV1,
     SESSION_MODE_OVERRIDE_KEY,
 } from '@happier-dev/agents';
 import {
@@ -369,8 +370,18 @@ export function mergeSessionMetadataForStartup(opts: {
     if (model) {
         (merged as any).modelOverrideV1 = buildModelOverrideV1({ updatedAt: model.updatedAt, modelId: model.modelId });
     } else if (mode === 'attach') {
-        // Attach safety: explicitly remove any next-derived override fields.
-        delete (merged as any).modelOverrideV1;
+        // Attach safety removes next-DERIVED override fields. An explicit clear is
+        // not derived — it is the value the Agent transition wrote when the armed
+        // switch chose no model. Erasing it would restore the "absent key" state
+        // that every timestamp arbiter reads as "never set", letting a
+        // client-local selection made for the departed Agent become the newest
+        // opinion again on any device that had not yet observed the clear.
+        const currentModelIntent = resolveMetadataStringOverrideStateV1(opts.current, 'modelOverrideV1', 'modelId');
+        if (currentModelIntent?.state === 'cleared') {
+            (merged as any).modelOverrideV1 = { v: 1, updatedAt: currentModelIntent.updatedAt, modelId: null };
+        } else {
+            delete (merged as any).modelOverrideV1;
+        }
     }
 
     const mcpSelection = resolveSessionMcpSelectionForStartup({

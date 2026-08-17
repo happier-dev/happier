@@ -230,6 +230,20 @@ describe('mergeSessionMetadataForStartup', () => {
         expect((merged as any).modelOverrideV1).toBeUndefined();
     });
 
+    it('preserves an explicit model clear when attaching', () => {
+        const merged = mergeSessionMetadataForStartup({
+            current: { modelOverrideV1: { v: 1, updatedAt: 2000, modelId: null } } as any,
+            next: { modelOverrideV1: { v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' } } as any,
+            nowMs: 50,
+            mode: 'attach',
+        } as any);
+
+        // Attach safety drops next-DERIVED override fields; an explicit clear is a
+        // value the Agent transition wrote, and erasing it would let a client-local
+        // selection made for the departed Agent become the newest opinion again.
+        expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 2000, modelId: null });
+    });
+
     it('applies an explicit model override with a monotonic updatedAt', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
