@@ -12,7 +12,7 @@
  * thing injected at build time is the (public, write-only) project key.
  *
  * `INGEST_ORIGIN` is a first-party path on this origin, reverse-proxied to
- * PostHog EU by functions/ingest/[[path]].ts. Two reasons, both load-bearing:
+ * PostHog EU by worker/index.ts. Two reasons, both load-bearing:
  *   1. The audience is developers. EasyPrivacy blocks `*.i.posthog.com`, so a
  *      direct integration measures the subset of our market least like our
  *      market.
@@ -26,7 +26,7 @@
 /** First-party ingest path. Proxied to PostHog Cloud EU (Frankfurt). */
 export const INGEST_ORIGIN = 'https://happier.dev/ingest';
 
-/** Where the proxy forwards to. Also used by the Pages Function. */
+/** Where the proxy forwards to. Also used by worker/index.ts. */
 export const POSTHOG_EU_ORIGIN = 'https://eu.i.posthog.com';
 
 /** PostHog EU asset host — used by the proxy for /static/*. */

@@ -5,11 +5,13 @@
  * There are exactly two ways happier.dev ends up instrumented-but-recording-
  * nothing, and neither one is visible from the browser:
  *
- *   1. THE PAGES FUNCTION IS NOT DEPLOYED. functions/ingest/[[path]].ts is only
- *      picked up when the Cloudflare Pages project's root directory is
- *      apps/website. If the project root is the repo root, `functions/` is never
- *      found, `/ingest/*` falls through to public/_redirects (which correctly has
- *      no catch-all), and every event 404s in silence.
+ *   1. THE INGEST PROXY IS NOT REACHABLE. `/ingest/*` is served by the Worker
+ *      script in worker/index.ts, and it only runs because wrangler.toml names
+ *      that prefix in `assets.run_worker_first`. Drop the prefix from that list,
+ *      or deploy without `main`, and `/ingest/*` matches no static asset, falls
+ *      through to `not_found_handling`, and every event 404s in silence.
+ *      (This was `functions/ingest/[[path]].ts` under Cloudflare Pages, where
+ *      the equivalent trap was a project root that never found `functions/`.)
  *   2. COOKIELESS MODE IS NOT ENABLED ON PROJECT 129992. posthog-js sends the
  *      `$posthog_cookieless` sentinel distinct_id; if the project setting is off,
  *      ingestion DROPS the event and still answers HTTP 200. The wire looks
