@@ -217,10 +217,10 @@ describe('callBuiltInHappierTool', () => {
     const result = await callBuiltInHappierTool({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
       sessionId: 'sess-1',
-      toolName: 'memory_search',
+      toolName: 'memory_ensure_up_to_date',
       args: {
         machineId: 'machine-1',
-        query: { q: 'needle' },
+        sessionId: 'sess-1',
       },
     });
 
@@ -229,7 +229,7 @@ describe('callBuiltInHappierTool', () => {
       errorCode: 'action_disabled',
       error: 'Action is disabled',
       details: expect.objectContaining({
-        actionId: 'memory.search',
+        actionId: 'memory.ensure_up_to_date',
         surface: 'cli',
         reason: 'unsupported_surface',
         settingsState: 'enabled',
