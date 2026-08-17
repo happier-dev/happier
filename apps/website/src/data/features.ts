@@ -3,6 +3,16 @@ import type { ImageId } from './generatedImages';
 export type FeatureImage = {
     /** Typed key into the build-generated responsive image manifest. */
     id: ImageId;
+    /**
+     * The asset already carries its own shadow, so CSS must not cast a second
+     * one.
+     *
+     * `.fpanel__art img` applies `--fp-art-shadow` because the panel art is
+     * normally a flat transparent cut-out with no plate of its own. Art that was
+     * composed with a shadow baked in gets both, which reads as a doubled,
+     * offset smear rather than as depth. Set this on those assets only.
+     */
+    ownShadow?: boolean;
 };
 
 /**
@@ -99,13 +109,14 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         accent: 'sun',
         image: {
             id: 'feature_anywhere',
+            ownShadow: true,
         },
     },
     {
         id: 'existingSessions',
         availability: 'shipped',
         eyebrow: 'Adoption-free',
-        title: 'Your existing sessions? Already here.',
+        title: 'Your existing sessions? Already there.',
         body: 'Open any Claude Code, Codex, or OpenCode session running on your machine — live, from any device. Nothing to migrate, nothing to learn.',
         visual: 'mobileAndDesktop',
         accent: 'indigo',
@@ -181,6 +192,9 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         body: 'A session can start another session, send it messages, and read its transcript — so a Claude session and a Codex session can split the work between them. Each one still runs its own subagents, on whichever backend you choose: Claude, Codex, or any ACP-compatible CLI.',
         visual: 'mobileAndDesktop',
         accent: 'magenta',
+        image: {
+            id: 'feature_sessions_team',
+        },
     },
     {
         id: 'queue',
@@ -199,6 +213,9 @@ export const PRIMARY_FEATURES: ReadonlyArray<Feature> = [
         body: 'Sessions waiting on a decision rise to a “Needs attention” group at the top of your list; everything actively running gathers under “Working.” Run a dozen agents at once and never lose the thread.',
         visual: 'mobile',
         accent: 'sun',
+        image: {
+            id: 'feature_what_needs_you',
+        },
     },
     {
         id: 'review',

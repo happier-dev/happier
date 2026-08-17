@@ -79,13 +79,31 @@ async function encodeOne(recipe, srcPath) {
     if (widths.length === 0) widths.push(meta.width);
 
     for (const w of widths) {
-        const pipe = sharp(srcPath).resize({ width: w, withoutEnlargement: true });
+        // lanczos3 is sharp's default kernel, named here because downscaling UI
+        // screenshots is the whole job: a softer kernel reads as a blurry panel
+        // long before the codec gets a chance to.
+        const pipe = sharp(srcPath).resize({ width: w, withoutEnlargement: true, kernel: 'lanczos3' });
         for (const fmt of formats) {
             const file = `${base}-${w}.${fmt}`;
             const buf =
                 fmt === 'avif'
-                    ? await pipe.clone().avif({ quality: recipe.quality?.avif ?? 50, effort: 5, chromaSubsampling: '4:2:0' }).toBuffer()
-                    : await pipe.clone().webp({ quality: recipe.quality?.webp ?? 80, effort: 5 }).toBuffer();
+                    ? await pipe
+                          .clone()
+                          .avif({
+                              quality: recipe.quality?.avif ?? 50,
+                              effort: 6,
+                              // 4:4:4, not 4:2:0. Chroma subsampling throws away
+                              // three quarters of the colour resolution, which is
+                              // invisible on photographs and very visible on what
+                              // this site actually ships: screenshots full of
+                              // coloured syntax highlighting, thin UI strokes and
+                              // small text on dark panels. 4:2:0 is what made the
+                              // panel art look smeared even where the pixel
+                              // dimensions were right.
+                              chromaSubsampling: '4:4:4',
+                          })
+                          .toBuffer()
+                    : await pipe.clone().webp({ quality: recipe.quality?.webp ?? 80, effort: 6 }).toBuffer();
             await writeFile(path.join(OUT_DIR, file), buf);
             emitted.push({ file, w, fmt, bytes: buf.length });
         }

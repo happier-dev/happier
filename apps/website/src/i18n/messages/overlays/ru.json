@@ -538,7 +538,7 @@
   "features.PRIMARY_FEATURES.customization.title": "Настраивается (почти) всё.",
   "features.PRIMARY_FEATURES.existingSessions.body": "Откройте любую сессию Claude Code, Codex или OpenCode, работающую на вашей машине, — вживую, с любого устройства. Ничего не нужно переносить, ничему не нужно учиться.",
   "features.PRIMARY_FEATURES.existingSessions.eyebrow": "Без миграции",
-  "features.PRIMARY_FEATURES.existingSessions.title": "Ваши текущие сессии? Уже здесь.",
+  "features.PRIMARY_FEATURES.existingSessions.title": "Ваши текущие сессии? Уже там.",
   "features.PRIMARY_FEATURES.machines.body": "Подключите ноутбук, десктоп, VPS или dev-машину, а потом выбирайте, на какой из них идёт каждая сессия. В списке выбора отмечено, какие из них в сети, и сессии запускаются на них. Добавьте ещё одну по SSH — из приложения или из CLI.",
   "features.PRIMARY_FEATURES.machines.eyebrow": "Все компьютеры",
   "features.PRIMARY_FEATURES.machines.title": "Запускайте сессии на всех своих компьютерах.",

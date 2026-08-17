@@ -538,7 +538,7 @@
   "features.PRIMARY_FEATURES.customization.title": "（幾乎）所有東西都能設定。",
   "features.PRIMARY_FEATURES.existingSessions.body": "從任何裝置即時開啟你機器上執行中的任何 Claude Code、Codex 或 OpenCode 工作階段。不用遷移，不用學新東西。",
   "features.PRIMARY_FEATURES.existingSessions.eyebrow": "不必改用新工具",
-  "features.PRIMARY_FEATURES.existingSessions.title": "你已有的工作階段？已經在這裡了。",
+  "features.PRIMARY_FEATURES.existingSessions.title": "你已有的工作階段？已經都在了。",
   "features.PRIMARY_FEATURES.machines.body": "連結你的筆電、桌機、一台 VPS 或一台開發機，然後挑選由哪一台執行每個工作階段。選擇器會標出哪些在線上，並在那些機器上啟動工作階段。你可以從應用程式或 CLI 透過 SSH 再加一台。",
   "features.PRIMARY_FEATURES.machines.eyebrow": "每一台電腦",
   "features.PRIMARY_FEATURES.machines.title": "在你擁有的每一台電腦上執行工作階段。",

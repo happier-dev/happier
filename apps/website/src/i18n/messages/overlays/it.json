@@ -538,7 +538,7 @@
   "features.PRIMARY_FEATURES.customization.title": "Configura (quasi) tutto.",
   "features.PRIMARY_FEATURES.existingSessions.body": "Apri qualsiasi sessione Claude Code, Codex o OpenCode in esecuzione sulla tua macchina — dal vivo, da qualsiasi dispositivo. Niente da migrare, niente da imparare.",
   "features.PRIMARY_FEATURES.existingSessions.eyebrow": "Senza migrazione",
-  "features.PRIMARY_FEATURES.existingSessions.title": "Le sessioni che hai già? Sono già qui.",
+  "features.PRIMARY_FEATURES.existingSessions.title": "Le sessioni che hai già? Sono già lì.",
   "features.PRIMARY_FEATURES.machines.body": "Collega il laptop, il desktop, un VPS o una dev box, poi scegli quale esegue ciascuna sessione. Il selettore segnala quali sono online e avvia le sessioni su quelli. Aggiungine un altro via SSH, dall’app o dalla CLI.",
   "features.PRIMARY_FEATURES.machines.eyebrow": "Ogni computer",
   "features.PRIMARY_FEATURES.machines.title": "Esegui sessioni su ogni computer che possiedi.",

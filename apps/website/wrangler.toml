@@ -18,7 +18,16 @@
 name = "happier-website"
 compatibility_date = "2026-08-17"
 main = "worker/index.ts"
+
+# No happier-website.<subdomain>.workers.dev route: the site answers on its own
+# custom domain and a second public origin serving the same pages is an SEO
+# duplicate nobody asked for.
 workers_dev = false
+# But preview URLs are NOT the workers.dev route, and they default to following
+# it — so turning workers_dev off silently disables the `--preview-alias preview`
+# deploy in promote-website.yml. Preview is where _headers, _redirects and the
+# 404 behaviour get verified before production, so it is turned back on here.
+preview_urls = true
 
 [assets]
 directory = "./dist/"

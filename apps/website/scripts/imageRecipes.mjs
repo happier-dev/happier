@@ -25,19 +25,27 @@ export const RECIPES = [
     // emitted — nobody reads a blurred backdrop at 5K and it doubles the bytes.
     {
         id: 'heroBackdropDark',
-        src: 'images/background5_black_jpg60.jpg',
+        src: 'images/background5_upscaled.png',
         widths: [640, 960, 1440, 1920, 2560],
         sizes: '100vw',
-        quality: { avif: 45, webp: 72 },
+        // Encoded from the lossless 6144x4096 PNG, not the old `_jpg60` JPEG.
+        // That JPEG was a quality-60 first pass, so every AVIF was a second
+        // lossy pass over damage it could not undo — worst case for a large
+        // smooth gradient, and the source of the banding across the planet
+        // terminator. With a clean source, 4:4:4 (see optimize-images.mjs) and
+        // quality 58, the gradient survives.
+        quality: { avif: 58, webp: 80 },
         fallbackWidth: 1920,
         fallbackFormat: 'jpeg',
     },
     {
         id: 'heroBackdropLight',
-        src: 'images/background5_white_jpg60.jpg',
+        src: 'images/background5_white_upscaled.png',
         widths: [640, 960, 1440, 1920, 2560],
         sizes: '100vw',
-        quality: { avif: 45, webp: 72 },
+        // Kept in step with the dark variant above — same lossless source, same
+        // large smooth gradient, same reason not to run it at avif 45.
+        quality: { avif: 58, webp: 80 },
         fallbackWidth: 1920,
         fallbackFormat: 'jpeg',
     },
@@ -100,15 +108,25 @@ export const RECIPES = [
     },
 
     // ---- Feature panel art -------------------------------------------------
-    // These already have hand-made @1x/@2x webp; the pipeline takes them over so
-    // there is exactly one encoder in the repo. Panel art is at most ~61% of a
-    // 1460px panel => ~890 CSS px, so 1800 is the real @2x ceiling and the
-    // existing 2000px "@2x" variants are already oversized.
+    // Panel art is at most ~61% of a 1460px panel => ~890 CSS px, so 1800 is the
+    // real @2x ceiling.
+    //
+    // WHY THE SOURCES ARE 2000px AND THERE IS EXACTLY ONE PER FEATURE.
+    // This list used to point at `<name>.png`, which was the 1000px @1x file,
+    // while a 2000px `<name>@2x.png` sat unused beside it. `optimize-images.mjs`
+    // never upscales — `widths.filter((w) => w <= meta.width)` — so of the five
+    // widths below only 480/720/900 were ever emitted, and the largest AVIF the
+    // browser could pick for an 890 CSS px panel was 900px. On any 2x display
+    // that is a half-resolution image stretched to fit, which is exactly what it
+    // looked like. The @1x/@2x pair and the hand-made webp are gone; each
+    // feature now has one 2000px source and the pipeline derives the rest.
     ...[
         'anywhere',
         'existing-sessions',
         'terminal',
         'one-tap-away',
+        'sessions-team',
+        'what-needs-you',
         'review',
         'voice',
         'mcp',
@@ -119,7 +137,10 @@ export const RECIPES = [
         src: `images/features/${name}.png`,
         widths: [480, 720, 900, 1400, 1800],
         sizes: '(max-width: 767px) 110vw, min(61vw, 890px)',
-        quality: { avif: 50, webp: 80 },
+        // These are UI screenshots — small text, thin strokes, syntax colour.
+        // 50 was tuned back when the pipeline was silently topping out at 900px,
+        // where the resampling hid what the codec was doing.
+        quality: { avif: 58, webp: 82 },
         fallbackWidth: 900,
         fallbackFormat: /** @type {'png'} */ ('png'),
     })),

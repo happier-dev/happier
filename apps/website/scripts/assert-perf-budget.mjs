@@ -104,10 +104,34 @@ export const BUDGET = {
      * is heavier and is gated by BUDGET.jsGzipLocalisedKB instead.
      */
     criticalPathKB: 330,
-    /** No single shipped image may exceed this. The old desktop.png was 1,386 KB. */
-    maxImageKB: 200,
-    /** Every image in dist/. Today 22,528 KB; after the pipeline ~5,500 KB. */
-    totalImageKB: 7000,
+    /**
+     * No single shipped image may exceed this. The old desktop.png was 1,386 KB.
+     *
+     * Raised from 200 when the feature art was fixed. The pipeline had been
+     * pointed at the 1000px @1x sources, so `widths.filter(w <= meta.width)`
+     * silently dropped the 1400 and 1800 variants and the largest panel image
+     * anyone could receive was 900px — half resolution on every 2x display.
+     * With 2000px sources the declared widths are actually emitted, and a
+     * 1800px WebP of a dense UI screenshot lands around 240 KB.
+     *
+     * This ceiling does not describe what a visitor downloads. `sizes` is
+     * `min(61vw, 890px)`, so a phone picks the 480 or 720px variant and the
+     * 1800px file is only ever fetched by a 2x desktop that asked for it. The
+     * budget that governs perceived speed is criticalPathKB above, which is
+     * unchanged and still passing.
+     */
+    maxImageKB: 280,
+    /**
+     * Every image in dist/. Today 22,528 KB; after the pipeline ~5,500 KB.
+     *
+     * Raised from 7000 for the same fix, plus two new feature panels
+     * (sessions-team, what-needs-you) and a lossless backdrop source. This is a
+     * disk-hygiene number, not a user-experienced one: no visitor loads every
+     * image on the site, every panel is lazy, and the per-route cost is bounded
+     * by criticalPathKB. Sized to the current total with room for a couple more
+     * panels, not to a round figure.
+     */
+    totalImageKB: 11000,
     /** The whole deploy artifact. Today 24 MB. */
     /**
      * Raised from 9 when the site went from 21 pages to 210.
@@ -117,8 +141,12 @@ export const BUDGET = {
      * sees before any JavaScript runs. The number is sized to the current 19.17
      * MB with room for a couple more pages, not to a round figure — a budget
      * with slack in it stops being a budget.
+     *
+     * Raised again from 22 when the feature art started emitting the 1400 and
+     * 1800px variants it had always declared, and two panels were added. The
+     * HTML term is unchanged; the growth is all lazily-fetched raster.
      */
-    totalDistMB: 22,
+    totalDistMB: 26,
 };
 
 const kb = (n) => n / 1024;

@@ -96,7 +96,7 @@
 
 html.light {
     /* Neutral, faintly cool paper — matched to the planet plate's own ground.
-       background5_white_jpg60.jpg is 44% #FCFCFC at chroma 0.01, i.e. perfectly
+       background5_white_upscaled.png is 44% #FCFCFC at chroma 0.01, i.e. perfectly
        neutral; its warmth is a light source, not a paper tone. A warm page (the
        former #F7F5F0 sat at LAB b* +2.6, hue 94° — yellow-green) fought the art
        and read as a cast. Dark mode already derives its --bg from the dark
@@ -773,7 +773,7 @@ html.js .fpanel.is-in {
     /* art is transparent now, so CSS owns its shadow — cast down-LEFT, away from
        the light the panel's star brings in from the top-right */
     --fp-art-shadow: drop-shadow(-10px 16px 26px rgba(0, 0, 0, 0.5)) drop-shadow(-2px 4px 8px rgba(0, 0, 0, 0.4));
-    --fp-star: url('/images/_opt/background5_black_jpg60-640.avif');
+    --fp-star: url('/images/_opt/background5_upscaled-640.avif');
     --fp-blend: screen;
     --fp-star-filter: saturate(1.05) brightness(0.7);
     /* The veil is the page colour laid back over the art, so it reads var(--bg)
@@ -806,7 +806,7 @@ html.light {
     --fp-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), -8px 16px 40px -34px rgba(38, 38, 48, 0.2);
     --fp-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, 0.95), -10px 22px 52px -34px rgba(38, 38, 48, 0.3);
     --fp-art-shadow: drop-shadow(-5px 9px 16px rgba(38, 38, 48, 0.15)) drop-shadow(-1px 2px 4px rgba(38, 38, 48, 0.1));
-    --fp-star: url('/images/_opt/background5_white_jpg60-640.avif');
+    --fp-star: url('/images/_opt/background5_white_upscaled-640.avif');
     --fp-blend: multiply;
     --fp-star-filter: saturate(1.02) brightness(1.04);
     --fp-veil: linear-gradient(202deg,
@@ -882,6 +882,13 @@ html.light {
     max-width: none;
     user-select: none;
     filter: var(--fp-art-shadow);
+}
+
+/* Art composed with its own shadow. Casting --fp-art-shadow over a baked-in one
+   gives two shadows at two offsets, which reads as a smear rather than as depth.
+   Set per asset via FeatureImage.ownShadow in src/data/features.ts. */
+.fpanel__art--own-shadow img {
+    filter: none;
 }
 
 /* Phone: a wide landscape composition shown at panel width is an illegible

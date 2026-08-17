@@ -538,7 +538,7 @@
   "features.PRIMARY_FEATURES.customization.title": "Configura (gairebé) tot.",
   "features.PRIMARY_FEATURES.existingSessions.body": "Obre qualsevol sessió de Claude Code, Codex o OpenCode que s'executi a la teva màquina — en directe, des de qualsevol dispositiu. Res per migrar, res per aprendre.",
   "features.PRIMARY_FEATURES.existingSessions.eyebrow": "Sense migració",
-  "features.PRIMARY_FEATURES.existingSessions.title": "Les sessions que ja tens? Ja són aquí.",
+  "features.PRIMARY_FEATURES.existingSessions.title": "Les sessions que ja tens? Ja hi són.",
   "features.PRIMARY_FEATURES.machines.body": "Connecta el portàtil, l'ordinador de sobretaula, un VPS o una màquina de desenvolupament, i després tria quina executa cada sessió. El selector marca quines són en línia, i hi inicia les sessions. Afegeix-ne una altra per SSH, des de l'aplicació o des de la CLI.",
   "features.PRIMARY_FEATURES.machines.eyebrow": "Tots els ordinadors",
   "features.PRIMARY_FEATURES.machines.title": "Executa sessions a tots els ordinadors que tinguis.",

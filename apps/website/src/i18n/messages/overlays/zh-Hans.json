@@ -538,7 +538,7 @@
   "features.PRIMARY_FEATURES.customization.title": "（几乎）一切都可配置。",
   "features.PRIMARY_FEATURES.existingSessions.body": "打开你机器上正在运行的任何 Claude Code、Codex 或 OpenCode 会话 —— 实时的，从任意设备。没有东西要迁移，没有东西要学。",
   "features.PRIMARY_FEATURES.existingSessions.eyebrow": "不用改换工具",
-  "features.PRIMARY_FEATURES.existingSessions.title": "你已有的会话？已经在这儿了。",
+  "features.PRIMARY_FEATURES.existingSessions.title": "你已有的会话？已经都在了。",
   "features.PRIMARY_FEATURES.machines.body": "连接你的笔记本、台式机、一台 VPS 或一台开发机，然后选择每个会话由哪一台运行。选择器会标出哪些在线，并在这些机器上启动会话。也可以从应用或 CLI 通过 SSH 再添一台。",
   "features.PRIMARY_FEATURES.machines.eyebrow": "每一台电脑",
   "features.PRIMARY_FEATURES.machines.title": "在你拥有的每一台电脑上运行会话。",

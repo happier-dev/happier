@@ -538,7 +538,7 @@
   "features.PRIMARY_FEATURES.customization.title": "Configura (casi) todo.",
   "features.PRIMARY_FEATURES.existingSessions.body": "Abre cualquier sesión de Claude Code, Codex u OpenCode que se esté ejecutando en tu máquina — en vivo, desde cualquier dispositivo. Nada que migrar, nada que aprender.",
   "features.PRIMARY_FEATURES.existingSessions.eyebrow": "Sin migración",
-  "features.PRIMARY_FEATURES.existingSessions.title": "¿Tus sesiones actuales? Ya están aquí.",
+  "features.PRIMARY_FEATURES.existingSessions.title": "¿Tus sesiones actuales? Ya están ahí.",
   "features.PRIMARY_FEATURES.machines.body": "Conecta tu portátil, tu sobremesa, un VPS o una máquina de desarrollo, y luego elige cuál ejecuta cada sesión. El selector marca cuáles están en línea y arranca las sesiones en esas. Añade otra por SSH, desde la app o desde la CLI.",
   "features.PRIMARY_FEATURES.machines.eyebrow": "Todos los ordenadores",
   "features.PRIMARY_FEATURES.machines.title": "Ejecuta sesiones en todos los ordenadores que tengas.",

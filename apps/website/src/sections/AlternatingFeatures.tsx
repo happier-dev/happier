@@ -299,6 +299,7 @@ function PanelArt({
                 'fpanel__art',
                 wide && 'fpanel__art--wide',
                 wide && floor && 'fpanel__art--floor',
+                image.ownShadow && 'fpanel__art--own-shadow',
             )}
             data-reveal
             style={{
