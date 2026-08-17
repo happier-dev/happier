@@ -6,24 +6,42 @@
 /* ---------------------------------------------------------------------------
    HAPPIER THEME
 
-   fumadocs is entirely token-driven, so matching happier.dev is a mapping job
-   rather than a restyle. Every value below is the marketing site's own token
-   (apps/website/src/styles/globals.css), so the two surfaces cannot drift apart
-   by accident — if the site's palette changes, this file is the one place the
-   docs follow it.
+   fumadocs is entirely token-driven, so matching the product is a mapping job
+   rather than a restyle.
 
-   WHY THE NEUTRALS ARE THE WHOLE JOB. The stock `neutral` preset grounds the
-   dark theme on hsl(0 0% 7%) — a true grey. The site is #050507, which is
-   near-black with a trace of blue. Side by side the grey reads as "a docs site"
-   and the near-black reads as the product. Getting the ground and the text
-   right carries most of the resemblance; the accent is a detail on top.
+   WHERE THESE VALUES COME FROM — AND WHY NOT THE WEBSITE'S.
+   The dark palette below is the APP's, transcribed from
+   apps/ui/sources/theme/index.ts and theme/tokens/surfaceAndTextColors.ts. That
+   is a deliberate choice over the marketing site's, and the two are genuinely
+   different blacks: happier.dev grounds on #050507, which is cool — a trace of
+   blue. The app grounds on #131111, which is warm — a trace of red. Reading
+   documentation is much closer to using the product than to browsing the
+   marketing page, so the docs sit in the app's room, not the poster's.
 
-   WHY THE ACCENT IS NOT USED THE SAME WAY IN BOTH THEMES. On the site, --accent
-   (#F5B547) is only ever a background fill — it is never text. fumadocs spends
-   --color-fd-primary on links and active labels, which IS text, and #F5B547 on
-   the light paper (#F5F5F7) is about 1.7:1. So dark keeps the amber, where it
-   sits at roughly 11:1 on #050507, and light uses a darkened amber of the same
-   hue at about 6:1. Same colour identity, both readable.
+   The mapping, token for token:
+
+     background.canvas   #131111   page ground
+     surface.base        #191717   sidebar and rails (lifted off the ground)
+     surface.inset       #171515   wells — search field, code
+     surface.elevated    #221C1C   cards, popovers
+     surface.selected    #292121   the selected row
+     text.primary        #EFEFEF
+     text.secondary      #8A817C
+     text.tertiary       #6C625D
+     border.default      rgba(255,255,255,0.050)
+     border.strong       rgba(255,255,255,0.090)
+     accent.orange       #E0B65A   the app's amber, softer than the site's #F5B547
+
+   LIGHT MODE stays on the marketing site's paper (#F5F5F7 / #0A0A0B). The app's
+   light theme grounds on #F5F5F5 with pure-white surfaces, which is close
+   enough that mixing them would be a difference nobody could name; where they
+   disagree, the site's is the one a reader arriving from happier.dev just saw.
+
+   The accent is not used identically in both themes, and cannot be. On the site
+   --accent is only ever a background fill — never text. fumadocs spends
+   --color-fd-primary on links and active labels, which IS text, and #E0B65A on
+   light paper is about 2:1. Dark keeps the app's amber (~9:1 on #131111); light
+   uses a darkened amber of the same hue at ~6:1. Same identity, both readable.
 
    DELIBERATELY NOT PORTED: the site's @property 700ms token transition. It
    exists so the marketing page's theme switch animates as one motion; fumadocs
@@ -31,70 +49,86 @@
    --------------------------------------------------------------------------- */
 
 :root {
-    /* Ground and text — the paper the site uses in light mode. */
     --color-fd-background: #f5f5f7;
     --color-fd-foreground: #0a0a0b;
     --color-fd-muted-foreground: #5c5c66;
 
-    /* Surfaces. The site builds these from ink at low alpha rather than from a
-       second grey, which is what keeps panels feeling like the page instead of
-       like boxes dropped on it. */
     --color-fd-muted: rgba(10, 10, 11, 0.04);
     --color-fd-secondary: rgba(10, 10, 11, 0.04);
     --color-fd-secondary-foreground: #0a0a0b;
-    --color-fd-card: rgba(10, 10, 11, 0.04);
+    --color-fd-card: rgba(10, 10, 11, 0.03);
     --color-fd-card-foreground: #0a0a0b;
-    --color-fd-border: rgba(10, 10, 11, 0.08);
+    --color-fd-border: rgba(10, 10, 11, 0.07);
 
-    /* Popovers must be opaque: they float over prose. */
     --color-fd-popover: #ffffff;
     --color-fd-popover-foreground: #0a0a0b;
 
-    /* Hover/active surface. */
     --color-fd-accent: rgba(10, 10, 11, 0.05);
     --color-fd-accent-foreground: #0a0a0b;
 
-    /* Brand. Darkened from #F5B547 to clear AA on this ground. */
     --color-fd-primary: #8a5a00;
     --color-fd-primary-foreground: #ffffff;
     --color-fd-ring: #8a5a00;
 
     --color-fd-overlay: rgba(10, 10, 11, 0.2);
+
+    /* Surfaces the rest of this file needs by name rather than by role. */
+    --happier-sidebar: #ffffff;
+    --happier-well: rgba(10, 10, 11, 0.035);
+    --happier-selected: rgba(138, 90, 0, 0.1);
 }
 
 .dark {
-    --color-fd-background: #050507;
-    --color-fd-foreground: #fafafc;
-    --color-fd-muted-foreground: #9a9aa5;
+    /* background.canvas */
+    --color-fd-background: #131111;
+    /* text.primary / text.secondary */
+    --color-fd-foreground: #efefef;
+    --color-fd-muted-foreground: #8a817c;
 
-    --color-fd-muted: rgba(255, 255, 255, 0.04);
-    --color-fd-secondary: rgba(255, 255, 255, 0.06);
-    --color-fd-secondary-foreground: #fafafc;
-    --color-fd-card: rgba(255, 255, 255, 0.04);
-    --color-fd-card-foreground: #fafafc;
-    --color-fd-border: rgba(255, 255, 255, 0.08);
+    /* surface.base / surface.elevated */
+    --color-fd-muted: #191717;
+    --color-fd-secondary: #191717;
+    --color-fd-secondary-foreground: #efefef;
+    --color-fd-card: #191717;
+    --color-fd-card-foreground: #efefef;
+    /* border.default */
+    --color-fd-border: rgba(255, 255, 255, 0.05);
 
-    --color-fd-popover: #0c0c10;
-    --color-fd-popover-foreground: #fafafc;
+    /* surface.elevated — popovers float, so they lift off the ground. */
+    --color-fd-popover: #221c1c;
+    --color-fd-popover-foreground: #efefef;
 
-    --color-fd-accent: rgba(255, 255, 255, 0.06);
-    --color-fd-accent-foreground: #fafafc;
+    /* surface.pressedOverlay */
+    --color-fd-accent: rgba(255, 255, 255, 0.036);
+    --color-fd-accent-foreground: #efefef;
 
-    /* The site's own accent, unchanged — ~11:1 on this ground. */
-    --color-fd-primary: #f5b547;
-    --color-fd-primary-foreground: #050507;
-    --color-fd-ring: #f5b547;
+    /* accent.orange */
+    --color-fd-primary: #e0b65a;
+    --color-fd-primary-foreground: #131111;
+    --color-fd-ring: #e0b65a;
 
-    --color-fd-overlay: rgba(0, 0, 0, 0.4);
+    --color-fd-overlay: rgba(19, 17, 17, 0.72);
+
+    /* surface.base for the rails, surface.inset for wells, surface.selected
+       for the current row — all three straight off the app. */
+    --happier-sidebar: #191717;
+    --happier-well: #171515;
+    --happier-selected: #292121;
 }
 
-/* The neutral preset re-tints the sidebar a lighter grey than the page. The
-   site has no such split — one ground, panels differentiated by hairline
-   borders — so the override is reverted to the page's own tokens. */
+/* The rails sit on surface.base, the page on canvas — the same one-step lift
+   the app puts between its chrome and its content. The neutral preset's own
+   sidebar re-tint is replaced rather than layered on. */
+#nd-sidebar,
 .dark #nd-sidebar {
-    --color-fd-muted: rgba(255, 255, 255, 0.04);
-    --color-fd-secondary: rgba(255, 255, 255, 0.06);
-    --color-fd-muted-foreground: #9a9aa5;
+    background-color: var(--happier-sidebar);
+    --color-fd-muted: var(--happier-sidebar);
+    --color-fd-secondary: var(--happier-sidebar);
+    --color-fd-muted-foreground: #8a817c;
+}
+
+:root:not(.dark) #nd-sidebar {
+    --color-fd-muted-foreground: #5c5c66;
 }
 
 /* ---------------------------------------------------------------------------
@@ -133,7 +167,6 @@ pre,
 samp {
     font-family: var(--font-mono);
 }
-
 
 /* ===========================================================================
    CRAFT
@@ -199,13 +232,13 @@ body::before {
     z-index: 0;
     pointer-events: none;
     background:
-        radial-gradient(60rem 40rem at 88% -8%, rgba(245, 181, 71, 0.055), transparent 62%),
+        radial-gradient(60rem 40rem at 88% -8%, rgba(224, 182, 90, 0.055), transparent 62%),
         radial-gradient(48rem 34rem at 8% 4%, rgba(255, 255, 255, 0.028), transparent 60%);
 }
 
 :root:not(.dark) body::before {
     background:
-        radial-gradient(60rem 40rem at 88% -8%, rgba(245, 181, 71, 0.075), transparent 62%),
+        radial-gradient(60rem 40rem at 88% -8%, rgba(224, 182, 90, 0.075), transparent 62%),
         radial-gradient(48rem 34rem at 8% 4%, rgba(10, 10, 11, 0.022), transparent 60%);
 }
 
@@ -282,25 +315,40 @@ kbd {
  * from body::before catching the surface.
  */
 #nd-page [data-card='true'] {
-    --card-radius: 16px;
-    --card-pad: 20px;
+    --card-radius: 14px;
+    --card-pad: 18px;
+
+    /* Icon beside the title, description aligned under the TITLE rather than
+       under the icon. Column 1 is `auto`, so a card with no icon collapses it
+       to zero width and the title simply starts at the edge — the same rule
+       covers both cases without a second selector. */
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    column-gap: 0.55rem;
+    row-gap: 0.35rem;
 
     position: relative;
     isolation: isolate;
     border: 0;
     border-radius: var(--card-radius);
     padding: var(--card-pad);
+    /* Was a three-stop gradient at 5.2%. The cards sat in a grid of six and the
+       sheen read as a material rather than as light; at 2.2% over a single stop
+       it reads as the surface being very slightly nearer the light than the
+       page, which is all it was ever for. */
     background-image: linear-gradient(
         168deg,
-        rgba(255, 255, 255, 0.052) 0%,
-        rgba(255, 255, 255, 0.014) 42%,
-        rgba(255, 255, 255, 0) 100%
+        rgba(255, 255, 255, 0.022) 0%,
+        rgba(255, 255, 255, 0) 70%
     );
+    /* The border is the thing the site's feature blocks are recognisable by, so
+       it stays — but at 4.5% rather than 6.2%. On a docs index the same edge
+       that flatters six marketing panels starts to read as a table. */
     box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.062),
-        0 1px 2px rgba(0, 0, 0, 0.28),
-        0 8px 24px -12px rgba(0, 0, 0, 0.5),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        0 0 0 1px rgba(255, 255, 255, 0.045),
+        0 1px 2px rgba(0, 0, 0, 0.22),
+        0 8px 24px -14px rgba(0, 0, 0, 0.42);
     transition-property: transform, box-shadow, background-color;
     transition-duration: var(--dur-base);
     transition-timing-function: var(--ease-spring);
@@ -309,15 +357,13 @@ kbd {
 :root:not(.dark) #nd-page [data-card='true'] {
     background-image: linear-gradient(
         168deg,
-        rgba(255, 255, 255, 0.9) 0%,
-        rgba(255, 255, 255, 0.4) 46%,
-        rgba(255, 255, 255, 0) 100%
+        rgba(255, 255, 255, 0.75) 0%,
+        rgba(255, 255, 255, 0) 70%
     );
     box-shadow:
-        0 0 0 1px rgba(10, 10, 11, 0.07),
-        0 1px 2px rgba(10, 10, 11, 0.04),
-        0 8px 24px -14px rgba(10, 10, 11, 0.14),
-        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        0 0 0 1px rgba(10, 10, 11, 0.055),
+        0 1px 2px rgba(10, 10, 11, 0.03),
+        0 8px 24px -16px rgba(10, 10, 11, 0.12);
 }
 
 /* Lift, warm the ring, deepen the ambient. 2px is the whole movement — enough
@@ -325,19 +371,17 @@ kbd {
 #nd-page [data-card='true']:hover {
     transform: translateY(-2px);
     box-shadow:
-        0 0 0 1px rgba(245, 181, 71, 0.34),
-        0 2px 4px rgba(0, 0, 0, 0.3),
-        0 18px 40px -18px rgba(0, 0, 0, 0.62),
-        inset 0 1px 0 rgba(255, 255, 255, 0.09);
+        0 0 0 1px rgba(224, 182, 90, 0.3),
+        0 2px 4px rgba(0, 0, 0, 0.26),
+        0 18px 40px -20px rgba(0, 0, 0, 0.5);
 }
 
 :root:not(.dark) #nd-page [data-card='true']:hover {
     transform: translateY(-2px);
     box-shadow:
-        0 0 0 1px rgba(180, 120, 20, 0.28),
-        0 2px 4px rgba(10, 10, 11, 0.05),
-        0 18px 40px -20px rgba(10, 10, 11, 0.2),
-        inset 0 1px 0 rgba(255, 255, 255, 1);
+        0 0 0 1px rgba(180, 120, 20, 0.26),
+        0 2px 4px rgba(10, 10, 11, 0.04),
+        0 18px 40px -22px rgba(10, 10, 11, 0.18);
 }
 
 /* A card is a link. It should answer a press the way a button does. */
@@ -346,34 +390,61 @@ kbd {
     transition-duration: var(--dur-fast);
 }
 
-/* Concentric: the icon well sits inside 20px of padding, so its radius is the
-   card's 16 minus that inset, not another 16. */
-#nd-page [data-card='true'] > svg,
-#nd-page [data-card='true'] [class*='rounded'] > svg {
-    color: var(--color-fd-primary);
-}
-
+/*
+ * The icon, unhoused.
+ *
+ * fumadocs ships it in its own well — `bg-fd-muted` + `border` + `shadow-md` +
+ * padding — which on a card this size is a second container inside a container,
+ * and the eye reads the well before it reads the word next to it. Stripped back
+ * to the glyph, on the title's line, carrying the accent. The icon is
+ * decoration for a label; it should not out-rank the label.
+ *
+ * Placement deliberately avoids :has(). The first version selected the
+ * description as `div:not(:has(svg))` and it never matched, so the description
+ * auto-placed into column 1 — which is `auto`, so it sized to the paragraph,
+ * squeezed the title into a 1fr sliver and wrapped it. `h3 ~ div` says the same
+ * thing with a sibling combinator that has been safe for twenty years.
+ */
 #nd-page [data-card='true'] > *:first-child:not(h3) {
-    border-radius: 10px;
-    background: rgba(245, 181, 71, 0.1);
-    box-shadow: inset 0 0 0 1px rgba(245, 181, 71, 0.16);
-    transition: background-color var(--dur-base) var(--ease-spring);
+    grid-column: 1;
+    grid-row: 1;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    color: var(--color-fd-primary);
+    display: flex;
+    align-items: center;
 }
 
-#nd-page [data-card='true']:hover > *:first-child:not(h3) {
-    background: rgba(245, 181, 71, 0.16);
-}
-
-#nd-page [data-card='true'] h3 {
+#nd-page [data-card='true'] > h3 {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
     font-size: 0.9375rem;
     font-weight: 600;
     letter-spacing: -0.011em;
-    margin-bottom: 0.25rem;
+    margin: 0;
 }
 
-#nd-page [data-card='true'] .prose-no-margin {
+/*
+ * Everything after the title goes in column 2, under the title rather than
+ * under the icon.
+ *
+ * `h3 ~ div` was not enough: a Card given a `description` string renders it as
+ * a <p> BETWEEN the h3 and the (then empty) description div — four children,
+ * not three. The <p> matched nothing, auto-placed into column 1, and because
+ * that column is `auto` it sized itself to the paragraph: 238px of icon column
+ * against 49px of title column, which is why the titles were wrapping into a
+ * sliver on the right. `h3 ~ *` catches every sibling whatever its tag, and
+ * leaving the row to auto-flow lets one or two of them stack correctly.
+ */
+#nd-page [data-card='true'] > h3 ~ * {
+    grid-column: 2;
     line-height: 1.5;
     font-size: 0.8125rem;
+    margin: 0;
 }
 
 /* Entry. Six cards arriving together is a flash; six arriving 55ms apart reads
@@ -420,16 +491,20 @@ kbd {
     transition-timing-function: var(--ease-spring);
 }
 
+/*
+ * The selected row is a rounded fill and nothing else.
+ *
+ * It was a left rule plus a gradient that faded to the right — two devices to
+ * say one thing, and the gradient made the row look like it was sliding off the
+ * rail. A plain tinted rectangle at the app's own 8px item radius is what every
+ * sidebar the reader already uses does, including ours.
+ */
 #nd-sidebar a[data-active='true'] {
-    background-color: transparent;
-    background-image: linear-gradient(
-        90deg,
-        rgba(245, 181, 71, 0.13) 0%,
-        rgba(245, 181, 71, 0.045) 45%,
-        rgba(245, 181, 71, 0) 100%
-    );
+    background-image: none;
+    background-color: var(--happier-selected);
     color: var(--color-fd-primary);
-    box-shadow: inset 2px 0 0 var(--color-fd-primary);
+    box-shadow: none;
+    border-radius: 8px;
 }
 
 #nd-sidebar a:not([data-active='true']):hover {
@@ -468,13 +543,27 @@ kbd {
     transform: scale(0.96);
 }
 
-/* The search field is the first control in reading order and was the flattest
-   thing in the rail. An inset shadow makes it a well rather than a plate. */
+/*
+ * The search field is a well, not a pressed plate.
+ *
+ * It had an inset shadow to read as recessed; at this size that just looks like
+ * a smudge under the top edge. The app builds its inputs from `surface.inset`
+ * plus a hairline and no shadow at all, so this does the same.
+ */
 #nd-sidebar button[data-search-full],
 #nd-sidebar > div button:has(svg + *) {
-    box-shadow:
-        inset 0 1px 2px rgba(0, 0, 0, 0.22),
-        0 0 0 1px rgba(255, 255, 255, 0.055);
+    background-color: var(--happier-well);
+    box-shadow: 0 0 0 1px var(--color-fd-border);
+}
+
+#nd-sidebar button[data-search-full]:hover,
+#nd-sidebar > div button:has(svg + *):hover {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.09);
+}
+
+:root:not(.dark) #nd-sidebar button[data-search-full]:hover,
+:root:not(.dark) #nd-sidebar > div button:has(svg + *):hover {
+    box-shadow: 0 0 0 1px rgba(10, 10, 11, 0.12);
 }
 
 /* Focus. The default ring is the browser's; this one belongs to the product.
@@ -486,7 +575,7 @@ kbd {
     outline: none;
     box-shadow:
         0 0 0 2px var(--color-fd-background),
-        0 0 0 4px rgba(245, 181, 71, 0.55);
+        0 0 0 4px rgba(224, 182, 90, 0.55);
     border-radius: 8px;
 }
 
@@ -664,7 +753,7 @@ kbd {
 
 #nd-page article button:hover {
     box-shadow:
-        0 0 0 1px rgba(245, 181, 71, 0.3),
+        0 0 0 1px rgba(224, 182, 90, 0.3),
         0 2px 5px rgba(0, 0, 0, 0.28),
         inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
