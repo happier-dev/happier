@@ -1,4 +1,8 @@
-export type ShellCommandDialect = 'posix' | 'windows_cmd' | 'powershell';
+export type ShellCommandDialect =
+  | 'posix'
+  | 'windows_cmd'
+  | 'powershell'
+  | 'powershell_encoded';
 
 function assertRepresentableArgument(arg: string): void {
   if (arg.includes('\0')) {
@@ -54,6 +58,12 @@ export function buildPowerShellCommand(args: readonly string[]): string {
   return `& ${args.map((arg) => quoteForPowerShell(String(arg))).join(' ')}`;
 }
 
+export function buildEncodedPowerShellCommand(args: readonly string[]): string {
+  const script = buildPowerShellCommand(args);
+  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');
+  return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedScript}`;
+}
+
 export function buildShellCommand(
   args: readonly string[],
   dialect: ShellCommandDialect,
@@ -65,6 +75,8 @@ export function buildShellCommand(
       return buildWindowsCmdCommand(args);
     case 'powershell':
       return buildPowerShellCommand(args);
+    case 'powershell_encoded':
+      return buildEncodedPowerShellCommand(args);
   }
 }
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPosixShellCommand,
   buildPosixShellEnvironmentAssignments,
+  buildEncodedPowerShellCommand,
   buildPowerShellCommand,
   buildShellCommand,
   buildWindowsCmdCommand,
@@ -73,6 +74,25 @@ describe('PowerShell command serialization', () => {
       + "'C:\\hook path\\forwarder''s script.cjs' "
       + "'43127' 'Stop' '--secret-file' '$env:PATH `literal` & | < > \"quoted\"'",
     );
+  });
+
+  it('wraps the script in a shell-neutral encoded PowerShell launcher', () => {
+    const args = [
+      String.raw`C:\Program Files\Happier\node.exe`,
+      String.raw`C:\hook path\forwarder's script.cjs`,
+      '$env:PATH `literal` & | < > "quoted"',
+    ];
+    const command = buildEncodedPowerShellCommand(args);
+    const match = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/]+={0,2})$/.exec(command);
+
+    expect(match).toBeTruthy();
+    expect(command).not.toMatch(/[&|<>'"`$();]/);
+    expect(Buffer.from(match![1]!, 'base64').toString('utf16le')).toBe(
+      "& 'C:\\Program Files\\Happier\\node.exe' "
+      + "'C:\\hook path\\forwarder''s script.cjs' "
+      + "'$env:PATH `literal` & | < > \"quoted\"'",
+    );
+    expect(buildShellCommand(args, 'powershell_encoded')).toBe(command);
   });
 });
 
