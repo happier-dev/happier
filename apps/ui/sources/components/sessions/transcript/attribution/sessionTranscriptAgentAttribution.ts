@@ -25,7 +25,8 @@ import type { Message } from '@/sync/domains/messages/messageTypes';
  *    `fromAgentId`.
  * 2. **Neutral.** Anything else resolves to `null` — a Session that never
  *    switched, a row with no allocated sequence, a divider naming an Agent this
- *    build's catalog does not know. `null` means "no historical evidence", and
+ *    build's catalog does not know, or a span whose two enclosing dividers
+ *    disagree about who was running. `null` means "no historical evidence", and
  *    every consumer then keeps its existing live-metadata behavior. That is
  *    deliberate: an unswitched Session is the overwhelming majority and its
  *    live Agent is already the correct answer, so attribution must never
@@ -118,7 +119,14 @@ export function resolveHistoricalAgentIdAtSeq(
     let resolved: AgentId | null = null;
     for (const boundary of boundaries) {
         if (rowSeq <= boundary.seq) {
-            return resolved ?? boundary.fromAgentId;
+            if (resolved === null) return boundary.fromAgentId;
+            // A chain is evidence only while it is continuous. When the previous
+            // divider handed the Session to one Agent and this one says a
+            // different Agent was running, the two disagree about who produced
+            // the rows between them and neither claim is proof. That is the
+            // neutral tier, not a third one: the consumer keeps its live-metadata
+            // answer rather than being handed a confident wrong Agent.
+            return resolved === boundary.fromAgentId ? resolved : null;
         }
         resolved = boundary.toAgentId;
     }
