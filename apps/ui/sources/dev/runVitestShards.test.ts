@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    classifyVitestShardTermination,
     partitionVitestFilesIntoShards,
     createVitestShardRunPlan,
     resolveVitestShardConcurrency,
@@ -8,6 +9,8 @@ import {
     resolveVitestConfigPath,
     resolveVitestShardCount,
     resolveVitestPassthroughArgs,
+    shouldVitestShardRunProceedWithoutFiles,
+    summarizeVitestShardOutcomes,
 } from '../../scripts/runVitestShards.mjs';
 
 describe('apps/ui runVitestShards', () => {
@@ -108,7 +111,11 @@ describe('apps/ui runVitestShards', () => {
         expect(plan.map((entry) => entry.files)).toEqual(shardFiles);
     });
 
-    it('runs shards with bounded concurrency and bails early on first failure', async () => {
+    // REPLACED 2026-08-09. The predecessor asserted `expect(cancels).toEqual(['3/3'])` — it
+    // CERTIFIED the defect: one failing shard cancelled the shards still running and the plan
+    // returned, so every shard after the first failure was silently skipped and a lane could
+    // report green on a run that never executed most of its tests.
+    it('runs every shard when one fails, and reports a truthful failing aggregate', async () => {
         const plan = [
             { shardIndex: 1, shardCount: 3, shardSpec: '1/3', files: ['a'] },
             { shardIndex: 2, shardCount: 3, shardSpec: '2/3', files: ['b'] },
@@ -150,12 +157,93 @@ describe('apps/ui runVitestShards', () => {
         });
         expect(starts).toEqual(['1/3', '2/3', '3/3']);
 
-        // Fail shard 2, which should cancel the remaining running shard (3/3).
+        // Shard 2 fails. Shard 3 must be left alone to finish and be graded.
         deferred[1]!.resolve({ ok: true, code: 1, signal: null });
         deferred[2]!.resolve({ ok: true, code: 0, signal: null });
 
         const result = await runPromise;
-        expect(result).toEqual({ ok: true, code: 1, signal: null });
-        expect(cancels).toEqual(['3/3']);
+        expect(cancels).toEqual([]);
+        expect(result.code).toBe(1);
+        expect(result.outcomes.map((entry: any) => [entry.shardSpec, entry.outcome])).toEqual([
+            ['1/3', 'passed'],
+            ['2/3', 'failed'],
+            ['3/3', 'passed'],
+        ]);
+    });
+
+    it('stops the plan only when the operator interrupts it', async () => {
+        const plan = [
+            { shardIndex: 1, shardCount: 2, shardSpec: '1/2', files: ['a'] },
+            { shardIndex: 2, shardCount: 2, shardSpec: '2/2', files: ['b'] },
+        ];
+        const cancels: string[] = [];
+        const deferred: Array<{ resolve: (value: any) => void }> = [];
+        const startShard = (entry: any) => {
+            let resolve!: (value: any) => void;
+            const promise = new Promise((r) => {
+                resolve = r;
+            });
+            deferred.push({ resolve });
+            return { promise, cancel: async () => { cancels.push(entry.shardSpec); } };
+        };
+
+        const runPromise = runVitestShardRunPlan({ plan, concurrency: 2, startShard });
+        deferred[0]!.resolve({ ok: true, code: null, signal: 'SIGINT' });
+        deferred[1]!.resolve({ ok: true, code: 0, signal: null });
+
+        const result = await runPromise;
+        expect(result.code).toBe(130);
+        expect(cancels).toEqual(['2/2']);
+    });
+
+    it('treats a failed shard as a failure to keep running, and only an operator interrupt as an abort', () => {
+        expect(classifyVitestShardTermination({ code: 1, signal: null }).outcome).toBe('failed');
+        // A crashed shard (SIGSEGV / SIGABRT / OOM-killer SIGKILL) is the failure mode sharding
+        // exists to contain; it is this shard's failure, not a reason to skip the rest.
+        expect(classifyVitestShardTermination({ code: null, signal: 'SIGSEGV' }).outcome).toBe('failed');
+        expect(classifyVitestShardTermination({ code: null, signal: 'SIGKILL' }).outcome).toBe('failed');
+        expect(classifyVitestShardTermination({ code: null, signal: 'SIGINT' })).toEqual({
+            outcome: 'aborted',
+            exitCode: 130,
+            signal: 'SIGINT',
+        });
+        expect(classifyVitestShardTermination({ code: 0, signal: null }).outcome).toBe('passed');
+    });
+
+    it('exits non-zero and names every failing shard in the aggregate', () => {
+        const summary = summarizeVitestShardOutcomes({
+            shardCount: 4,
+            outcomes: [
+                { shardSpec: '1/4', outcome: 'passed', exitCode: 0, signal: null },
+                { shardSpec: '2/4', outcome: 'failed', exitCode: 1, signal: null },
+                { shardSpec: '3/4', outcome: 'passed', exitCode: 0, signal: null },
+                { shardSpec: '4/4', outcome: 'failed', exitCode: 1, signal: null },
+            ],
+        });
+
+        expect(summary.exitCode).toBe(1);
+        expect(summary.passedCount).toBe(2);
+        expect(summary.failedShards.map((entry: any) => entry.shardSpec)).toEqual(['2/4', '4/4']);
+        expect(summary.lines.join('\n')).toContain('2 passed, 2 failed');
+        expect(summary.lines.some((line: string) => line.includes('shard 2/4 FAILED'))).toBe(true);
+        expect(summary.lines.some((line: string) => line.includes('shard 4/4 FAILED'))).toBe(true);
+    });
+
+    it('reports a clean sweep as green', () => {
+        const summary = summarizeVitestShardOutcomes({
+            shardCount: 2,
+            outcomes: [
+                { shardSpec: '1/2', outcome: 'passed', exitCode: 0, signal: null },
+                { shardSpec: '2/2', outcome: 'passed', exitCode: 0, signal: null },
+            ],
+        });
+        expect(summary.exitCode).toBe(0);
+        expect(summary.failedShards).toEqual([]);
+    });
+
+    it('refuses to report a zero-file sharded run as green unless --passWithNoTests was asked for', () => {
+        expect(shouldVitestShardRunProceedWithoutFiles({ fileCount: 0, passthroughArgs: ['sources/typo'] })).toBe(false);
+        expect(shouldVitestShardRunProceedWithoutFiles({ fileCount: 0, passthroughArgs: ['--passWithNoTests'] })).toBe(true);
+        expect(shouldVitestShardRunProceedWithoutFiles({ fileCount: 3, passthroughArgs: [] })).toBe(true);
     });
 });

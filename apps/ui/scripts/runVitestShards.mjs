@@ -158,6 +158,70 @@ export function partitionVitestFilesIntoShards(files, shardCount) {
   return buckets;
 }
 
+/**
+ * How a finished shard terminated.
+ *
+ * `aborted` is reserved for an OPERATOR interrupt (Ctrl-C, `kill`, a hung-up terminal): the
+ * remaining shards would be spawned straight into the same interrupt, so the run stops and
+ * says so. Every other termination — a non-zero exit, or a crash signal such as SIGSEGV /
+ * SIGABRT / an OOM-killer SIGKILL, which are exactly the failures sharding exists to contain —
+ * is that shard's own failure and must NOT hide the shards after it. Stopping there is how a
+ * sharded run reported "green" while later shards never executed.
+ */
+export function classifyVitestShardTermination({ code, signal }) {
+  if (signal) {
+    const interrupted = signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGHUP';
+    return {
+      outcome: interrupted ? 'aborted' : 'failed',
+      exitCode: resolveSignalExitCode(signal),
+      signal,
+    };
+  }
+  if (typeof code === 'number' && code !== 0) {
+    return { outcome: 'failed', exitCode: code, signal: null };
+  }
+  return { outcome: 'passed', exitCode: 0, signal: null };
+}
+
+export function shouldVitestShardRunProceedWithoutFiles({ fileCount, passthroughArgs }) {
+  if (fileCount > 0) return true;
+  return Array.from(passthroughArgs ?? []).some((arg) => (
+    arg === '--passWithNoTests' || arg === '--passWithNoTests=true'
+  ));
+}
+
+/**
+ * Truthful aggregate for a whole sharded run: what actually ran, what failed, and what never
+ * got the chance. The exit code is non-zero whenever any shard failed or the run was aborted.
+ */
+export function summarizeVitestShardOutcomes({ shardCount, outcomes }) {
+  const executed = Array.from(outcomes ?? []);
+  const failedShards = executed.filter((entry) => entry.outcome === 'failed');
+  const abortedShard = executed.find((entry) => entry.outcome === 'aborted') ?? null;
+  const passedCount = executed.filter((entry) => entry.outcome === 'passed').length;
+
+  const lines = [];
+  if (abortedShard) {
+    lines.push(
+      `[vitest] run ABORTED by ${abortedShard.signal} at shard ${abortedShard.shardSpec};`
+      + ' shards after it did not run',
+    );
+  }
+  lines.push(
+    `[vitest] ${executed.length} shard(s) ran of ${shardCount}:`
+    + ` ${passedCount} passed, ${failedShards.length} failed`,
+  );
+  for (const entry of failedShards) {
+    lines.push(
+      `[vitest]   shard ${entry.shardSpec} FAILED`
+      + (entry.signal ? ` (signal ${entry.signal})` : ` (exit ${entry.exitCode})`),
+    );
+  }
+
+  const exitCode = abortedShard?.exitCode ?? failedShards[0]?.exitCode ?? 0;
+  return { exitCode, failedShards, abortedShard, passedCount, executedCount: executed.length, lines };
+}
+
 export function createVitestShardRunPlan({ shardFiles, shardCount }) {
   const count = Number.isFinite(shardCount) && shardCount > 0 ? Math.floor(shardCount) : 1;
   const buckets = Array.isArray(shardFiles) ? shardFiles : [];
@@ -322,6 +386,7 @@ export async function runVitestShardRunPlan({ plan, concurrency, startShard }) {
   const limit = Math.max(1, limitRaw);
 
   const active = new Map();
+  const outcomes = [];
   let cursor = 0;
 
   function startNext() {
@@ -350,14 +415,15 @@ export async function runVitestShardRunPlan({ plan, concurrency, startShard }) {
       throw result.error;
     }
 
-    if (result.signal) {
-      await Promise.allSettled(Array.from(active.values()).map(({ handle: other }) => other.cancel?.()));
-      return result;
-    }
+    const termination = classifyVitestShardTermination(result);
+    outcomes.push({ ...termination, shardSpec: entry.shardSpec, shardIndex: entry.shardIndex });
 
-    if (result.code && result.code !== 0) {
+    // A failed shard is recorded and the run continues: cancelling the in-flight shards and
+    // returning here is what let a sharded lane report green while the shards after the first
+    // failure never executed. Only an operator interrupt stops the plan.
+    if (termination.outcome === 'aborted') {
       await Promise.allSettled(Array.from(active.values()).map(({ handle: other }) => other.cancel?.()));
-      return result;
+      return { ok: true, code: termination.exitCode, signal: termination.signal, outcomes };
     }
 
     while (active.size < limit && cursor < shardPlan.length) {
@@ -365,7 +431,8 @@ export async function runVitestShardRunPlan({ plan, concurrency, startShard }) {
     }
   }
 
-  return { ok: true, code: 0, signal: null };
+  const summary = summarizeVitestShardOutcomes({ shardCount: shardPlan.length, outcomes });
+  return { ok: true, code: summary.exitCode, signal: null, outcomes };
 }
 
 async function main(argv) {
@@ -387,6 +454,15 @@ async function main(argv) {
   const vitestCommand = resolveVitestNodeCommand();
 
   const allFiles = await resolveVitestTestFiles({ vitestCommand, configPath, nodeOptions, passthroughArgs });
+  if (!shouldVitestShardRunProceedWithoutFiles({ fileCount: allFiles.length, passthroughArgs })) {
+    // `vitest run` itself exits non-zero when a filter matches nothing. Sharding must not be
+    // more permissive than the tool it wraps: a mistyped path filter that silently exits 0 is
+    // the same vacuous green as a skipped shard.
+    // eslint-disable-next-line no-console
+    console.error('[vitest] no test files matched — refusing to report a sharded run as green');
+    process.exit(1);
+    return;
+  }
   const shardFiles = partitionVitestFilesIntoShards(allFiles, shardCount);
   const plan = createVitestShardRunPlan({ shardFiles, shardCount });
 
@@ -423,12 +499,13 @@ async function main(argv) {
     startShard,
   });
 
-  if (result.signal) {
-    process.exit(resolveSignalExitCode(result.signal));
-    return;
+  const summary = summarizeVitestShardOutcomes({ shardCount: plan.length, outcomes: result.outcomes });
+  for (const line of summary.lines) {
+    // eslint-disable-next-line no-console
+    console.log(line);
   }
-  if (result.code && result.code !== 0) {
-    process.exit(result.code);
+  if (summary.exitCode !== 0) {
+    process.exit(summary.exitCode);
   }
 }
 
