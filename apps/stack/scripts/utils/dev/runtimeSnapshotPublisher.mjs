@@ -172,18 +172,16 @@ export function createBackgroundRuntimeSnapshotPublisher({
     }
   };
 
-  const resolveForPublication = async (requestedComponents, resolved = null) => {
-    const result = resolved ?? await resolveComponents({ requestedComponents });
+  const resolveForPublication = async (requestedComponents) => {
+    const result = await resolveComponents({ requestedComponents });
     const resolvedSnapshotId = String(result?.currentSnapshotId ?? '').trim();
-    if (resolvedSnapshotId) currentSnapshotId = resolvedSnapshotId;
     return {
       components: normalizeComponents(result?.components),
       currentSnapshotId: resolvedSnapshotId || currentSnapshotId,
     };
   };
 
-  const runPublication = async (firstResolution = null) => {
-    let nextResolution = firstResolution;
+  const runPublication = async () => {
     let lastResult = null;
     for (;;) {
       if (closed || isShuttingDown?.()) return lastResult;
@@ -191,74 +189,72 @@ export function createBackgroundRuntimeSnapshotPublisher({
       dirtyComponents.clear();
       publishAgain = false;
       if (!requestedComponents.length) return lastResult;
+      let publishedInCycle = false;
 
       setComponentsPhase(requestedComponents, 'stale');
       await reportStatus();
       if (closed || isShuttingDown?.()) return lastResult;
 
-      let resolved;
-      try {
-        resolved = await resolveForPublication(requestedComponents, nextResolution);
-        nextResolution = null;
-      } catch (error) {
+      // Identity resolution and publication stay component-local. The canonical
+      // builders and snapshot commit owner remain unchanged; this loop merely
+      // prevents one component's unavailable inputs from withholding a healthy
+      // neighbor. Serial execution avoids a second scheduler.
+      for (const component of requestedComponents) {
+        let resolved;
+        try {
+          resolved = await resolveForPublication([component]);
+        } catch (error) {
+          if (closed || isShuttingDown?.()) return lastResult;
+          dirtyComponents.add(component);
+          setComponentsPhase([component], 'failed', errorMessage(error));
+          await reportStatus();
+          logger.error?.(
+            `[local] ${component} runtime publication identity refresh failed; keeping the current snapshot selected. ${errorMessage(error)}`,
+          );
+          continue;
+        }
         if (closed || isShuttingDown?.()) return lastResult;
-        for (const component of requestedComponents) dirtyComponents.add(component);
-        setComponentsPhase(requestedComponents, 'failed', errorMessage(error));
+        if (!publishedInCycle && resolved.currentSnapshotId) {
+          currentSnapshotId = resolved.currentSnapshotId;
+        }
+        if (!resolved.components.includes(component)) {
+          markPublished([component]);
+          await reportStatus();
+          continue;
+        }
+
+        setComponentsPhase([component], 'publishing');
         await reportStatus();
-        logger.error?.(
-          `[local] runtime publication identity refresh failed; keeping the current snapshot selected. ${errorMessage(error)}`,
-        );
-        if (publishAgain && !closed && !isShuttingDown?.()) continue;
-        return null;
-      }
-
-      if (closed || isShuttingDown?.()) return lastResult;
-
-      const components = resolved.components;
-      const unchangedComponents = requestedComponents.filter((component) => !components.includes(component));
-      markPublished(unchangedComponents);
-      if (!components.length) {
-        markPublished(requestedComponents);
-        await reportStatus();
-        if (publishAgain && !closed && !isShuttingDown?.()) continue;
-        return lastResult;
-      }
-
-      setComponentsPhase(components, 'publishing');
-      await reportStatus();
-      if (closed || isShuttingDown?.()) return lastResult;
-      try {
-        const result = await publishComponents({
-          requestedComponents,
-          components,
-          currentSnapshotId: resolved.currentSnapshotId,
-        });
         if (closed || isShuttingDown?.()) return lastResult;
-        const snapshotId = String(result?.snapshotId ?? '').trim();
-        if (snapshotId) currentSnapshotId = snapshotId;
-        // `components` contains only identities that need a new artifact. Every requested
-        // component was nevertheless compared with the complete current snapshot, so an
-        // unchanged requested component is current too.
-        markPublished(requestedComponents);
-        lastResult = result ?? null;
-        await reportStatus();
-      } catch (error) {
-        if (closed || isShuttingDown?.()) return lastResult;
-        for (const component of requestedComponents) dirtyComponents.add(component);
-        setComponentsPhase(components, 'failed', errorMessage(error));
-        await reportStatus();
-        logger.error?.(
-          `[local] runtime publication failed; keeping the current snapshot selected and source services unchanged. ${errorMessage(error)}`,
-        );
-        if (publishAgain && !closed && !isShuttingDown?.()) continue;
-        return null;
+        try {
+          const result = await publishComponents({
+            requestedComponents: [component],
+            components: [component],
+            currentSnapshotId,
+          });
+          if (closed || isShuttingDown?.()) return lastResult;
+          const snapshotId = String(result?.snapshotId ?? '').trim();
+          if (snapshotId) currentSnapshotId = snapshotId;
+          publishedInCycle = true;
+          markPublished([component]);
+          lastResult = result ?? lastResult;
+          await reportStatus();
+        } catch (error) {
+          if (closed || isShuttingDown?.()) return lastResult;
+          dirtyComponents.add(component);
+          setComponentsPhase([component], 'failed', errorMessage(error));
+          await reportStatus();
+          logger.error?.(
+            `[local] ${component} runtime publication failed; keeping the current snapshot selected and source services unchanged. ${errorMessage(error)}`,
+          );
+        }
       }
 
       if (!publishAgain || closed || isShuttingDown?.()) return lastResult;
     }
   };
 
-  const enqueue = (components, firstResolution = null) => {
+  const enqueue = (components) => {
     const normalizedComponents = normalizeComponents(components);
     if (!normalizedComponents.length || closed || isShuttingDown?.()) return inFlight ?? Promise.resolve(null);
     for (const component of normalizedComponents) {
@@ -271,7 +267,7 @@ export function createBackgroundRuntimeSnapshotPublisher({
       return inFlight;
     }
 
-    inFlight = runPublication(firstResolution).finally(() => {
+    inFlight = runPublication().finally(() => {
       inFlight = null;
     });
     return inFlight;
@@ -283,20 +279,7 @@ export function createBackgroundRuntimeSnapshotPublisher({
     },
     async reconcileAfterRestart() {
       if (closed || isShuttingDown?.()) return null;
-      let resolved;
-      try {
-        resolved = await resolveForPublication(RUNTIME_COMPONENTS, null);
-      } catch (error) {
-        logger.error?.(
-          `[local] runtime publication restart reconciliation failed; keeping the current snapshot selected. ${errorMessage(error)}`,
-        );
-        return null;
-      }
-      if (!resolved.components.length) {
-        await reportStatus();
-        return null;
-      }
-      return await enqueue(resolved.components, resolved);
+      return await enqueue(RUNTIME_COMPONENTS);
     },
     close() {
       closed = true;

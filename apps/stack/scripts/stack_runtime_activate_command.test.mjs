@@ -538,6 +538,7 @@ test('hstack stack runtime select permits producer snapshots with reused compone
     );
   }
   manifest.snapshotId = reusedSnapshotId;
+  manifest.reusedSnapshotIds = ['snap-1'];
   await writeFile(join(reusedSnapshotDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   await writeFile(
     join(producer.stackDir, 'runtime', 'current.json'),

@@ -77,7 +77,10 @@ test('the repository controller publishes the resolver’s actual changed subset
 
   await controller.markRefreshed(['server', 'daemon']);
 
-  assert.deepEqual(resolved, [{ rootDir, authority, env, requestedComponents: ['server', 'daemon'] }]);
+  assert.deepEqual(resolved, [
+    { rootDir, authority, env, requestedComponents: ['server'] },
+    { rootDir, authority, env, requestedComponents: ['daemon'] },
+  ]);
   assert.deepEqual(published, [{ rootDir, authority, env, requestedComponents: ['server'] }]);
   assert.deepEqual(stateWrites.at(-1), {
     path: runtimeStatePath,
@@ -176,7 +179,7 @@ test('publication hints use the build owner canonical component order', async ()
 
   await publisher.markRefreshed(['daemon', 'server']);
 
-  assert.deepEqual(requests, [['server', 'daemon']]);
+  assert.deepEqual(requests, [['server'], ['daemon']]);
 });
 
 test('a burst during publication performs exactly one trailing identity recomputation', async () => {
@@ -212,11 +215,13 @@ test('a burst during publication performs exactly one trailing identity recomput
 
   assert.deepEqual(resolvedRequests, [
     ['server'],
-    ['server', 'daemon'],
+    ['server'],
+    ['daemon'],
   ]);
   assert.deepEqual(publications, [
     ['server'],
-    ['server', 'daemon'],
+    ['server'],
+    ['daemon'],
   ]);
 });
 
@@ -253,6 +258,74 @@ test('a failed publication retains the current snapshot and leaves services outs
     'publishing',
     'failed',
   ]);
+});
+
+test('a later component failure does not withhold an earlier successful component snapshot', async () => {
+  const publications = [];
+  const statuses = [];
+  const publisher = createBackgroundRuntimeSnapshotPublisher({
+    resolveComponents: async ({ requestedComponents }) => ({
+      components: requestedComponents,
+      currentSnapshotId: 'snapshot-old',
+    }),
+    publishComponents: async ({ components }) => {
+      publications.push(components);
+      if (components[0] === 'daemon') {
+        throw new Error('daemon source is not currently buildable');
+      }
+      return { snapshotId: 'snapshot-server-new', changedComponents: components };
+    },
+    publishStatus: async (status) => statuses.push(status),
+    logger: { error() {} },
+  });
+
+  const result = await publisher.markRefreshed(['server', 'daemon']);
+
+  assert.equal(result?.snapshotId, 'snapshot-server-new');
+  assert.deepEqual(publications, [['server'], ['daemon']]);
+  assert.deepEqual(statuses.at(-1), {
+    phase: 'failed',
+    components: {
+      server: { phase: 'current', error: null },
+      daemon: { phase: 'failed', error: 'daemon source is not currently buildable' },
+    },
+    currentSnapshotId: 'snapshot-server-new',
+  });
+});
+
+test('a component identity failure does not prevent resolving and publishing its healthy neighbor', async () => {
+  const resolutions = [];
+  const publications = [];
+  const statuses = [];
+  const publisher = createBackgroundRuntimeSnapshotPublisher({
+    resolveComponents: async ({ requestedComponents }) => {
+      resolutions.push(requestedComponents);
+      if (requestedComponents[0] === 'daemon') {
+        throw new Error('daemon identity is unavailable');
+      }
+      return { components: requestedComponents, currentSnapshotId: 'snapshot-old' };
+    },
+    publishComponents: async ({ components }) => {
+      publications.push(components);
+      return { snapshotId: 'snapshot-server-new', changedComponents: components };
+    },
+    publishStatus: async (status) => statuses.push(status),
+    logger: { error() {} },
+  });
+
+  const result = await publisher.markRefreshed(['server', 'daemon']);
+
+  assert.equal(result?.snapshotId, 'snapshot-server-new');
+  assert.deepEqual(resolutions, [['server'], ['daemon']]);
+  assert.deepEqual(publications, [['server']]);
+  assert.deepEqual(statuses.at(-1), {
+    phase: 'failed',
+    components: {
+      server: { phase: 'current', error: null },
+      daemon: { phase: 'failed', error: 'daemon identity is unavailable' },
+    },
+    currentSnapshotId: 'snapshot-server-new',
+  });
 });
 
 test('a failed publication leaves requested components already matching the current snapshot current', async () => {
@@ -303,7 +376,7 @@ test('a failed publication waits for the next material refresh before retrying',
   assert.deepEqual(requested, [['server']]);
 
   await publisher.markRefreshed(['daemon']);
-  assert.deepEqual(requested, [['server'], ['server', 'daemon']]);
+  assert.deepEqual(requested, [['server'], ['server'], ['daemon']]);
 });
 
 test('shutdown does not let an already-started publication update runtime status afterward', async () => {
@@ -356,7 +429,7 @@ test('restart reconstruction compares every component identity instead of restor
   const result = await publisher.reconcileAfterRestart();
 
   assert.equal(result?.snapshotId, 'snapshot-server-new');
-  assert.deepEqual(resolvedRequests, [['web', 'server', 'daemon']]);
+  assert.deepEqual(resolvedRequests, [['web'], ['server'], ['daemon']]);
   assert.deepEqual(publications, [['server']]);
 });
 
