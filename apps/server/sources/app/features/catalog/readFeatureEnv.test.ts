@@ -7,6 +7,7 @@ import {
   readConnectedServicesFeatureEnv,
   readMachineTransferFeatureEnv,
   readPetsFeatureEnv,
+  readSessionAgentSwitchingFeatureEnv,
   readSessionHandoffFeatureEnv,
   readSessionUsageLimitRecoveryFeatureEnv,
   readTerminalFeatureEnv,
@@ -139,6 +140,34 @@ describe('readSessionUsageLimitRecoveryFeatureEnv', () => {
     const res = readSessionUsageLimitRecoveryFeatureEnv(env);
 
     expect(res.usageLimitRecoveryEnabled).toBe(false);
+  });
+});
+
+describe('readSessionAgentSwitchingFeatureEnv', () => {
+  it('defaults agent switching enabled when env is unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const res = readSessionAgentSwitchingFeatureEnv(env);
+
+    expect(res.agentSwitchingEnabled).toBe(true);
+  });
+
+  it('reads the opt-out env value', () => {
+    for (const raw of ['0', 'false', 'no', 'off']) {
+      const res = readSessionAgentSwitchingFeatureEnv({
+        HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED: raw,
+      });
+
+      expect(res.agentSwitchingEnabled).toBe(false);
+    }
+  });
+
+  it('falls back to the default for an unparseable env value', () => {
+    const env: NodeJS.ProcessEnv = {
+      HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED: 'maybe',
+    };
+    const res = readSessionAgentSwitchingFeatureEnv(env);
+
+    expect(res.agentSwitchingEnabled).toBe(true);
   });
 });
 

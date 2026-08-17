@@ -67,6 +67,10 @@ export type SessionUsageLimitRecoveryFeatureEnv = Readonly<{
   usageLimitRecoveryEnabled: boolean;
 }>;
 
+export type SessionAgentSwitchingFeatureEnv = Readonly<{
+  agentSwitchingEnabled: boolean;
+}>;
+
 export type SessionFoldersFeatureEnv = Readonly<{
   foldersEnabled: boolean;
 }>;
@@ -309,6 +313,12 @@ export function readSessionHandoffFeatureEnv(env: NodeJS.ProcessEnv): SessionHan
 export function readSessionUsageLimitRecoveryFeatureEnv(env: NodeJS.ProcessEnv): SessionUsageLimitRecoveryFeatureEnv {
   return {
     usageLimitRecoveryEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsUsageLimitRecoveryEnabled], true),
+  };
+}
+
+export function readSessionAgentSwitchingFeatureEnv(env: NodeJS.ProcessEnv): SessionAgentSwitchingFeatureEnv {
+  return {
+    agentSwitchingEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.sessionsAgentSwitchingEnabled], true),
   };
 }
 

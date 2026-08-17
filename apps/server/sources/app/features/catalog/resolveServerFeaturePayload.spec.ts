@@ -201,6 +201,29 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.capabilities.session.messages.role).toBe(true);
     });
 
+    it("enables agent switching from the server registry by default so the in-Session Agent rail can appear", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
+        expect(payload.features.sessions.agentSwitching.enabled).toBe(true);
+    });
+
+    it("disables agent switching when the env opt-out is off", () => {
+        const payload = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED: "0",
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(payload.features.sessions.agentSwitching.enabled).toBe(false);
+    });
+
+    it("keeps agent switching disabled when its `sessions` dependency is disabled", () => {
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [...serverFeatureRegistry, fromPartial({ features: { sessions: { enabled: false } } })],
+        );
+
+        expect(payload.features.sessions.enabled).toBe(false);
+        expect(payload.features.sessions.agentSwitching.enabled).toBe(false);
+    });
+
     it("disables session folders when the env toggle is off", () => {
         const payload = resolveServerFeaturePayload({
             HAPPIER_FEATURE_SESSIONS_FOLDERS__ENABLED: "0",

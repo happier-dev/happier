@@ -123,6 +123,15 @@ export async function applySessionAgentTransitionCutover(
     // The read/write gap is not fenced: the reserved localId namespace is
     // rejected on every generic ingress, so this command is its only producer
     // and the daemon issues one transition per Session at a time.
+    //
+    // Comparing the STORED BYTES is sound in BOTH encryption modes here, and
+    // that is a property of this tree specifically: the daemon seals the
+    // divider with `encryptSessionPayload({ …, idempotencyKey: dividerLocalId })`,
+    // whose derived nonce makes a re-seal of the same payload byte-identical.
+    // Do not port a "the server cannot decide opaque ciphertext" arm from the
+    // successor tree, which seals dividers with a random nonce and therefore
+    // has to defer the comparison to the daemon; here that arm would add a
+    // decision-maker for a question this comparison already answers.
     const existingDivider = await db.sessionMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: dividerLocalId } },
         select: { content: true },
