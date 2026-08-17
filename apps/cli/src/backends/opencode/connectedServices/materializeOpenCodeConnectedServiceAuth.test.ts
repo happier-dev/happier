@@ -15,6 +15,7 @@ import {
   parseOpenCodeBrokerSelections,
 } from '@/backends/opencode/brokerPlugin';
 import { OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV } from '@/backends/opencode/server/openCodeManagedServerEnv';
+import { HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceBrokerSelectionIdentityEnv';
 import { configuration } from '@/configuration';
 
 import { materializeOpenCodeConnectedServiceAuth } from './materializeOpenCodeConnectedServiceAuth';
@@ -99,6 +100,9 @@ describe('materializeOpenCodeConnectedServiceAuth', () => {
     const first = await materializeOpenCodeConnectedServiceAuth({ rootDir: '', openaiCodex: build('a1', 'r1', now + 1000), openai: null, claudeSubscription: null, anthropic: null });
     const rotated = await materializeOpenCodeConnectedServiceAuth({ rootDir: '', openaiCodex: build('a2', 'r2', now + 9999), openai: null, claudeSubscription: null, anthropic: null });
     expect(first.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]).toBe(rotated.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]);
+    expect(first.env[HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY]).toBe(
+      first.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV],
+    );
     // A different account yields a DIFFERENT identity.
     const otherAccount = await materializeOpenCodeConnectedServiceAuth({ rootDir: '', openaiCodex: buildConnectedServiceCredentialRecord({ now, serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: now + 1000, oauth: { accessToken: 'a', refreshToken: 'r', idToken: null, scope: null, tokenType: null, providerAccountId: 'acct_999', providerEmail: null } }), openai: null, claudeSubscription: null, anthropic: null });
     expect(otherAccount.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]).not.toBe(first.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]);

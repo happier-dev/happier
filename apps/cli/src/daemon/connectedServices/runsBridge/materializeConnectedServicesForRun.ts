@@ -1,4 +1,8 @@
 import type { CatalogAgentId } from '@/backends/types';
+import {
+  HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY,
+  readSessionConnectedServiceBrokerSelectionIdentity,
+} from '@/agent/runtime/sessionConnectedServiceBrokerSelectionIdentityEnv';
 import { logger as defaultLogger } from '@/ui/logger';
 
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
@@ -119,13 +123,6 @@ export function createExecutionRunConnectedServicesBridge(deps: Readonly<{
    * COUNT of env-key names is emitted.
    */
   logger?: Pick<typeof defaultLogger, 'debug'>;
-  /**
-   * Resolve the broker selection identity (R3-6/NF-1) from the run's MATERIALIZED env. Injected by the
-   * daemon wiring — reuses the SAME env-key reader the session-target registration uses (no second
-   * resolver) — so an OpenCode/Pi run bound to a shared-managed-server pool indexes its broker identity
-   * on the run target and authorizes its access-token bridge even when no live session shares the pool.
-   */
-  resolveBrokerSelectionIdentity?: (env: Record<string, string>) => string | null;
   createAdoptedRootCleanup?: (input: Readonly<{
     materializedRoot: string;
     materializationKey: string;
@@ -188,7 +185,9 @@ export function createExecutionRunConnectedServicesBridge(deps: Readonly<{
       // Broker selection identity (NF-1): for a shared-managed-server provider (OpenCode/Pi) the run's
       // materialized env carries a stable pool identity. Indexing it on the run target lets the broker
       // access-token refresh authorize the run even when no live session shares the pool.
-      const brokerSelectionIdentity = deps.resolveBrokerSelectionIdentity?.(resolved.env) ?? null;
+      const brokerSelectionIdentity = readSessionConnectedServiceBrokerSelectionIdentity(
+        resolved.env[HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY],
+      );
       const connectedServiceSelectionsJson = resolved.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]?.trim() || null;
 
       // Register the run in the runtime-registry RUN KEYSPACE (keyed by materialization key, carrying

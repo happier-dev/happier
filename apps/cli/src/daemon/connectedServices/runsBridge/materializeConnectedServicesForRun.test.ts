@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceBrokerSelectionIdentityEnv';
 
 import {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
@@ -236,10 +237,12 @@ describe('createExecutionRunConnectedServicesBridge', () => {
     const bridge = createExecutionRunConnectedServicesBridge({
       resolveAuthForSpawn: (async () => ({
         ...buildResolved(),
-        env: { OPENCODE_SERVER: 'http://x', HAPPIER_OPENCODE_BROKER_SELECTION_IDENTITY: 'oc-pool-x' },
+        env: {
+          OPENCODE_SERVER: 'http://x',
+          [HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY]: 'oc-pool-x',
+        },
       })) as unknown as ResolveConnectedServiceAuthForRun,
       runtimeRegistry: registry,
-      resolveBrokerSelectionIdentity: (env) => env['HAPPIER_OPENCODE_BROKER_SELECTION_IDENTITY'] ?? null,
     });
 
     await bridge.materialize(buildRequest({ agentId: 'opencode' }));

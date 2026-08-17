@@ -16,6 +16,7 @@ import {
   type ConnectedServiceRuntimeTargetRegistration as RuntimeTargetRegistration,
 } from '../runtimeRegistry/registry';
 import { resolveTrackedConnectedServiceBindingsRaw } from '../trackedSessionConnectedServiceBindings';
+import { readTrackedSessionBrokerSelectionIdentity } from '../broker/trackedSessionBrokerSelectionIdentity';
 
 type AccessTokenRefreshResolver = (
   metadata: unknown,
@@ -130,12 +131,6 @@ export function registerConnectedServiceTrackedSessionTargetsForDaemon(input: Re
   runtimeRegistry?: ConnectedServiceRuntimeRegistry | null;
   resolveAccessTokenRefresh?: AccessTokenRefreshResolver;
   onRegisteredTarget?: (target: ConnectedServiceRuntimeTarget) => void;
-  /**
-   * Resolve the broker selection identity (R3-6) from the tracked session's spawn env. Injected by
-   * the daemon wiring so this startup module stays free of backend-specific env-var-name imports;
-   * a provider whose managed server is SHARED (OpenCode/Pi) exposes a stable identity here.
-   */
-  resolveBrokerSelectionIdentity?: (tracked: TrackedSession) => string | null;
 }>): ConnectedServiceRuntimeTarget | null {
   const pid = Math.trunc(Number(input.tracked.pid));
   if (!Number.isFinite(pid) || pid <= 0) return null;
@@ -143,7 +138,7 @@ export function registerConnectedServiceTrackedSessionTargetsForDaemon(input: Re
   const sessionId = typeof input.tracked.happySessionId === 'string' && input.tracked.happySessionId.trim().length > 0
     ? input.tracked.happySessionId.trim()
     : undefined;
-  const brokerSelectionIdentityRaw = input.resolveBrokerSelectionIdentity?.(input.tracked) ?? null;
+  const brokerSelectionIdentityRaw = readTrackedSessionBrokerSelectionIdentity(input.tracked);
   const brokerSelectionIdentity = typeof brokerSelectionIdentityRaw === 'string'
     && brokerSelectionIdentityRaw.trim().length > 0
     ? brokerSelectionIdentityRaw.trim()

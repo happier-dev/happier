@@ -5,6 +5,7 @@ import type { ConnectedServiceCredentialRecordV1, ConnectedServiceId } from '@ha
 import { configuration } from '@/configuration';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { brokerSelectionIdentityGroupSuffix } from '@/daemon/connectedServices/broker/brokerSelectionIdentityGroup';
+import { HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceBrokerSelectionIdentityEnv';
 import type { ConnectedServiceResolvedSelection } from '@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn';
 import {
   requireConnectedServiceTokenCredentialRecord,
@@ -175,12 +176,14 @@ export async function materializePiConnectedServiceAuth(params: Readonly<{
     env[PI_BROKER_STATE_PATH_ENV] = configuration.connectedServiceBrokerStateFile;
     env[PI_BROKER_EXTENSION_VERSION_ENV] = PI_BROKER_EXTENSION_VERSION;
     // Stable selection identity (keys the broker load handshake + preflight match).
-    env[PI_BROKER_SELECTION_IDENTITY_ENV] = [
+    const brokerSelectionIdentity = [
       'pi',
       'connected',
       `broker:${PI_BROKER_EXTENSION_VERSION}`,
       ...identityFragments.sort(),
     ].join('|');
+    env[PI_BROKER_SELECTION_IDENTITY_ENV] = brokerSelectionIdentity;
+    env[HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY] = brokerSelectionIdentity;
   }
 
   return {

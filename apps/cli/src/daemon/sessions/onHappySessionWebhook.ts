@@ -308,7 +308,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       const agentId = inferAgentIdFromSessionMetadata(normalizedMetadata);
       const vendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, normalizedMetadata);
       if (vendorResumeId) trackedForPid.vendorResumeId = vendorResumeId;
-      if (trackedForPid.startedBy === 'daemon' && !isPlaceholderSessionId) {
+      if (!isPlaceholderSessionId) {
         // Best-effort report observers must not wait on strict startup reconciliation:
         // terminal-host serviceability is produced by this exact report and is independently useful.
         const reportObserverFailure = (error: unknown): void => {
@@ -319,7 +319,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         } catch (error) {
           reportObserverFailure(error);
         }
-        if (onTrackedSessionReady) {
+        if (trackedForPid.startedBy === 'daemon' && onTrackedSessionReady) {
           await onTrackedSessionReady(trackedForPid);
         }
       }

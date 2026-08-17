@@ -786,6 +786,12 @@ export type Metadata = {
   connectedServicesUpdatedAt?: number,
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1,
   /**
+   * Stable, non-secret broker selection identity published by broker-backed runtimes.
+   * The daemon persists this with the session marker so terminal-started runtimes can be
+   * re-indexed by the canonical Connected Services runtime registry after daemon replacement.
+   */
+  connectedServiceBrokerSelectionIdentityV1?: string,
+  /**
    * Desired model override selected by the user (UI/CLI), if supported by the agent.
    *
    * This is session-scoped and should be applied by runners in a capability-driven way

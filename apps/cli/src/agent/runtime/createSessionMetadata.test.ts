@@ -284,6 +284,31 @@ describe('createSessionMetadata', () => {
         }
     });
 
+    it('publishes the broker selection identity needed to authorize terminal-started connected sessions', () => {
+        const envKey = 'HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY';
+        const previous = process.env[envKey];
+        process.env[envKey] = 'opencode|connected|broker:1|openai-codex:work:acct-1|group:team';
+
+        try {
+            const { metadata } = createSessionMetadata({
+                flavor: 'opencode',
+                machineId: 'machine-1',
+                startedBy: 'terminal',
+            });
+
+            expect((metadata as Record<string, unknown>).connectedServiceBrokerSelectionIdentityV1).toBe(
+                'opencode|connected|broker:1|openai-codex:work:acct-1|group:team',
+            );
+            expect(process.env[envKey]).toBeUndefined();
+        } finally {
+            if (previous === undefined) {
+                delete process.env[envKey];
+            } else {
+                process.env[envKey] = previous;
+            }
+        }
+    });
+
     it('seeds acpTransportV1 when acpProviderId is provided', () => {
         const { metadata } = createSessionMetadata({
             flavor: 'opencode',

@@ -142,7 +142,16 @@ describe('registerConnectedServiceRuntimeTargetForDaemon onRegisteredTarget', ()
         startedBy: 'daemon',
         happySessionId: 'late-session',
         spawnOptions: {
-          connectedServices: connectedBindings,
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              'openai-codex': {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'work',
+              },
+            },
+          },
         },
       } as Parameters<typeof registerConnectedServiceTrackedSessionTargetsForDaemon>[0]['tracked'],
       onRegisteredTarget,
@@ -151,6 +160,46 @@ describe('registerConnectedServiceRuntimeTargetForDaemon onRegisteredTarget', ()
     expect(onRegisteredTarget).toHaveBeenCalledWith(expect.objectContaining({
       pid: 4324,
       sessionId: 'late-session',
+    }));
+  });
+
+  it('indexes a terminal-started broker runtime from its durable session metadata', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const brokerSelectionIdentity = 'opencode|connected|broker:1|openai-codex:work:acct-1|group:team';
+
+    registerConnectedServiceTrackedSessionTargetsForDaemon({
+      runtimeRegistry: registry,
+      tracked: {
+        pid: 4326,
+        startedBy: 'happy directly - likely by user from terminal',
+        happySessionId: 'terminal-session',
+        happySessionMetadataFromLocalWebhook: {
+          path: '/tmp/terminal-session',
+          host: 'test-host',
+          homeDir: '/tmp/home',
+          happyHomeDir: '/tmp/happier',
+          happyLibDir: '/tmp/happier/lib',
+          happyToolsDir: '/tmp/happier/tools',
+          hostPid: 4326,
+          flavor: 'opencode',
+          connectedServices: {
+            v: 1,
+            bindingsByServiceId: {
+              'openai-codex': {
+                source: 'connected',
+                selection: 'profile',
+                profileId: 'work',
+              },
+            },
+          },
+          connectedServiceBrokerSelectionIdentityV1: brokerSelectionIdentity,
+        },
+      } as Parameters<typeof registerConnectedServiceTrackedSessionTargetsForDaemon>[0]['tracked'],
+    });
+
+    expect(registry.getByBrokerSelectionIdentity(brokerSelectionIdentity)).toEqual(expect.objectContaining({
+      pid: 4326,
+      sessionId: 'terminal-session',
     }));
   });
 

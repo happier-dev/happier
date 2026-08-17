@@ -479,8 +479,6 @@ import {
 import { computeConnectedServiceAccessTokenFingerprint } from './connectedServices/refresh/credentialFreshness/tokenFingerprint';
 import { resolveCurrentCodexRuntimeAuthFailureSource } from './connectedServices/runtimeAuth/resolveCurrentCodexRuntimeAuthFailureSource';
 import { readCredentialAccountIdentity } from './connectedServices/quotas/coordinator/support';
-import { OPEN_CODE_BROKER_SELECTION_IDENTITY_ENV } from '@/backends/opencode/brokerPlugin';
-import { PI_BROKER_SELECTION_IDENTITY_ENV } from '@/backends/pi/brokerExtension';
 import { startConnectedServiceStableHomeReconcileScheduler } from './connectedServices/startup/stableHomeReconcile';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
@@ -550,32 +548,6 @@ function readConnectedServiceAccessTokenRefreshCapabilityFromMetadata(
     : null;
 }
 
-/**
- * Env var names under which a SHARED-managed-server broker provider (OpenCode/Pi) exposes its stable
- * selection identity. The daemon indexes live runtime targets by this value so a broker plugin — which
- * cannot present a per-session id (one shared server serves many sessions) — still authorizes its
- * access-token bridge against a live binding (R3-6). Ownership of the names stays with the backends.
- */
-const BROKER_SELECTION_IDENTITY_ENV_KEYS: readonly string[] = [
-  OPEN_CODE_BROKER_SELECTION_IDENTITY_ENV,
-  PI_BROKER_SELECTION_IDENTITY_ENV,
-];
-
-function readBrokerSelectionIdentityFromEnv(
-  env: Readonly<Record<string, string | undefined>> | undefined,
-): string | null {
-  if (!env) return null;
-  for (const key of BROKER_SELECTION_IDENTITY_ENV_KEYS) {
-    const value = env[key];
-    if (typeof value === 'string' && value.trim().length > 0) return value.trim();
-  }
-  return null;
-}
-
-function resolveTrackedBrokerSelectionIdentity(tracked: TrackedSession): string | null {
-  return readBrokerSelectionIdentityFromEnv(tracked.spawnOptions?.environmentVariables);
-}
-
 export function registerConnectedServiceTrackedSessionTargetsForDaemon(input: Readonly<{
   tracked: TrackedSession;
   runtimeRegistry?: ConnectedServiceRuntimeRegistry | null;
@@ -584,7 +556,6 @@ export function registerConnectedServiceTrackedSessionTargetsForDaemon(input: Re
   return registerConnectedServiceTrackedSessionTargetsForDaemonBase({
     ...input,
     resolveAccessTokenRefresh: readConnectedServiceAccessTokenRefreshCapabilityFromMetadata,
-    resolveBrokerSelectionIdentity: resolveTrackedBrokerSelectionIdentity,
   });
 }
 
@@ -2827,6 +2798,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }, true);
           },
           onTrackedSessionReported: async (tracked) => {
+            if (tracked.startedBy !== 'daemon') {
+              // Session reports are the first durable identity boundary for terminal-started
+              // runtimes. Index them through the same registry owner used by daemon spawns and
+              // reattachment before serving broker-backed provider requests.
+              registerConnectedServiceTrackedSessionTargets(tracked);
+            }
             await publishReportedTerminalControlServiceability({
               tracked,
               readTerminalAttachmentInfo: async (sessionId) => await readTerminalAttachmentInfo({
@@ -6336,9 +6313,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         credentialRefreshService: connectedServiceRefreshCoordinator,
       }),
       runtimeRegistry: connectedServiceRuntimeRegistry,
-      // NF-1: reuse the SAME broker-selection-identity env reader the session-target registration uses
-      // so an OpenCode/Pi run bound to a shared-managed-server pool authorizes its broker token refresh.
-      resolveBrokerSelectionIdentity: readBrokerSelectionIdentityFromEnv,
       createAdoptedRootCleanup: ({ materializedRoot, materializationKey, agentId }) => {
         return createAdoptedExecutionRunRootCleanup({
           materializationBaseDir: connectedServicesMaterializationBaseDir,

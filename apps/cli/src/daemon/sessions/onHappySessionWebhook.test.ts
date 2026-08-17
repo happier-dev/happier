@@ -263,6 +263,41 @@ describe('createOnHappySessionWebhook', () => {
     }));
   });
 
+  it('notifies when a terminal-started session reports provider context', () => {
+    const onTrackedSessionReported = vi.fn();
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession: new Map<number, TrackedSession>(),
+      pidToAwaiter: new Map<number, (session: TrackedSession) => void>(),
+      getParentPidFn: () => null,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+      onTrackedSessionReported,
+    });
+
+    onWebhook('session-terminal-793', {
+      ...createMetadata(793, 'terminal'),
+      flavor: 'opencode',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'work',
+          },
+        },
+      },
+      connectedServiceBrokerSelectionIdentityV1:
+        'opencode|connected|broker:1|openai-codex:work:acct-1',
+    } as Metadata);
+
+    expect(onTrackedSessionReported).toHaveBeenCalledWith(expect.objectContaining({
+      happySessionId: 'session-terminal-793',
+      pid: 793,
+      startedBy: 'happy directly - likely by user from terminal',
+    }));
+  });
+
   it('does not acknowledge daemon readiness until the strict tracked-session callback settles', async () => {
     const tracked: TrackedSession = { pid: 792, startedBy: 'daemon' };
     let releaseReady!: () => void;
