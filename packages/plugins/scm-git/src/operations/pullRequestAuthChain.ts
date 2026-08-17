@@ -1,9 +1,10 @@
 import {
   SCM_OPERATION_ERROR_CODES,
-  type ScmHostingProviderRef,
   type ScmPullRequestReference,
   type ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import {
+  type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
 export type BranchHeadContext = Readonly<{
     provider: ScmHostingProviderRef;

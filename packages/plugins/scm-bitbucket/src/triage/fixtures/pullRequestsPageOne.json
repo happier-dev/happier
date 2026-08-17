@@ -1,0 +1,137 @@
+{
+  "pagelen": 10,
+  "page": 1,
+  "next": "https://api.bitbucket.org/2.0/workspaces/%7B4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44%7D/pullrequests/%7B9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19%7D?page=2&pagelen=10&state=OPEN",
+  "values": [
+    {
+      "type": "pullrequest",
+      "id": 42,
+      "title": "Bound the deployment poller to its invocation deadline",
+      "state": "OPEN",
+      "draft": false,
+      "queued": false,
+      "comment_count": 3,
+      "task_count": 1,
+      "close_source_branch": true,
+      "created_on": "2026-08-10T09:14:22.113940+00:00",
+      "updated_on": "2026-08-12T16:02:41.884210+00:00",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-workspace/deploy-tools/pullrequests/42"
+        },
+        "html": {
+          "href": "https://bitbucket.org/example-workspace/deploy-tools/pull-requests/42"
+        },
+        "diff": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-workspace/deploy-tools/pullrequests/42/diff"
+        },
+        "diffstat": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-workspace/deploy-tools/pullrequests/42/diffstat"
+        }
+      },
+      "summary": {
+        "type": "rendered",
+        "raw": "The poller outlived its own invocation. Bind it to the supplied signal.",
+        "markup": "markdown",
+        "html": "<p>The poller outlived its own invocation. Bind it to the supplied signal.</p>"
+      },
+      "author": {
+        "type": "user",
+        "uuid": "{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}",
+        "account_id": "712020:00000000-0000-0000-0000-00000000a001",
+        "nickname": "example-author",
+        "display_name": "Example Author",
+        "links": {
+          "self": {
+            "href": "https://api.bitbucket.org/2.0/users/%7B9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19%7D"
+          }
+        }
+      },
+      "source": {
+        "branch": { "name": "fix/poller-deadline" },
+        "commit": { "type": "commit", "hash": "3f6c1a8e9b24" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+          "name": "deploy-tools",
+          "full_name": "example-workspace/deploy-tools"
+        }
+      },
+      "destination": {
+        "branch": { "name": "main" },
+        "commit": { "type": "commit", "hash": "c07d5b21f4ae" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+          "name": "deploy-tools",
+          "full_name": "example-workspace/deploy-tools"
+        }
+      },
+      "merge_commit": null,
+      "closed_by": null,
+      "reason": ""
+    },
+    {
+      "type": "pullrequest",
+      "id": 41,
+      "title": "Retire the legacy release notifier",
+      "state": "DECLINED",
+      "draft": false,
+      "queued": false,
+      "comment_count": 11,
+      "task_count": 0,
+      "close_source_branch": false,
+      "created_on": "2026-07-28T11:41:05.002000+00:00",
+      "updated_on": "2026-08-01T08:22:19.510000+00:00",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/example-workspace/release-notifier/pullrequests/41"
+        },
+        "html": {
+          "href": "https://bitbucket.org/example-workspace/release-notifier/pull-requests/41"
+        }
+      },
+      "summary": {
+        "type": "rendered",
+        "raw": "Superseded by the workspace-wide notifier.",
+        "markup": "markdown",
+        "html": "<p>Superseded by the workspace-wide notifier.</p>"
+      },
+      "author": {
+        "type": "user",
+        "uuid": "{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}",
+        "account_id": "712020:00000000-0000-0000-0000-00000000a001",
+        "nickname": "example-author",
+        "display_name": "Example Author"
+      },
+      "source": {
+        "branch": { "name": "chore/retire-notifier" },
+        "commit": { "type": "commit", "hash": "8ba31d7c05fe" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901}",
+          "name": "release-notifier",
+          "full_name": "example-workspace/release-notifier"
+        }
+      },
+      "destination": {
+        "branch": { "name": "main" },
+        "commit": { "type": "commit", "hash": "44e0c9b7132d" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901}",
+          "name": "release-notifier",
+          "full_name": "example-workspace/release-notifier"
+        }
+      },
+      "merge_commit": null,
+      "closed_by": {
+        "type": "user",
+        "uuid": "{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}",
+        "nickname": "example-maintainer",
+        "display_name": "Example Maintainer"
+      },
+      "reason": "Replaced by the workspace-wide notifier rollout."
+    }
+  ]
+}

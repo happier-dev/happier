@@ -1,17 +1,18 @@
 import {
   SCM_OPERATION_ERROR_CODES,
-  type ScmHostingProviderRef,
   type ScmOperationErrorCode,
   type ScmPullRequestReference,
   type ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import {
+  type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderPullRequestCreateInput,
-  ScmHostingProviderPullRequestGetInput,
-  ScmHostingProviderPullRequestListInput,
-  ScmHostingProviderRuntimeCommandResult,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
+  HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
+  HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
+  HostingProviderRuntimeCommandResult as ScmHostingProviderRuntimeCommandResult,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 import {
   detectGitlabCliAuth,

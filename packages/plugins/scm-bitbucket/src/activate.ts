@@ -1,22 +1,12 @@
-import type { PluginApi } from '@happier-dev/plugin-sdk';
+import { BITBUCKET_PLUGIN } from './manifest.js';
 
-import { BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID } from './adapter.js';
-import { bitbucketConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
-import { PLUGIN_MANIFEST } from './manifest.js';
-import { bitbucketApiAdapter } from './operations/bitbucketApiAdapter.js';
-
-export function activate(api: PluginApi): void {
-  const hostingProvider = PLUGIN_MANIFEST.contributes.scmHostingProviders.find(
-    ({ id }) => id === BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID,
-  );
-  const connectedAccountDescriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(
-    ({ id }) => id === hostingProvider?.authService,
-  );
-  if (!connectedAccountDescriptor) {
-    throw new Error('Bitbucket plugin manifest must declare its connected-account auth service');
-  }
-  api.connectedAccounts.register(connectedAccountDescriptor.id, bitbucketConnectedAccountRuntime);
-  api.scm.registerHostingProvider(BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID, {
-    adapter: bitbucketApiAdapter,
-  });
-}
+/**
+ * The single Bitbucket registration spine.
+ *
+ * It is projected from the one `definePlugin` owner rather than hand-written, so a declared Action,
+ * hosting provider, or Connected Account descriptor can never drift from a registered handler in
+ * either direction. There is no second activation, host branch, registry, scheduler, or refresh
+ * loop: the mounted PRs & Issues view owns refresh demand, and this source performs one requested
+ * read per invocation.
+ */
+export const activate = BITBUCKET_PLUGIN.activate;

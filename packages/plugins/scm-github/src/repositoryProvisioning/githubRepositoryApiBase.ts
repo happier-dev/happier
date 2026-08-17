@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { createGithubRepositoryCommandFailedError } from './githubRepositoryErrors.js';
 

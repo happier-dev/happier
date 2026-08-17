@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { evaluateDefaultBranchPullRequestPolicy } from './defaultBranchPullRequestPolicy.js';
 

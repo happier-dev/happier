@@ -1,0 +1,175 @@
+{
+  "pagelen": 50,
+  "page": 1,
+  "values": [
+    {
+      "type": "pullrequest",
+      "id": 5421,
+      "title": "Drop the retired app-password branch from the auth reader",
+      "state": "OPEN",
+      "draft": false,
+      "comment_count": 4,
+      "task_count": 0,
+      "created_on": "2026-08-11T07:20:04.101220+00:00",
+      "updated_on": "2026-08-13T11:48:19.664130+00:00",
+      "links": {
+        "html": {
+          "href": "https://bitbucket.org/example-workspace/deploy-tools/pull-requests/5421"
+        }
+      },
+      "author": {
+        "type": "user",
+        "uuid": "{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}",
+        "nickname": "example-maintainer",
+        "display_name": "Example Maintainer"
+      },
+      "source": {
+        "branch": { "name": "chore/drop-app-passwords" },
+        "commit": { "type": "commit", "hash": "9b41c0d7e2af" }
+      },
+      "destination": {
+        "branch": { "name": "main" },
+        "commit": { "type": "commit", "hash": "c07d5b21f4ae" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+          "name": "deploy-tools",
+          "full_name": "example-workspace/deploy-tools"
+        }
+      },
+      "reviewers": [],
+      "participants": [
+        {
+          "type": "participant",
+          "role": "PARTICIPANT",
+          "approved": false,
+          "state": null,
+          "participated_on": "2026-08-12T09:02:11.000000+00:00",
+          "user": {
+            "type": "user",
+            "uuid": "{0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9}",
+            "nickname": "example-commenter",
+            "display_name": "Example Commenter"
+          }
+        },
+        {
+          "type": "participant",
+          "role": "PARTICIPANT",
+          "approved": true,
+          "state": "approved",
+          "participated_on": "2026-08-13T11:47:52.410000+00:00",
+          "user": {
+            "type": "user",
+            "uuid": "{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}",
+            "nickname": "example-author",
+            "display_name": "Example Author"
+          }
+        }
+      ]
+    },
+    {
+      "type": "pullrequest",
+      "id": 5422,
+      "title": "Bound the workspace enumeration to one listing page per scan call",
+      "state": "OPEN",
+      "draft": false,
+      "comment_count": 0,
+      "task_count": 0,
+      "created_on": "2026-08-13T13:05:47.994100+00:00",
+      "updated_on": "2026-08-13T13:05:47.994100+00:00",
+      "links": {
+        "html": {
+          "href": "https://bitbucket.org/example-workspace/deploy-tools/pull-requests/5422"
+        }
+      },
+      "author": {
+        "type": "user",
+        "uuid": "{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}",
+        "nickname": "example-maintainer",
+        "display_name": "Example Maintainer"
+      },
+      "source": {
+        "branch": { "name": "feat/listing-budget" },
+        "commit": { "type": "commit", "hash": "4e2b7fa10c93" }
+      },
+      "destination": {
+        "branch": { "name": "main" },
+        "commit": { "type": "commit", "hash": "c07d5b21f4ae" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+          "name": "deploy-tools",
+          "full_name": "example-workspace/deploy-tools"
+        }
+      },
+      "reviewers": [
+        {
+          "type": "user",
+          "uuid": "{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}",
+          "nickname": "example-author",
+          "display_name": "Example Author"
+        }
+      ],
+      "participants": []
+    },
+    {
+      "type": "pullrequest",
+      "id": 5423,
+      "title": "Rename the staging pipeline step",
+      "state": "OPEN",
+      "draft": false,
+      "comment_count": 1,
+      "task_count": 0,
+      "created_on": "2026-08-09T16:41:02.330000+00:00",
+      "updated_on": "2026-08-10T08:12:36.770000+00:00",
+      "links": {
+        "html": {
+          "href": "https://bitbucket.org/example-workspace/deploy-tools/pull-requests/5423"
+        }
+      },
+      "author": {
+        "type": "user",
+        "uuid": "{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}",
+        "nickname": "example-maintainer",
+        "display_name": "Example Maintainer"
+      },
+      "source": {
+        "branch": { "name": "chore/rename-staging-step" },
+        "commit": { "type": "commit", "hash": "1d0fa93c47b6" }
+      },
+      "destination": {
+        "branch": { "name": "main" },
+        "commit": { "type": "commit", "hash": "c07d5b21f4ae" },
+        "repository": {
+          "type": "repository",
+          "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+          "name": "deploy-tools",
+          "full_name": "example-workspace/deploy-tools"
+        }
+      },
+      "reviewers": [
+        {
+          "type": "user",
+          "uuid": "{5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b}",
+          "nickname": "example-reviewer",
+          "display_name": "Example Reviewer"
+        }
+      ],
+      "participants": [
+        {
+          "type": "participant",
+          "role": "REVIEWER",
+          "approved": true,
+          "state": "approved",
+          "participated_on": "2026-08-10T08:12:36.770000+00:00",
+          "user": {
+            "type": "user",
+            "uuid": "{5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b}",
+            "nickname": "example-reviewer",
+            "display_name": "Example Reviewer"
+          }
+        }
+      ]
+    }
+  ]
+}

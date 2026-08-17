@@ -1,0 +1,9 @@
+{
+  "$id": "1",
+  "innerException": null,
+  "message": "TF401019: The Git repository with name or identifier gateway does not exist or you do not have permissions for the operation you are attempting.",
+  "typeName": "Microsoft.TeamFoundation.Git.Server.GitRepositoryNotFoundException, Microsoft.TeamFoundation.Git.Server",
+  "typeKey": "GitRepositoryNotFoundException",
+  "errorCode": 0,
+  "eventId": 3000
+}

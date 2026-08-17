@@ -1,5 +1,6 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
+import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 
 const githubProvider: ScmHostingProviderRef = {
   id: 'scm.github',
@@ -75,7 +76,7 @@ describe('GitHub REST pull request adapter', () => {
     expect(requests[0]?.init?.headers).toMatchObject({
       Accept: 'application/vnd.github+json',
       Authorization: ['Bearer', 'redacted-test-token'].join(' '),
-      'X-GitHub-Api-Version': '2022-11-28',
+      'X-GitHub-Api-Version': GITHUB_API_VERSION,
     });
     expect(requests[0]?.init?.signal).toBe(controller.signal);
   });

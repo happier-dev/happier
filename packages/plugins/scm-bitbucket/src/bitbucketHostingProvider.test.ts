@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
-import type { PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/runtime';
+import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { encodeBitbucketBasicAuthorization } from './auth/basicCredentials.js';
+import { BITBUCKET_TRIAGE_ACTION_IDS } from './triage/source/actions.js';
+import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS } from './triage/source/detailActions.js';
 
 type DetectionResult = Readonly<{
   id: string;
@@ -42,13 +44,24 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     if (!mod) return;
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'happier.scm.hosting.bitbucket',
+      id: 'happier.scm.forge.bitbucket',
       entrypoints: { daemon: './dist/index.js' },
-      hostAccess: { required: [{ id: 'bitbucket-api', capability: 'network', scope: { targets: expect.arrayContaining([
-        { kind: 'fixedOrigin', origin: 'https://api.bitbucket.org' },
-        { kind: 'scmProviderOrigin', provider: 'bitbucket' },
-        { kind: 'connectedAccountOrigin', service: 'bitbucket-account' },
-      ]), methods: ['GET', 'POST'] } }], optional: [] },
+      hostAccess: { required: expect.arrayContaining([
+        expect.objectContaining({ id: 'bitbucket-api', capability: 'network', scope: { targets: expect.arrayContaining([
+          { kind: 'fixedOrigin', origin: 'https://api.bitbucket.org' },
+          { kind: 'scmProviderOrigin', provider: 'bitbucket' },
+          { kind: 'connectedAccountOrigin', service: 'bitbucket-account' },
+        ]), methods: ['GET', 'POST'] } }),
+        expect.objectContaining({
+          id: 'bitbucket-connected-account',
+          capability: 'connectedAccounts',
+          scope: {
+            serviceRefs: ['bitbucket-account'],
+            operations: ['select', 'use'],
+            materializationKinds: ['httpHeaders'],
+          },
+        }),
+      ]), optional: [] },
       contributes: {
         scmHostingProviders: [
           {
@@ -84,8 +97,12 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('uses');
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('permissions');
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
-    expect(ingestPluginManifestV2(mod.PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
+    // Ingested the way the host does it: from the serialized manifest bytes the build emits to
+    // `.happier-plugin/plugin.json`, not from the branded in-memory object.
+    expect(ingestPluginManifestV2(JSON.parse(JSON.stringify(mod.PLUGIN_MANIFEST)))).toMatchObject({ ok: true });
+    // The projected manifest declares every contribution family, so "no hooks" is an empty
+    // declaration rather than an absent key.
+    expect(mod.PLUGIN_MANIFEST.contributes.hooks).toEqual([]);
   });
 
   it('rejects dangling and wrong-family SCM/account origin references', async () => {
@@ -106,7 +123,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     expect(ingestPluginManifestV2({
       ...PLUGIN_MANIFEST,
       hostAccess: {
-        required: [{
+        required: [...PLUGIN_MANIFEST.hostAccess.required, {
           id: 'wrong-account-family',
           capability: 'network',
           reason: 'Wrong account family',
@@ -124,7 +141,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     expect(ingestPluginManifestV2({
       ...PLUGIN_MANIFEST,
       hostAccess: {
-        required: [{
+        required: [...PLUGIN_MANIFEST.hostAccess.required, {
           id: 'wrong-provider-family',
           capability: 'network',
           reason: 'Wrong provider family',
@@ -152,7 +169,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'https://bitbucket.org/happier-dev/happier.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.bitbucket/bitbucket',
+      id: 'happier.scm.forge.bitbucket/bitbucket',
       kind: 'bitbucket',
       baseUrl: 'https://bitbucket.org',
       nameWithOwner: 'happier-dev/happier',
@@ -233,6 +250,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       id: string;
       runtime: PluginConnectedAccountRuntime;
     }>> = [];
+    const actionRegistrations: Array<Readonly<{ id: string; handler: unknown }>> = [];
     // Boundary fixture intentionally supplies only the activation surface exercised here.
     mod.activate({
       scm: {
@@ -256,7 +274,22 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
           return { dispose() {} };
         },
       },
+      actions: {
+        register(id: string, handler: unknown) {
+          actionRegistrations.push({ id, handler });
+        },
+      },
     } as Parameters<typeof mod.activate>[0]);
+
+    // The three source roles PLUS the three source-native detail planes. The
+    // list is exhaustive on purpose: a declared Action with no registered
+    // handler passes conformance and then fails at invocation, and a registered
+    // handler with no declaration is a path the host never admits.
+    expect(actionRegistrations.map(({ id }) => id).sort())
+      .toEqual([
+        ...Object.values(BITBUCKET_TRIAGE_ACTION_IDS),
+        ...Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS),
+      ].sort());
 
     expect(registrations).toHaveLength(1);
     expect(hooks).toEqual([]);
@@ -304,7 +337,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
         kind: 'reconnect',
         attemptId: 'reconnect-attempt',
         account: {
-          service: { pluginId: 'happier.scm.hosting.bitbucket', contributionId: 'bitbucket-account' },
+          service: { pluginId: 'happier.scm.forge.bitbucket', contributionId: 'bitbucket-account' },
           accountId: 'account@example.com',
         },
       },

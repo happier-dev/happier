@@ -1,15 +1,15 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderCompareUrlInput,
-  ScmHostingProviderRemoteDetectionInput,
-  ScmHostingProviderRuntimeAdapter,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderCompareUrlInput as ScmHostingProviderCompareUrlInput,
+  HostingProviderRemoteDetectionInput as ScmHostingProviderRemoteDetectionInput,
+  HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
-import { PLUGIN_MANIFEST } from './manifest.js';
+import { GITHUB_PLUGIN_ID } from './observations/githubProviderContracts.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
 export const GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID = 'github';
-export const GITHUB_SCM_HOSTING_PROVIDER_ID = `${PLUGIN_MANIFEST.id}/${GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID}`;
+export const GITHUB_SCM_HOSTING_PROVIDER_ID = `${GITHUB_PLUGIN_ID}/${GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID}`;
 export const GITHUB_REMOTE_HOST_MATCHERS = Object.freeze({
   exactHosts: Object.freeze(['github.com']),
 });

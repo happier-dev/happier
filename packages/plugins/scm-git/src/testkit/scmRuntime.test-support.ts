@@ -1,15 +1,15 @@
 import { spawnSync } from 'node:child_process';
 
 import {
-    runWithScmHostingProviderRuntimeServices,
-    type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+    runWithHostingProviderRuntimeServices as runWithScmHostingProviderRuntimeServices,
+    type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import {
-    runWithScmBackendRuntimeServices,
-    type ScmBackendCommandRunInput,
-    type ScmBackendCommandRunResult,
-    type ScmBackendRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/backend';
+    runWithBackendRuntimeServices as runWithScmBackendRuntimeServices,
+    type BackendCommandRunInput as ScmBackendCommandRunInput,
+    type BackendCommandRunResult as ScmBackendCommandRunResult,
+    type BackendRuntimeServices as ScmBackendRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/backend';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 
 export type GitScmCommandRunner = (input: ScmBackendCommandRunInput) => Promise<ScmBackendCommandRunResult>;

@@ -1,5 +1,5 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
-import { readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import { readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 import { createBitbucketInvalidRequestError } from '../operations/errors.js';
 

@@ -2,10 +2,11 @@ import { realpathSync } from 'node:fs';
 import path, { isAbsolute, relative, sep } from 'node:path';
 
 import {
-    ScmSelectedMutationPathSchema,
-    resolveScmBackendCommandMaxOutputBytes,
-    runScmBackendCommand,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+    ScmSelectedMutationPathSchema } from '@happier-dev/plugin-sdk/scm';
+import {
+    resolveBackendCommandMaxOutputBytes as resolveScmBackendCommandMaxOutputBytes,
+    runBackendCommand as runScmBackendCommand,
+} from '@happier-dev/plugin-sdk/scm/backend';
 
 import { SAPLING_INSTALLABLE_DEP_ID } from './installables/saplingInstallable.js';
 

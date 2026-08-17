@@ -1,24 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import * as scmBackendRuntime from '@happier-dev/plugin-sdk/experimental/scm/backend';
+import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { normalizePathspec, runScmCommand } from './runtime.js';
 
 describe('Git SCM plugin runtime', () => {
   it('delegates command execution to the host SCM backend runtime service', async () => {
-    const sdkRuntime = scmBackendRuntime as Record<string, unknown>;
-    expect(sdkRuntime.runWithScmBackendRuntimeServices).toBeTypeOf('function');
-    const runWithScmBackendRuntimeServices = sdkRuntime.runWithScmBackendRuntimeServices as <T>(
-      services: {
-        runCommand(input: unknown): Promise<{
-          success: boolean;
-          stdout: string;
-          stderr: string;
-          exitCode: number;
-        }>;
-      },
-      callback: () => Promise<T>,
-    ) => Promise<T>;
     const calls: unknown[] = [];
 
     const result = await runWithScmBackendRuntimeServices({

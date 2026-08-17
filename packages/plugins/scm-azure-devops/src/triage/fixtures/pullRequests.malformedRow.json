@@ -1,0 +1,147 @@
+{
+  "count": 3,
+  "value": [
+    {
+      "repository": {
+        "id": "5febef5a-833d-4e14-b9c0-14cb638f91e6",
+        "name": "gateway",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6",
+        "project": {
+          "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+          "name": "Payments",
+          "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+          "state": "wellFormed",
+          "revision": 11,
+          "visibility": "private",
+          "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+        },
+        "defaultBranch": "refs/heads/main",
+        "size": 1178,
+        "remoteUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+        "sshUrl": "git@ssh.dev.azure.com:v3/exampleorg/Payments/gateway",
+        "webUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+        "isDisabled": false,
+        "isInMaintenance": false
+      },
+      "pullRequestId": 51,
+      "codeReviewId": 51,
+      "status": "active",
+      "createdBy": {
+        "displayName": "Alex Rivera",
+        "url": "https://spsprodweu1.vssps.visualstudio.com/_apis/Identities/d6245f20-2af8-44f4-9451-8107cb2767db",
+        "id": "d6245f20-2af8-44f4-9451-8107cb2767db",
+        "uniqueName": "alex.rivera@example.test",
+        "imageUrl": "https://dev.azure.com/exampleorg/_api/_common/identityImage?id=d6245f20-2af8-44f4-9451-8107cb2767db",
+        "descriptor": "aad.d6245f20-2af8-44f4-9451-8107cb2767db"
+      },
+      "creationDate": "2026-06-02T16:30:31.6655471Z",
+      "title": "Valid row before the malformed one",
+      "description": "Adds retry evidence handling.",
+      "sourceRefName": "refs/heads/feature/51",
+      "targetRefName": "refs/heads/main",
+      "mergeStatus": "succeeded",
+      "isDraft": false,
+      "mergeId": "f5fc8381-0aa0-4b0a-9f57-2b1b7a3d9b41",
+      "lastMergeSourceCommit": {
+        "commitId": "b60280bc6e62e2f880f1b63c1e24987664d3bda3",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/commits/b60280bc6e62e2f880f1b63c1e24987664d3bda3"
+      },
+      "lastMergeTargetCommit": {
+        "commitId": "f8e5f8b3a1c0d4e7b26a19f0c53d7188a4e6c2b9",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/commits/f8e5f8b3a1c0d4e7b26a19f0c53d7188a4e6c2b9"
+      },
+      "lastMergeCommit": {
+        "commitId": "39f52d24533cc712fc845ed9fd1b6c06b3942ff0",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/commits/39f52d24533cc712fc845ed9fd1b6c06b3942ff0"
+      },
+      "reviewers": [],
+      "labels": [],
+      "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/pullRequests/51",
+      "supportsIterations": true
+    },
+    {
+      "repository": {
+        "id": "5febef5a-833d-4e14-b9c0-14cb638f91e6",
+        "name": "gateway",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6",
+        "project": {
+          "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+          "name": "Payments",
+          "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+          "state": "wellFormed",
+          "revision": 11,
+          "visibility": "private",
+          "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+        },
+        "defaultBranch": "refs/heads/main",
+        "size": 1178,
+        "remoteUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+        "sshUrl": "git@ssh.dev.azure.com:v3/exampleorg/Payments/gateway",
+        "webUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+        "isDisabled": false,
+        "isInMaintenance": false
+      },
+      "pullRequestId": "not-a-number",
+      "status": "active",
+      "title": "Undecodable"
+    },
+    {
+      "repository": {
+        "id": "5febef5a-833d-4e14-b9c0-14cb638f91e6",
+        "name": "gateway",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6",
+        "project": {
+          "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+          "name": "Payments",
+          "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+          "state": "wellFormed",
+          "revision": 11,
+          "visibility": "private",
+          "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+        },
+        "defaultBranch": "refs/heads/main",
+        "size": 1178,
+        "remoteUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+        "sshUrl": "git@ssh.dev.azure.com:v3/exampleorg/Payments/gateway",
+        "webUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+        "isDisabled": false,
+        "isInMaintenance": false
+      },
+      "pullRequestId": 53,
+      "codeReviewId": 53,
+      "status": "completed",
+      "createdBy": {
+        "displayName": "Alex Rivera",
+        "url": "https://spsprodweu1.vssps.visualstudio.com/_apis/Identities/d6245f20-2af8-44f4-9451-8107cb2767db",
+        "id": "d6245f20-2af8-44f4-9451-8107cb2767db",
+        "uniqueName": "alex.rivera@example.test",
+        "imageUrl": "https://dev.azure.com/exampleorg/_api/_common/identityImage?id=d6245f20-2af8-44f4-9451-8107cb2767db",
+        "descriptor": "aad.d6245f20-2af8-44f4-9451-8107cb2767db"
+      },
+      "creationDate": "2026-06-02T16:30:31.6655471Z",
+      "title": "Valid row after the malformed one",
+      "description": "Adds retry evidence handling.",
+      "sourceRefName": "refs/heads/feature/53",
+      "targetRefName": "refs/heads/main",
+      "mergeStatus": "succeeded",
+      "isDraft": false,
+      "mergeId": "f5fc8381-0aa0-4b0a-9f57-2b1b7a3d9b41",
+      "lastMergeSourceCommit": {
+        "commitId": "b60280bc6e62e2f880f1b63c1e24987664d3bda3",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/commits/b60280bc6e62e2f880f1b63c1e24987664d3bda3"
+      },
+      "lastMergeTargetCommit": {
+        "commitId": "f8e5f8b3a1c0d4e7b26a19f0c53d7188a4e6c2b9",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/commits/f8e5f8b3a1c0d4e7b26a19f0c53d7188a4e6c2b9"
+      },
+      "lastMergeCommit": {
+        "commitId": "39f52d24533cc712fc845ed9fd1b6c06b3942ff0",
+        "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/commits/39f52d24533cc712fc845ed9fd1b6c06b3942ff0"
+      },
+      "reviewers": [],
+      "labels": [],
+      "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6/pullRequests/53",
+      "supportsIterations": true
+    }
+  ]
+}

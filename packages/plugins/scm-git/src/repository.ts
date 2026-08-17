@@ -4,8 +4,8 @@ import type {
   ScmStatusSnapshotResponse,
   ScmWorktreesEnrichmentRequest,
   ScmWorktreesEnrichmentResponse,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from './runtime.js';
 import { normalizeRepoRootRelativePath } from './runtime.js';

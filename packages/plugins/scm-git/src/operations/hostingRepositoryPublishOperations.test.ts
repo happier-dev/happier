@@ -5,13 +5,14 @@ import { execFileSync, spawnSync } from 'node:child_process';
 
 import {
   SCM_OPERATION_ERROR_CODES,
-  type ScmHostingProviderRef,
   type ScmHostingRepositoryPublishRequest,
   type ScmHostingRepositorySummary,
   type ScmRemoteManagementResponse,
   type ScmRemotePublishResponse,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import {
+  type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmBackendContext } from '../types.js';

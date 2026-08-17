@@ -1,0 +1,15 @@
+{
+  "count": 1,
+  "value": [
+    {
+      "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+      "name": "Payments",
+      "description": "Payment services.",
+      "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+      "state": "wellFormed",
+      "revision": 11,
+      "visibility": "private",
+      "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+    }
+  ]
+}

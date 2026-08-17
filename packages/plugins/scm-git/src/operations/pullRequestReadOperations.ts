@@ -1,6 +1,5 @@
 import {
   SCM_OPERATION_ERROR_CODES,
-  type ScmHostingProviderRef,
   type ScmOperationErrorCode,
   type ScmPullRequestGetRequest,
   type ScmPullRequestGetResponse,
@@ -12,11 +11,13 @@ import {
   type ScmPullRequestState,
   type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    readCurrentScmHostingProviderRuntimeServices,
-    type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import {
+    readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
+    type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { ScmBackendContext } from '../types.js';
 import { getGitSnapshot } from '../repository.js';

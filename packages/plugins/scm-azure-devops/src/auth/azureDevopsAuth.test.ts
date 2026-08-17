@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const provider = {
-  id: 'happier.scm.hosting.azure-devops/azure-devops',
+  id: 'happier.scm.forge.azure-devops/azure-devops',
   kind: 'azure-devops',
   displayName: 'Azure DevOps',
   baseUrl: 'https://dev.azure.com/happier-dev',

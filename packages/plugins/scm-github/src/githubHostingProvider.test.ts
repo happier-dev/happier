@@ -27,7 +27,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     if (!mod) return;
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'happier.scm.hosting.github',
+      id: 'happier.scm.forge.github',
       entrypoints: { daemon: './dist/index.js' },
       hostAccess: {
         required: expect.arrayContaining([expect.objectContaining({
@@ -45,6 +45,14 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
         optional: [],
       },
       contributes: {
+        ui: {
+          // Contribution local IDs share one plugin-wide namespace, so the
+          // Settings identity cannot reuse the SCM provider's `github` id.
+          settingsGroups: [{ id: 'github-triage' }],
+          settingsPages: [expect.objectContaining({
+            group: { kind: 'plugin', localId: 'github-triage' },
+          })],
+        },
         scmHostingProviders: [
           {
             id: 'github',
@@ -77,7 +85,9 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
     expect(mod.PLUGIN_MANIFEST.entrypoints).not.toHaveProperty('main');
     expect(ingestPluginManifestV2(mod.PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-    expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
+    // Generated manifests retain an empty declared family; the contract is
+    // that GitHub contributes no legacy hooks, not property omission.
+    expect(mod.PLUGIN_MANIFEST.contributes.hooks).toEqual([]);
   }, 30_000);
 
   it('rejects dangling auth refs and wildcard SCM access', async () => {
@@ -104,7 +114,9 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     const registered: unknown[] = [];
     const hooks: unknown[] = [];
     // Boundary fixture intentionally supplies only the activation surface exercised here.
-    mod.activate({
+    const cleanup = await mod.activate({
+      actions: { register() {} },
+      backgroundServices: { register() {} },
       scm: {
         registerHostingProvider(id: string, runtime: Readonly<Record<string, unknown>>) {
           registered.push({ id, ...runtime });
@@ -124,28 +136,32 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       },
     } as Parameters<typeof mod.activate>[0]);
 
-    expect(registered).toEqual([
-      expect.objectContaining({
-        id: 'github',
-        adapter: expect.objectContaining({
-          detectRemote: expect.any(Function),
-          buildCompareUrl: expect.any(Function),
-          listPullRequests: expect.any(Function),
-          getPullRequest: expect.any(Function),
-          createPullRequest: expect.any(Function),
-          getDefaultBranch: expect.any(Function),
-          resolvePullRequestCheckoutReference: expect.any(Function),
-          describePublishTargets: expect.any(Function),
-          describeCloneTargets: expect.any(Function),
-          createRepository: expect.any(Function),
-          getRepository: expect.any(Function),
+    try {
+      expect(registered).toEqual([
+        expect.objectContaining({
+          id: 'github',
+          adapter: expect.objectContaining({
+            detectRemote: expect.any(Function),
+            buildCompareUrl: expect.any(Function),
+            listPullRequests: expect.any(Function),
+            getPullRequest: expect.any(Function),
+            createPullRequest: expect.any(Function),
+            getDefaultBranch: expect.any(Function),
+            resolvePullRequestCheckoutReference: expect.any(Function),
+            describePublishTargets: expect.any(Function),
+            describeCloneTargets: expect.any(Function),
+            createRepository: expect.any(Function),
+            getRepository: expect.any(Function),
+          }),
         }),
-      }),
-    ]);
-    expect(registered[0]).not.toHaveProperty('auth');
-    expect(registered.map((registration) => (registration as Readonly<{ id: string }>).id))
-      .toEqual((await import('./manifest.js')).PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
-    expect(hooks).toEqual([]);
+      ]);
+      expect(registered[0]).not.toHaveProperty('auth');
+      expect(registered.map((registration) => (registration as Readonly<{ id: string }>).id))
+        .toEqual((await import('./manifest.js')).PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
+      expect(hooks).toEqual([]);
+    } finally {
+      if (typeof cleanup === 'function') await cleanup();
+    }
   });
 
   it('registered repository hooks consume operation-scoped runtime services', async () => {
@@ -155,7 +171,9 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
 
     const registered: Array<Readonly<{ id: string; adapter: Readonly<Record<string, unknown>> }>> = [];
     // Boundary fixture intentionally supplies only the activation surface exercised here.
-    mod.activate({
+    const cleanup = await mod.activate({
+      actions: { register() {} },
+      backgroundServices: { register() {} },
       scm: {
         registerHostingProvider(
           id: string,
@@ -172,40 +190,44 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       },
     } as Parameters<typeof mod.activate>[0]);
 
-    const describePublishTargets = registered[0]?.adapter.describePublishTargets;
-    expect(describePublishTargets).toEqual(expect.any(Function));
-    if (typeof describePublishTargets !== 'function') return;
+    try {
+      const describePublishTargets = registered[0]?.adapter.describePublishTargets;
+      expect(describePublishTargets).toEqual(expect.any(Function));
+      if (typeof describePublishTargets !== 'function') return;
 
-    await expect(describePublishTargets({
-      provider: {
-        id: 'happier.scm.hosting.github/github',
-        kind: 'github',
-        displayName: 'GitHub',
-        baseUrl: 'https://github.com',
-        urlSafety: { allowedSchemes: ['https:'] },
-      },
-      defaultRepositoryName: 'happier',
-      runtimeServices: {
-        resolveScmHostingTokenMaterialization: async () => ({
-          kind: 'missing',
-          reason: 'credential_unavailable',
-        }),
-        executeCommand: async (request: Readonly<{ args: readonly string[] }>) => {
-          if (request.args[0] === 'auth') {
-            return { ok: true, stdout: '', stderr: '', exitCode: 0 };
-          }
-          if (request.args.join(' ') === 'api user --hostname github.com') {
-            return { ok: true, stdout: JSON.stringify({ login: 'octocat' }), stderr: '', exitCode: 0 };
-          }
-          return { ok: true, stdout: '[]', stderr: '', exitCode: 0 };
+      await expect(describePublishTargets({
+        provider: {
+          id: 'happier.scm.forge.github/github',
+          kind: 'github',
+          displayName: 'GitHub',
+          baseUrl: 'https://github.com',
+          urlSafety: { allowedSchemes: ['https:'] },
         },
-      },
-    })).resolves.toMatchObject({
-      auth: { state: 'authenticated', profileKind: 'provider_cli' },
-      targets: [
-        expect.objectContaining({ owner: 'octocat' }),
-      ],
-    });
+        defaultRepositoryName: 'happier',
+        runtimeServices: {
+          resolveScmHostingTokenMaterialization: async () => ({
+            kind: 'missing',
+            reason: 'credential_unavailable',
+          }),
+          executeCommand: async (request: Readonly<{ args: readonly string[] }>) => {
+            if (request.args[0] === 'auth') {
+              return { ok: true, stdout: '', stderr: '', exitCode: 0 };
+            }
+            if (request.args.join(' ') === 'api user --hostname github.com') {
+              return { ok: true, stdout: JSON.stringify({ login: 'octocat' }), stderr: '', exitCode: 0 };
+            }
+            return { ok: true, stdout: '[]', stderr: '', exitCode: 0 };
+          },
+        },
+      })).resolves.toMatchObject({
+        auth: { state: 'authenticated', profileKind: 'provider_cli' },
+        targets: [
+          expect.objectContaining({ owner: 'octocat' }),
+        ],
+      });
+    } finally {
+      if (typeof cleanup === 'function') await cleanup();
+    }
   });
 
   it('detects bundled GitHub remotes and supports enterprise hosts through test-local options', async () => {
@@ -222,7 +244,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'https://github.com/happier-dev/happier.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.github/github',
+      id: 'happier.scm.forge.github/github',
       kind: 'github',
       baseUrl: 'https://github.com',
       nameWithOwner: 'happier-dev/happier',
@@ -232,7 +254,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       remoteName: 'upstream',
       remoteUrl: 'git@github.com:happier-dev/happier.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.github/github',
+      id: 'happier.scm.forge.github/github',
       nameWithOwner: 'happier-dev/happier',
       remoteName: 'upstream',
     });
@@ -240,7 +262,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'ssh://git@github.company.com/happier-dev/happier.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.github/github',
+      id: 'happier.scm.forge.github/github',
       baseUrl: 'https://github.company.com',
       nameWithOwner: 'happier-dev/happier',
     });
@@ -248,7 +270,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'ssh://git@ghe.internal.test/happier-dev/happier.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.github/github',
+      id: 'happier.scm.forge.github/github',
       baseUrl: 'https://ghe.internal.test',
       nameWithOwner: 'happier-dev/happier',
       urlSafety: {

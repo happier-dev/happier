@@ -1,0 +1,137 @@
+[
+  {
+    "id": 1,
+    "iid": 7,
+    "project_id": 3,
+    "title": "Fix login page CSS paddings",
+    "description": "fixed login page css paddings",
+    "state": "opened",
+    "imported": false,
+    "imported_from": "none",
+    "merged_by": null,
+    "merge_user": null,
+    "merged_at": null,
+    "merge_after": null,
+    "prepared_at": "2026-08-04T11:16:17.520Z",
+    "closed_by": null,
+    "closed_at": null,
+    "created_at": "2026-08-04T08:46:00Z",
+    "updated_at": "2026-08-09T08:46:00Z",
+    "target_branch": "main",
+    "source_branch": "fix-login-padding",
+    "upvotes": 0,
+    "downvotes": 0,
+    "author": {
+      "id": 1,
+      "name": "Example User",
+      "username": "example-user",
+      "state": "active",
+      "avatar_url": null,
+      "web_url": "https://gitlab.com/example-user"
+    },
+    "assignee": {
+      "id": 12,
+      "name": "Example Assignee",
+      "username": "example-assignee",
+      "state": "active",
+      "avatar_url": null,
+      "web_url": "https://gitlab.com/example-assignee"
+    },
+    "assignees": [
+      {
+        "id": 12,
+        "name": "Example Assignee",
+        "username": "example-assignee",
+        "state": "active",
+        "avatar_url": null,
+        "web_url": "https://gitlab.com/example-assignee"
+      }
+    ],
+    "reviewers": [
+      {
+        "id": 2,
+        "name": "Example Reviewer",
+        "username": "example-reviewer",
+        "state": "active",
+        "avatar_url": null,
+        "web_url": "https://gitlab.com/example-reviewer"
+      }
+    ],
+    "source_project_id": 2,
+    "target_project_id": 3,
+    "labels": ["backend", "frontend", "needs-review", "ux"],
+    "draft": false,
+    "work_in_progress": false,
+    "milestone": null,
+    "merge_when_pipeline_succeeds": false,
+    "merge_status": "can_be_merged",
+    "detailed_merge_status": "checking",
+    "sha": "8888888888888888888888888888888888888888",
+    "merge_commit_sha": null,
+    "squash_commit_sha": null,
+    "user_notes_count": 3,
+    "discussion_locked": null,
+    "should_remove_source_branch": true,
+    "force_remove_source_branch": false,
+    "allow_collaboration": false,
+    "allow_maintainer_to_push": false,
+    "web_url": "https://gitlab.com/example-group/example-subgroup/example-project/-/merge_requests/7",
+    "references": {
+      "short": "!7",
+      "relative": "!7",
+      "full": "example-group/example-subgroup/example-project!7"
+    },
+    "time_stats": {
+      "time_estimate": 0,
+      "total_time_spent": 0,
+      "human_time_estimate": null,
+      "human_total_time_spent": null
+    },
+    "squash": false,
+    "task_completion_status": {
+      "count": 0,
+      "completed_count": 0
+    }
+  },
+  {
+    "id": 2,
+    "iid": 8,
+    "project_id": 3,
+    "title": "Merged release preparation",
+    "description": "",
+    "state": "merged",
+    "merged_at": "2026-08-07T11:16:17.520Z",
+    "closed_at": null,
+    "created_at": "2026-08-01T08:46:00Z",
+    "updated_at": "2026-08-07T11:16:17.520Z",
+    "target_branch": "main",
+    "source_branch": "release-prep",
+    "author": {
+      "id": 1,
+      "name": "Example User",
+      "username": "example-user",
+      "state": "active",
+      "avatar_url": null,
+      "web_url": "https://gitlab.com/example-user"
+    },
+    "assignees": [],
+    "reviewers": [],
+    "source_project_id": 3,
+    "target_project_id": 3,
+    "labels": [],
+    "draft": false,
+    "work_in_progress": false,
+    "merge_status": "can_be_merged",
+    "detailed_merge_status": "not_open",
+    "sha": "9999999999999999999999999999999999999999",
+    "merge_commit_sha": "1111111111111111111111111111111111111111",
+    "user_notes_count": 0,
+    "web_url": "https://gitlab.com/example-group/example-subgroup/example-project/-/merge_requests/8",
+    "references": {
+      "short": "!8",
+      "relative": "!8",
+      "full": "example-group/example-subgroup/example-project!8"
+    },
+    "squash": false
+  }
+]

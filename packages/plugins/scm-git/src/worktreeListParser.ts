@@ -1,4 +1,4 @@
-import type { ScmWorktree } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmWorktree } from '@happier-dev/plugin-sdk/scm';
 
 import { deriveGitWorktreeId } from './deriveGitWorktreeId.js';
 

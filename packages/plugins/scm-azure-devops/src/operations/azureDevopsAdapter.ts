@@ -1,25 +1,26 @@
 import type {
-  ScmHostingProviderDefaultBranchInput,
-  ScmHostingProviderDefaultBranchMetadata,
-  ScmHostingProviderPullRequestCreateInput,
-  ScmHostingProviderPullRequestGetInput,
-  ScmHostingProviderPullRequestListInput,
-  ScmHostingProviderRepositoryCreateInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsResult,
-  ScmHostingProviderRepositoryGetInput,
-  ScmHostingProviderRuntimeAdapter,
-  ScmHostingProviderRuntimeCommandResult,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
+  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
+  HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
+  HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
+  HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
+  HostingProviderRepositoryCreateInput as ScmHostingProviderRepositoryCreateInput,
+  HostingProviderRepositoryDescribePublishTargetsInput as ScmHostingProviderRepositoryDescribePublishTargetsInput,
+  HostingProviderRepositoryDescribePublishTargetsResult as ScmHostingProviderRepositoryDescribePublishTargetsResult,
+  HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
+  HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+  HostingProviderRuntimeCommandResult as ScmHostingProviderRuntimeCommandResult,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { azureDevopsHostingProviderAdapter } from '../detection/adapter.js';
 import {

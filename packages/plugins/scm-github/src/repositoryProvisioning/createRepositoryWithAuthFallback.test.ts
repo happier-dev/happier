@@ -1,8 +1,9 @@
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmHostingRepositorySummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it } from 'vitest';
 
 const githubProvider: ScmHostingProviderRef = {

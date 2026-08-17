@@ -3,10 +3,11 @@ import { isAbsolute, relative, sep } from 'node:path';
 import path from 'node:path';
 
 import {
-  resolveScmBackendCommandMaxOutputBytes,
-  runScmBackendCommand,
+  resolveBackendCommandMaxOutputBytes as resolveScmBackendCommandMaxOutputBytes,
+  runBackendCommand as runScmBackendCommand } from '@happier-dev/plugin-sdk/scm/backend';
+import {
   ScmSelectedMutationPathSchema,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 

@@ -1,8 +1,9 @@
 import {
   SCM_OPERATION_ERROR_CODES,
-  mapSaplingScmErrorCode,
   type ScmOperationErrorCode,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import {
+  mapSaplingScmErrorCode } from '@happier-dev/plugin-sdk/scm/backend';
 
 function isSaplingExecutableMissing(stderr: string): boolean {
     const value = String(stderr ?? '');

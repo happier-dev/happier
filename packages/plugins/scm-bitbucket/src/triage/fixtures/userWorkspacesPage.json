@@ -1,0 +1,38 @@
+{
+  "pagelen": 10,
+  "page": 1,
+  "size": 2,
+  "values": [
+    {
+      "type": "workspace_membership",
+      "administrator": true,
+      "workspace": {
+        "type": "workspace",
+        "uuid": "{4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44}",
+        "slug": "example-workspace",
+        "name": "Example Workspace",
+        "links": {
+          "self": {
+            "href": "https://api.bitbucket.org/2.0/workspaces/example-workspace"
+          },
+          "html": { "href": "https://bitbucket.org/example-workspace/" }
+        }
+      }
+    },
+    {
+      "type": "workspace_membership",
+      "administrator": false,
+      "workspace": {
+        "type": "workspace",
+        "uuid": "{6d4a1f8b-2c93-4e05-b71a-8f2c5d09e364}",
+        "slug": "example-partner",
+        "name": "Example Partner",
+        "links": {
+          "self": {
+            "href": "https://api.bitbucket.org/2.0/workspaces/example-partner"
+          }
+        }
+      }
+    }
+  ]
+}

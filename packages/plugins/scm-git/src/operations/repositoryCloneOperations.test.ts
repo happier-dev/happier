@@ -4,8 +4,8 @@ import { join, resolve } from 'node:path';
 import {
   SCM_OPERATION_ERROR_CODES,
   type ScmRepositoryCloneInput,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { type ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+} from '@happier-dev/plugin-sdk/scm';
+import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
 
 import {

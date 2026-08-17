@@ -1,4 +1,4 @@
-import type { ScmWorkingEntry } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmWorkingEntry } from '@happier-dev/plugin-sdk/scm';
 
 export type SaplingStatusEntry = {
     kind: ScmWorkingEntry['kind'];

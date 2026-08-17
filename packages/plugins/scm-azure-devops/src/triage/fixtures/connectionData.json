@@ -1,0 +1,18 @@
+{
+  "authenticatedUser": {
+    "id": "d6245f20-2af8-44f4-9451-8107cb2767db",
+    "descriptor": "aad.d6245f20-2af8-44f4-9451-8107cb2767db",
+    "subjectDescriptor": "aad.d6245f20-2af8-44f4-9451-8107cb2767db",
+    "providerDisplayName": "Alex Rivera",
+    "isActive": true,
+    "properties": {}
+  },
+  "authorizedUser": {
+    "id": "d6245f20-2af8-44f4-9451-8107cb2767db",
+    "providerDisplayName": "Alex Rivera",
+    "isActive": true
+  },
+  "instanceId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "deploymentId": "9f8e7d6c-5b4a-4392-8172-6f5e4d3c2b1a",
+  "deploymentType": "hosted"
+}

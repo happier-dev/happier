@@ -1,7 +1,7 @@
-import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/plugin-sdk/experimental/scm';
+import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/plugin-sdk/scm/backend';
 import type {
-    ScmBackendRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/experimental/scm/backend';
+    BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
+} from '@happier-dev/plugin-sdk/scm/backend';
 
 import { saplingChangeDiscard } from './operations/changeOperations.js';
 import { saplingCommitBackout, saplingCommitCreate } from './operations/commitOperations.js';

@@ -3,7 +3,7 @@ import {
   supportedCapability,
   unsupportedCapability,
   type ScmBackendCapabilities,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm/backend';
 
 export const GIT_SCM_BACKEND_CAPABILITIES = {
     detection: {

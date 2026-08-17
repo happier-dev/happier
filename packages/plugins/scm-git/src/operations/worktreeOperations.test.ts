@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import {
   SCM_OPERATION_ERROR_CODES,
   type ScmWorktreeRemoveRequest,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import {
     runWithGitScmCommandRunner,
@@ -100,6 +100,7 @@ describe('git worktree operations', () => {
             .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' });
         mkdirMock.mockResolvedValue(undefined);
 
@@ -124,15 +125,62 @@ describe('git worktree operations', () => {
             repositoryRootPath: '/repo',
         });
         expect(mkdirMock).toHaveBeenCalledWith('/repo/.dev/worktree', { recursive: true });
-        expect(runScmCommandMock).toHaveBeenCalledTimes(4);
+        expect(runScmCommandMock).toHaveBeenCalledTimes(5);
         expect(runScmCommandMock).toHaveBeenNthCalledWith(
-            4,
+            5,
             expect.objectContaining({
                 command: 'git',
                 cwd: '/repo',
                 args: ['worktree', 'add', '--', '.dev/worktree/feature/auth', 'feature/auth'],
             }),
         );
+    });
+
+    it('rejoins the already materialized worktree for an existing branch on retry', async () => {
+        runScmCommandMock
+            .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({
+                success: true,
+                stdout: [
+                    'worktree /repo/.dev/worktree/feature/auth',
+                    'HEAD abc123',
+                    'branch refs/heads/feature/auth',
+                    '',
+                ].join('\n'),
+                stderr: '',
+            });
+
+        const response = await runWithGitScmCommandRunner(runScmCommandMock, () => gitWorktreeCreate({
+            context: {
+                cwd: '/repo',
+                projectKey: 'project',
+                detection: { isRepo: true, rootPath: '/repo', mode: '.git' },
+            },
+            request: {
+                cwd: '/repo',
+                displayName: 'feature/auth',
+                branchMode: 'existing',
+            },
+        }));
+
+        expect(response).toEqual({
+            success: true,
+            worktreePath: '/repo/.dev/worktree/feature/auth',
+            branchName: 'feature/auth',
+            sourceRootPath: '/repo',
+            repositoryRootPath: '/repo',
+        });
+        expect(runScmCommandMock).toHaveBeenNthCalledWith(
+            4,
+            expect.objectContaining({
+                command: 'git',
+                cwd: '/repo',
+                args: ['worktree', 'list', '--porcelain'],
+            }),
+        );
+        expect(mkdirMock).not.toHaveBeenCalled();
     });
 
     it('rejects worktree removal without explicit authorization before invoking git', async () => {

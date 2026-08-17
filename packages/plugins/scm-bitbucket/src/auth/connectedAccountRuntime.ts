@@ -1,15 +1,17 @@
 import type {
-  PluginConnectedAccountAuthenticationContext,
-  PluginConnectedAccountCredentialReader,
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountManualCompletion,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+  ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   encodeBitbucketBasicAuthorization,
   readBitbucketBasicAuthCredentials,
 } from './basicCredentials.js';
+
+type ConnectedAccountCredentialReader =
+  Parameters<PluginConnectedAccountRuntime['status']>[0]['credentials'];
 
 const IDENTITY_CREDENTIAL_KEY = 'identity';
 const TOKEN_CREDENTIAL_KEY = 'token';
@@ -23,7 +25,7 @@ function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
 }
 
-async function readStoredCredentials(credentials: PluginConnectedAccountCredentialReader) {
+async function readStoredCredentials(credentials: ConnectedAccountCredentialReader) {
   return readBitbucketBasicAuthCredentials(
     await credentials.get(IDENTITY_CREDENTIAL_KEY),
     await credentials.get(TOKEN_CREDENTIAL_KEY),
@@ -31,7 +33,7 @@ async function readStoredCredentials(credentials: PluginConnectedAccountCredenti
 }
 
 async function readHealth(
-  credentials: PluginConnectedAccountCredentialReader,
+  credentials: ConnectedAccountCredentialReader,
 ): Promise<PluginConnectedAccountHealthResult> {
   const stored = await readStoredCredentials(credentials);
   if (!stored) {

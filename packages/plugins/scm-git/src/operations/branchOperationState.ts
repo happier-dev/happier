@@ -1,7 +1,7 @@
 import { access, readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
-import type { ScmOperationState } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmOperationState } from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';

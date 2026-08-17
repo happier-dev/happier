@@ -1,0 +1,22 @@
+{
+  "name": "@happier-dev/plugins-scm-forge-items",
+  "version": "0.0.0",
+  "private": true,
+  "happier": {
+    "pluginScaffold": {
+      "shipping": "reservation_only",
+      "plannedStage": "S2 embedded-detail consumer model; shipping waits for an admitted source detail and mounted generic host"
+    }
+  },
+  "type": "module",
+  "scripts": {
+    "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "vitest run --testTimeout 15000",
+    "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

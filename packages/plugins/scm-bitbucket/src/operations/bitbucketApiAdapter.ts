@@ -1,26 +1,27 @@
 import type {
-  ScmHostingProviderDefaultBranchInput,
-  ScmHostingProviderDefaultBranchMetadata,
-  ScmHostingProviderPullRequestCheckoutReferenceInput,
-  ScmHostingProviderPullRequestCheckoutReferenceMetadata,
-  ScmHostingProviderPullRequestCreateInput,
-  ScmHostingProviderPullRequestGetInput,
-  ScmHostingProviderPullRequestListInput,
-  ScmHostingProviderRepositoryCreateInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsResult,
-  ScmHostingProviderRepositoryGetInput,
-  ScmHostingProviderRuntimeAdapter,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
+  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
+  HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
+  HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
+  HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
+  HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
+  HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
+  HostingProviderRepositoryCreateInput as ScmHostingProviderRepositoryCreateInput,
+  HostingProviderRepositoryDescribePublishTargetsInput as ScmHostingProviderRepositoryDescribePublishTargetsInput,
+  HostingProviderRepositoryDescribePublishTargetsResult as ScmHostingProviderRepositoryDescribePublishTargetsResult,
+  HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
+  HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { bitbucketHostingProviderAdapter } from '../adapter.js';
 import {

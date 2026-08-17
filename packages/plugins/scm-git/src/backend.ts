@@ -1,8 +1,8 @@
 import {
   createScmCapabilitiesFromBackendCapabilities,
   type ScmBackendDescribeResponse,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import type { ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk/experimental/scm/backend';
+} from '@happier-dev/plugin-sdk/scm/backend';
+import type { BackendRuntimeRegistration as ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { resolveScmBackendCapabilities } from './capabilities/resolveScmBackendCapabilities.js';
 import type { ScmBackend } from './types.js';

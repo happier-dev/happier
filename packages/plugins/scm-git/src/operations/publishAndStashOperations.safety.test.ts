@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 const runScmCommand = vi.fn();
 

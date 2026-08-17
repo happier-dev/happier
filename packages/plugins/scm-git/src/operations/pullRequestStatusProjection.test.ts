@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestSummary,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import {

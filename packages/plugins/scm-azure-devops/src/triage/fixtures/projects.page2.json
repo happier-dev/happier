@@ -1,0 +1,14 @@
+{
+  "count": 1,
+  "value": [
+    {
+      "id": "8c9d1a3b-2e44-4f70-9c15-77aa30b1e9d4",
+      "name": "Ledger",
+      "url": "https://dev.azure.com/exampleorg/_apis/projects/8c9d1a3b-2e44-4f70-9c15-77aa30b1e9d4",
+      "state": "wellFormed",
+      "revision": 4,
+      "visibility": "private",
+      "lastUpdateTime": "2026-05-20T09:02:11.100Z"
+    }
+  ]
+}

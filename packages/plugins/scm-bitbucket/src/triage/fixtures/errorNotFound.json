@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "error": {
+    "message": "Repository example-workspace/deploy-tools not found",
+    "detail": "The requested repository either does not exist or you do not have access to it."
+  }
+}

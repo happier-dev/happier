@@ -3,13 +3,10 @@ import { basename } from 'node:path';
 import {
   evaluateScmRemoteMutationPreconditions,
   SCM_OPERATION_ERROR_CODES,
-  ScmHostingProviderKindSchema,
   normalizeScmRemoteName,
   type ScmHostingRepositoryDescribePublishTargetsRequest,
   type ScmHostingRepositoryDescribePublishTargetsResponse,
   type ScmHostingRepositoryAuthSummary,
-  type ScmHostingProviderKind,
-  type ScmHostingProviderRef,
   type ScmHostingRepositoryPublishTarget,
   type ScmHostingRepositoryPublishRequest,
   type ScmHostingRepositoryPublishResponse,
@@ -23,11 +20,15 @@ import {
   type ScmRemoteManagementResponse,
   type ScmRemotePublishResponse,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    readCurrentScmHostingProviderRuntimeServices,
-    type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  ScmHostingProviderKindSchema,
+  type ScmHostingProviderKind,
+  type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import {
+    readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
+    type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';

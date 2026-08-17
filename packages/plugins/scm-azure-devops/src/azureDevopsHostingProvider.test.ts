@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 type DetectionResult = Readonly<{
   id: string;
@@ -27,10 +28,21 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
     if (!mod) return;
 
     expect(mod.PLUGIN_MANIFEST).toMatchObject({
-      id: 'happier.scm.hosting.azure-devops',
+      id: 'happier.scm.forge.azure-devops',
       entrypoints: { daemon: './dist/index.js' },
       hostAccess: { required: expect.arrayContaining([
-        expect.objectContaining({ id: 'azure-devops-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'scmProviderOrigin', provider: 'azure-devops' }] }) }),
+        // The Triage source reads the deployment the Connected Account was configured with, so
+        // the same grant now names that origin beside the incumbent hosting-provider one.
+        expect.objectContaining({
+          id: 'azure-devops-api',
+          capability: 'network',
+          scope: expect.objectContaining({
+            targets: expect.arrayContaining([
+              { kind: 'scmProviderOrigin', provider: 'azure-devops' },
+              { kind: 'connectedAccountOrigin', service: 'azure-devops-account' },
+            ]),
+          }),
+        }),
         expect.objectContaining({
           id: 'azure-cli-process',
           capability: 'process',
@@ -38,6 +50,14 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
         }),
       ]), optional: [] },
       contributes: {
+        ui: {
+          // Contribution local IDs share one plugin-wide namespace, so the
+          // Settings identity cannot reuse the SCM provider's `azure-devops` id.
+          settingsGroups: [{ id: 'azure-devops-triage' }],
+          settingsPages: [expect.objectContaining({
+            group: { kind: 'plugin', localId: 'azure-devops-triage' },
+          })],
+        },
         scmHostingProviders: [
           {
             id: 'azure-devops',
@@ -53,7 +73,11 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('uses');
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('permissions');
     expect(mod.PLUGIN_MANIFEST).not.toHaveProperty('activationEvents');
-    expect(ingestPluginManifestV2(mod.PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+    // A bundled plugin is admitted from the emitted `.happier-plugin/plugin.json` bytes, and the
+    // canonical parser refuses the in-memory `definePlugin` value outright because that value
+    // carries a non-enumerable `Symbol.for(...)` brand. Ingest therefore reads the serialized form.
+    expect(ingestPluginManifestV2(JSON.parse(JSON.stringify(mod.PLUGIN_MANIFEST))))
+      .toMatchObject({ ok: true });
   });
 
   it('registers exactly the manifest-declared local provider id', async () => {
@@ -61,17 +85,14 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       import('./activate.js'),
       import('./manifest.js'),
     ]);
-    const registrations: Array<Readonly<{ id: string }>> = [];
-    // Boundary fixture intentionally supplies only the activation surface exercised here.
-    activate({
-      scm: {
-        registerHostingProvider(id: string) {
-          registrations.push({ id });
-          return { dispose() {} };
-        },
-      },
-    } as Parameters<typeof activate>[0]);
-    expect(registrations.map(({ id }) => id)).toEqual(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
+    const testkit = await createPluginTestkit({
+      manifest: PLUGIN_MANIFEST,
+      module: { activate },
+    });
+    expect(testkit.registrations()
+      .filter(({ family }) => family === 'scmHostingProviders')
+      .map(({ localId }) => localId))
+      .toEqual(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
   });
 
   it('detects current and legacy Azure DevOps remotes with HTTPS URL safety metadata', async () => {
@@ -85,7 +106,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'https://dev.azure.com/happier-dev/platform/_git/happier.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.azure-devops/azure-devops',
+      id: 'happier.scm.forge.azure-devops/azure-devops',
       kind: 'azure-devops',
       baseUrl: 'https://dev.azure.com/happier-dev',
       nameWithOwner: 'happier-dev/platform/happier',
@@ -100,7 +121,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       remoteName: 'upstream',
       remoteUrl: 'git@ssh.dev.azure.com:v3/happier-dev/platform/happier',
     })).toMatchObject({
-      id: 'happier.scm.hosting.azure-devops/azure-devops',
+      id: 'happier.scm.forge.azure-devops/azure-devops',
       baseUrl: 'https://dev.azure.com/happier-dev',
       nameWithOwner: 'happier-dev/platform/happier',
       remoteName: 'upstream',
@@ -109,7 +130,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'ssh://git@ssh.dev.azure.com/v3/happier-dev/platform/happier',
     })).toMatchObject({
-      id: 'happier.scm.hosting.azure-devops/azure-devops',
+      id: 'happier.scm.forge.azure-devops/azure-devops',
       baseUrl: 'https://dev.azure.com/happier-dev',
       nameWithOwner: 'happier-dev/platform/happier',
       remoteName: 'origin',
@@ -118,7 +139,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       remoteName: 'legacy',
       remoteUrl: 'git@happier-dev.visualstudio.com:v3/happier-dev/platform/happier',
     })).toMatchObject({
-      id: 'happier.scm.hosting.azure-devops/azure-devops',
+      id: 'happier.scm.forge.azure-devops/azure-devops',
       baseUrl: 'https://happier-dev.visualstudio.com',
       nameWithOwner: 'happier-dev/platform/happier',
       remoteName: 'legacy',
@@ -127,7 +148,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'https://happier-dev.visualstudio.com/platform/_git/happier',
     })).toMatchObject({
-      id: 'happier.scm.hosting.azure-devops/azure-devops',
+      id: 'happier.scm.forge.azure-devops/azure-devops',
       baseUrl: 'https://happier-dev.visualstudio.com',
       nameWithOwner: 'happier-dev/platform/happier',
       urlSafety: {

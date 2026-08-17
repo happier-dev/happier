@@ -1,0 +1,15 @@
+{
+  "type": "user",
+  "uuid": "{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}",
+  "account_id": "712020:00000000-0000-0000-0000-00000000a001",
+  "nickname": "example-author",
+  "display_name": "Example Author",
+  "account_status": "active",
+  "created_on": "2024-01-04T08:00:00.000000+00:00",
+  "links": {
+    "self": {
+      "href": "https://api.bitbucket.org/2.0/users/%7B9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19%7D"
+    },
+    "html": { "href": "https://bitbucket.org/%7B9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19%7D/" }
+  }
+}

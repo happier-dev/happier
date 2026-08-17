@@ -1,0 +1,68 @@
+{
+  "count": 3,
+  "value": [
+    {
+      "id": "f4b7c210-55ae-4d31-8a6c-2b90d5e1c773",
+      "name": "checkout",
+      "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/f4b7c210-55ae-4d31-8a6c-2b90d5e1c773",
+      "project": {
+        "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+        "name": "Payments",
+        "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+        "state": "wellFormed",
+        "revision": 11,
+        "visibility": "private",
+        "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+      },
+      "defaultBranch": "refs/heads/main",
+      "size": 1178,
+      "remoteUrl": "https://dev.azure.com/exampleorg/Payments/_git/checkout",
+      "sshUrl": "git@ssh.dev.azure.com:v3/exampleorg/Payments/checkout",
+      "webUrl": "https://dev.azure.com/exampleorg/Payments/_git/checkout",
+      "isDisabled": false,
+      "isInMaintenance": false
+    },
+    {
+      "id": "5febef5a-833d-4e14-b9c0-14cb638f91e6",
+      "name": "gateway",
+      "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/5febef5a-833d-4e14-b9c0-14cb638f91e6",
+      "project": {
+        "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+        "name": "Payments",
+        "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+        "state": "wellFormed",
+        "revision": 11,
+        "visibility": "private",
+        "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+      },
+      "defaultBranch": "refs/heads/main",
+      "size": 1178,
+      "remoteUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+      "sshUrl": "git@ssh.dev.azure.com:v3/exampleorg/Payments/gateway",
+      "webUrl": "https://dev.azure.com/exampleorg/Payments/_git/gateway",
+      "isDisabled": false,
+      "isInMaintenance": false
+    },
+    {
+      "id": "a0d3f2b1-6c88-4d2e-b3f9-1e5c7a904b6d",
+      "name": "settlement",
+      "url": "https://dev.azure.com/exampleorg/_apis/git/repositories/a0d3f2b1-6c88-4d2e-b3f9-1e5c7a904b6d",
+      "project": {
+        "id": "3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+        "name": "Payments",
+        "url": "https://dev.azure.com/exampleorg/_apis/projects/3f1e2c74-9a51-4a1b-8f2a-6c1d0b7e5a42",
+        "state": "wellFormed",
+        "revision": 11,
+        "visibility": "private",
+        "lastUpdateTime": "2026-05-14T16:38:26.243Z"
+      },
+      "defaultBranch": "refs/heads/main",
+      "size": 1178,
+      "remoteUrl": "https://dev.azure.com/exampleorg/Payments/_git/settlement",
+      "sshUrl": "git@ssh.dev.azure.com:v3/exampleorg/Payments/settlement",
+      "webUrl": "https://dev.azure.com/exampleorg/Payments/_git/settlement",
+      "isDisabled": true,
+      "isInMaintenance": false
+    }
+  ]
+}

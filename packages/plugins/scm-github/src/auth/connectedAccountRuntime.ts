@@ -1,9 +1,11 @@
 import type {
-  PluginConnectedAccountAuthenticationContext,
-  PluginConnectedAccountHealthResult,
-  PluginConnectedAccountManualCompletion,
-  PluginConnectedAccountRuntime,
-} from '@happier-dev/plugin-sdk/runtime';
+  ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+  ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
+  ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
+  ConnectedAccountRuntime as PluginConnectedAccountRuntime,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+
+import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 
 const TOKEN_CREDENTIAL_KEY = 'token';
 const GITHUB_IDENTITY_URL = 'https://api.github.com/user';
@@ -81,13 +83,13 @@ async function confirmGithubIdentity(
 ): Promise<ConfirmedGithubIdentity | GithubIdentityFailure> {
   const signal = options?.signal ?? context.signal;
   try {
-    const response = await context.services.fetch.request({
+    const response = await context.services.http.request({
       url: GITHUB_IDENTITY_URL,
       method: 'GET',
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${token}`,
-        'X-GitHub-Api-Version': '2022-11-28',
+        'X-GitHub-Api-Version': GITHUB_API_VERSION,
       },
       redirect: 'error',
     }, { signal });

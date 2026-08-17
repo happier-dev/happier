@@ -20,7 +20,7 @@ vi.mock('node:fs/promises', () => ({
 
 import { getSaplingSnapshot } from './repository';
 import { createSaplingScmBackendRegistration } from './backend';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 describe('sapling repository snapshot', () => {
     it('throws when `sl status` fails instead of masking the repository as clean', async () => {

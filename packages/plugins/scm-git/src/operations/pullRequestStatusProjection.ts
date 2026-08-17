@@ -1,10 +1,11 @@
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestAuthState,
   ScmPullRequestStatusProjection,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+} from '@happier-dev/plugin-sdk/scm';
+import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { defaultPrStatusCache, type PrStatusCache } from '../hostingProviders/prStatusCache.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';

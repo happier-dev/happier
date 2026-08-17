@@ -9,7 +9,7 @@ import {
   type ScmRepositoryCloneOutput,
   type ScmWorkingSnapshot,
   type ScmRepositoryCloneTargetDescription,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import { expect } from 'vitest';
 
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';

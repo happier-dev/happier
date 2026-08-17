@@ -1,16 +1,17 @@
 import type {
-  ScmHostingProviderRepositoryCreateInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsResult,
-  ScmHostingProviderRepositoryGetInput,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderRepositoryCreateInput as ScmHostingProviderRepositoryCreateInput,
+  HostingProviderRepositoryDescribePublishTargetsInput as ScmHostingProviderRepositoryDescribePublishTargetsInput,
+  HostingProviderRepositoryDescribePublishTargetsResult as ScmHostingProviderRepositoryDescribePublishTargetsResult,
+  HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import {
   createGithubRepositoryAuthRequiredError,

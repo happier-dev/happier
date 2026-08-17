@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type {
   ScmWorktree,
   ScmWorktreeEnrichmentEntry,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from './runtime.js';
 import { parseGitStatusPorcelainShortZ, type ParsedGitStatusPorcelainShortZEntry } from './statusParser.js';

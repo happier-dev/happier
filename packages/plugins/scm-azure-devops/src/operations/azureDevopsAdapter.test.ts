@@ -1,15 +1,16 @@
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAzureDevopsOperationsAdapter } from './azureDevopsAdapter.js';
 
 const provider: ScmHostingProviderRef = {
-  id: 'happier.scm.hosting.azure-devops/azure-devops',
+  id: 'happier.scm.forge.azure-devops/azure-devops',
   kind: 'azure-devops',
   displayName: 'Azure DevOps',
   baseUrl: 'https://dev.azure.com/happier-dev',

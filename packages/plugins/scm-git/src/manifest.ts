@@ -1,5 +1,5 @@
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/experimental/manifest/scmBackends';
+import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { GIT_INSTALLABLE_DEP_ID, GIT_INSTALLABLE_DESCRIPTOR } from './installables/gitInstallable.js';
 

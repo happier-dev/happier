@@ -1,13 +1,14 @@
 import type {
-  ScmForgeHttpErrorContext,
-  ScmForgeHttpFetcher,
-  ScmForgeHttpResponse,
-  ScmHostingProviderRef,
+  ForgeHttpErrorContext as ScmForgeHttpErrorContext,
+  ForgeHttpFetcher as ScmForgeHttpFetcher,
+  ForgeHttpResponse as ScmForgeHttpResponse,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { requestScmForgeJson } from '@happier-dev/plugin-sdk/experimental/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/scm';
+import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
+import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 import { readBitbucketRepositoryCoordinates } from '../parsing/bitbucketCoordinates.js';
 import { encodeBitbucketBasicAuthorization } from '../auth/basicCredentials.js';

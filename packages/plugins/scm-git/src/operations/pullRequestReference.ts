@@ -1,4 +1,4 @@
-import type { ScmPullRequestReference } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmPullRequestReference } from '@happier-dev/plugin-sdk/scm';
 
 export type PullRequestReferenceParseResult =
     | Readonly<{ ok: true; reference: ScmPullRequestReference }>

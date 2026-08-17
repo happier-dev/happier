@@ -1,7 +1,8 @@
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 function normalizeNameWithOwner(value: string | null | undefined): string | null {
   const normalized = value?.trim().toLowerCase() ?? '';

@@ -1,9 +1,10 @@
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+} from '@happier-dev/plugin-sdk/scm';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 function readPositiveInt(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;

@@ -1,17 +1,18 @@
 import type {
-  ScmHostingProviderDefaultBranchInput,
-  ScmHostingProviderDefaultBranchMetadata,
-  ScmHostingProviderPullRequestCheckoutReferenceInput,
-  ScmHostingProviderPullRequestCheckoutReferenceMetadata,
-  ScmHostingProviderPullRequestCreateInput,
-  ScmHostingProviderPullRequestGetInput,
-  ScmHostingProviderPullRequestListInput,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
+  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
+  HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
+  HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
+  HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
+  HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
+  HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import {

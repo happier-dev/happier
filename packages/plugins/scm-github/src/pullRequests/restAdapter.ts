@@ -1,22 +1,25 @@
 import type {
-  ScmHostingProviderDefaultBranchInput,
-  ScmHostingProviderDefaultBranchMetadata,
-  ScmHostingProviderPullRequestCheckoutReferenceInput,
-  ScmHostingProviderPullRequestCheckoutReferenceMetadata,
-  ScmHostingProviderPullRequestCreateInput,
-  ScmHostingProviderPullRequestGetInput,
-  ScmHostingProviderPullRequestListInput,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
+  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
+  HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
+  HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
+  HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
+  HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
+  HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmHostingProviderRef,
-  ScmForgeHttpErrorContext,
-  ScmForgeHttpFetcher,
-  ScmForgeHttpResponse,
+  ForgeHttpErrorContext as ScmForgeHttpErrorContext,
+  ForgeHttpFetcher as ScmForgeHttpFetcher,
+  ForgeHttpResponse as ScmForgeHttpResponse } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { requestScmForgeJson } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
+
+import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import { mapGithubDefaultBranch } from './defaultBranch.js';
@@ -61,7 +64,6 @@ export type GithubRestPullRequestAdapter = Readonly<{
 }>;
 
 const GITHUB_DOT_COM_HOST = 'github.com';
-const GITHUB_API_VERSION = '2022-11-28';
 
 async function defaultRuntimeTokenResolver(input: Readonly<{
   providerId: string;

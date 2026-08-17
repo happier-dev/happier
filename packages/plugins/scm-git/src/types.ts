@@ -2,7 +2,8 @@ import type {
   ScmBackendDescribeRequest,
   ScmBackendDescribeResponse,
   ScmBackendCapabilities,
-  ScmBackendId,
+  ScmBackendId } from '@happier-dev/plugin-sdk/scm/backend';
+import type {
   ScmBranchCheckoutRequest,
   ScmBranchCheckoutResponse,
   ScmBranchCreateRequest,
@@ -80,26 +81,26 @@ import type {
   ScmWorktreePruneResponse,
   ScmWorktreeRemoveRequest,
   ScmWorktreeRemoveResponse,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import type {
-  ScmBackendRuntimeContext,
-  ScmBackendRuntimeDetection,
-  ScmBackendRuntimeWorkspaceIntegrationHandlers,
-  ScmWorkspaceIntegrationWorkspaceLocationInspection,
-  ScmWorkspaceIntegrationCheckoutMaterializationRequest,
-  ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest,
-  ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult,
-  ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest,
-  ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult,
-  ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
-  ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult,
-  ScmWorkspaceIntegrationWorkspaceTransferRequest,
-  ScmWorkspaceIntegrationWorkspaceTransferResult,
-  ScmWorkspaceIntegrationWorkspaceTransferEntry,
-  ScmWorkspaceIntegrationWorkspaceTransferMetadata,
-  ScmWorkspaceIntegrationPortableWorkspacePathClassification,
-  ScmWorkspaceIntegrationPortableWorkspacePathRequest,
-} from '@happier-dev/plugin-sdk/experimental/scm/backend';
+  BackendRuntimeContext as ScmBackendRuntimeContext,
+  BackendRuntimeDetection as ScmBackendRuntimeDetection,
+  WorkspaceIntegrationHandlers as ScmBackendRuntimeWorkspaceIntegrationHandlers,
+  WorkspaceLocationInspection as ScmWorkspaceIntegrationWorkspaceLocationInspection,
+  CheckoutMaterializationRequest as ScmWorkspaceIntegrationCheckoutMaterializationRequest,
+  WorkspaceCheckoutCreationRequest as ScmWorkspaceIntegrationWorkspaceCheckoutCreationRequest,
+  WorkspaceCheckoutCreationResult as ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult,
+  WorkspaceCheckoutMaterializationRequest as ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequest,
+  WorkspaceCheckoutMaterializationResult as ScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResult,
+  WorkspaceCheckoutRealizationRequest as ScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest,
+  WorkspaceCheckoutRealizationResult as ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult,
+  WorkspaceTransferRequest as ScmWorkspaceIntegrationWorkspaceTransferRequest,
+  WorkspaceTransferResult as ScmWorkspaceIntegrationWorkspaceTransferResult,
+  WorkspaceTransferEntry as ScmWorkspaceIntegrationWorkspaceTransferEntry,
+  WorkspaceTransferMetadata as ScmWorkspaceIntegrationWorkspaceTransferMetadata,
+  PortableWorkspacePathClassification as ScmWorkspaceIntegrationPortableWorkspacePathClassification,
+  PortableWorkspacePathRequest as ScmWorkspaceIntegrationPortableWorkspacePathRequest,
+} from '@happier-dev/plugin-sdk/scm/backend';
 
 export type ScmRepoDetection = ScmBackendRuntimeDetection;
 export type ScmBackendContext = ScmBackendRuntimeContext;

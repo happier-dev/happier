@@ -1,18 +1,19 @@
 import type {
-  ScmHostingProviderDefaultBranchInput,
-  ScmHostingProviderDefaultBranchMetadata,
-  ScmHostingProviderPullRequestCheckoutReferenceInput,
-  ScmHostingProviderPullRequestCheckoutReferenceMetadata,
-  ScmHostingProviderPullRequestCreateInput,
-  ScmHostingProviderPullRequestGetInput,
-  ScmHostingProviderPullRequestListInput,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
+  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
+  HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
+  HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
+  HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
+  HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
+  HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmOperationErrorCode,
-  ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import type {
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { createGithubCliAdapter, type GithubCliPullRequestAdapter } from './cliAdapter.js';

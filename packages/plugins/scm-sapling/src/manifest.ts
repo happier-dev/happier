@@ -1,5 +1,5 @@
 import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
-import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/experimental/manifest/scmBackends';
+import type { ScmBackendContribution } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { SAPLING_INSTALLABLE_DEP_ID, SAPLING_INSTALLABLE_DESCRIPTOR } from './installables/saplingInstallable.js';
 import { SAPLING_SCM_BACKEND_ID } from './backend.js';

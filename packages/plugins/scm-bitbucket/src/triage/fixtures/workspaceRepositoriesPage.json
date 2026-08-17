@@ -1,0 +1,45 @@
+{
+  "pagelen": 10,
+  "page": 1,
+  "values": [
+    {
+      "type": "repository",
+      "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+      "name": "deploy-tools",
+      "full_name": "example-workspace/deploy-tools",
+      "is_private": true,
+      "mainbranch": { "type": "branch", "name": "main" },
+      "links": {
+        "html": { "href": "https://bitbucket.org/example-workspace/deploy-tools" }
+      },
+      "workspace": {
+        "type": "workspace",
+        "uuid": "{4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44}",
+        "slug": "example-workspace",
+        "name": "Example Workspace"
+      }
+    },
+    {
+      "type": "repository",
+      "uuid": "{2b3c4d5e-6f70-4182-93a4-b5c6d7e8f901}",
+      "name": "release-notifier",
+      "full_name": "example-workspace/release-notifier",
+      "is_private": true,
+      "mainbranch": { "type": "branch", "name": "main" },
+      "links": {
+        "html": { "href": "https://bitbucket.org/example-workspace/release-notifier" }
+      },
+      "workspace": {
+        "type": "workspace",
+        "uuid": "{4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44}",
+        "slug": "example-workspace",
+        "name": "Example Workspace"
+      }
+    },
+    {
+      "type": "repository",
+      "name": "repository-without-immutable-id",
+      "full_name": "example-workspace/repository-without-immutable-id"
+    }
+  ]
+}

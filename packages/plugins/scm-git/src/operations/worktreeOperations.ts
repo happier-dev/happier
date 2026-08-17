@@ -5,17 +5,18 @@ import type {
   ScmWorktreePruneResponse,
   ScmWorktreeRemoveRequest,
   ScmWorktreeRemoveResponse,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import {
   SCM_OPERATION_ERROR_CODES,
   SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import { mkdir } from 'node:fs/promises';
 
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
+import { parseGitWorktreeListPorcelain } from '../worktreeListParser.js';
 import {
     WORKTREE_RELATIVE_PARENT_DIR,
     buildWorktreeRelativePath,
@@ -183,6 +184,32 @@ export async function gitWorktreeCreate(input: {
     const resolvedBaseRef = branchMode === 'existing'
         ? null
         : explicitBaseRef ?? await resolveImplicitBaseRef(input.context);
+
+    if (branchMode === 'existing') {
+        const listed = await runScmCommand({
+            bin: 'git',
+            cwd: resolvedPaths.repositoryRootPath,
+            args: ['worktree', 'list', '--porcelain'],
+            timeoutMs: 15_000,
+            env: buildScmNonInteractiveEnv(),
+        });
+        if (listed.success) {
+            const existing = parseGitWorktreeListPorcelain({
+                worktreesOutput: listed.stdout,
+                currentWorktreePath: resolvedPaths.sourceRootPath,
+                mainWorktreePath: resolvedPaths.repositoryRootPath,
+            }).find((worktree) => worktree.branch === displayName);
+            if (existing) {
+                return {
+                    success: true,
+                    worktreePath: existing.path,
+                    branchName: displayName,
+                    sourceRootPath: resolvedPaths.sourceRootPath,
+                    repositoryRootPath: resolvedPaths.repositoryRootPath,
+                };
+            }
+        }
+    }
 
     await mkdir(`${resolvedPaths.repositoryRootPath}/${WORKTREE_RELATIVE_PARENT_DIR}`, { recursive: true });
 

@@ -1,10 +1,11 @@
 import type {
-  ProviderRefreshPolicy,
+  ScmRefreshPolicy as ProviderRefreshPolicy,
+  ScmRepoMode,
+} from '@happier-dev/plugin-sdk/scm';
+import type {
   ScmBackendCapabilities,
   ScmBackendCapabilityLeaf,
-  ScmBackendCapabilityUnavailableReason,
-  ScmRepoMode,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+  ScmBackendCapabilityUnavailableReason } from '@happier-dev/plugin-sdk/scm/backend';
 
 type ResolveScmBackendCapabilitiesInput = Readonly<{
   declaredCapabilities: ScmBackendCapabilities;

@@ -1,9 +1,9 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmHostingProviderCompareUrlInput,
-  ScmHostingProviderRemoteDetectionInput,
-  ScmHostingProviderRuntimeAdapter,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderCompareUrlInput as ScmHostingProviderCompareUrlInput,
+  HostingProviderRemoteDetectionInput as ScmHostingProviderRemoteDetectionInput,
+  HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { gitlabCliPullRequestAdapter } from './pullRequests/index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';

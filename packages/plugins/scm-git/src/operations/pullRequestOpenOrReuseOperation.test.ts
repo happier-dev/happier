@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   SCM_OPERATION_ERROR_CODES,
-  type ScmHostingProviderRef,
   type ScmPullRequestOpenOrReuseRequest,
   type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import {
+  type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { ScmBackendContext } from '../types.js';
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';

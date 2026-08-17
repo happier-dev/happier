@@ -1,0 +1,9 @@
+{
+  "$id": "1",
+  "innerException": null,
+  "message": "Request was blocked due to exceeding usage of resource in namespace.",
+  "typeName": "Microsoft.VisualStudio.Services.Commerce.RateLimitExceededException, Microsoft.VisualStudio.Services.WebApi",
+  "typeKey": "RateLimitExceededException",
+  "errorCode": 0,
+  "eventId": 3000
+}

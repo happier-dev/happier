@@ -1,20 +1,23 @@
 import type {
-  ScmHostingProviderRepositoryCreateInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsResult,
-  ScmHostingProviderRepositoryGetInput,
-  ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderRepositoryCreateInput as ScmHostingProviderRepositoryCreateInput,
+  HostingProviderRepositoryDescribePublishTargetsInput as ScmHostingProviderRepositoryDescribePublishTargetsInput,
+  HostingProviderRepositoryDescribePublishTargetsResult as ScmHostingProviderRepositoryDescribePublishTargetsResult,
+  HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
+  HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
-  ScmForgeHttpErrorContext,
-  ScmForgeHttpFetcher,
-  ScmForgeHttpResponse,
-  ScmHostingProviderRef,
+  ForgeHttpErrorContext as ScmForgeHttpErrorContext,
+  ForgeHttpFetcher as ScmForgeHttpFetcher,
+  ForgeHttpResponse as ScmForgeHttpResponse,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { requestScmForgeJson } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
+
+import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 
 import {
   createGithubRepositoryAlreadyExistsError,
@@ -60,7 +63,6 @@ export type GithubRepositoryRestAdapter = Readonly<{
   getRepository(input: ScmHostingProviderRepositoryGetInput): Promise<ScmHostingRepositorySummary | null>;
 }>;
 
-const GITHUB_API_VERSION = '2022-11-28';
 
 async function defaultRuntimeTokenResolver(input: Readonly<{
   providerId: string;

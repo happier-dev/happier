@@ -4,12 +4,12 @@ import type {
   ScmRemoteManagementResponse,
   ScmRemoteRemoveRequest,
   ScmRemoteSetUrlRequest,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 import {
   SCM_OPERATION_ERROR_CODES,
   normalizeScmRemoteName,
   normalizeScmRemoteUrl,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';

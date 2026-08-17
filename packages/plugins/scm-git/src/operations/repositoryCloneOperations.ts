@@ -1,6 +1,5 @@
 import {
   SCM_OPERATION_ERROR_CODES,
-  ScmHostingProviderKindSchema,
   type ScmHostingRepositoryAuthSummary,
   type ScmHostingRepositorySummary,
   type ScmOperationErrorCode,
@@ -9,12 +8,14 @@ import {
   type ScmRepositoryCloneTarget,
   type ScmRepositoryCloneTargetDescription,
   type ScmWorkingSnapshot,
-  type SourceControlCloneProtocol,
-} from '@happier-dev/plugin-sdk/experimental/scm';
+  type ScmCloneProtocol as SourceControlCloneProtocol,
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    readCurrentScmHostingProviderRuntimeServices,
-    type ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  ScmHostingProviderKindSchema } from '@happier-dev/plugin-sdk/scm/hosting';
+import {
+    readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
+    type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand, type ScmExecResult } from '../runtime.js';

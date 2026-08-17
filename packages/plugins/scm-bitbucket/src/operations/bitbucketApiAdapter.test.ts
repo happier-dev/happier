@@ -1,13 +1,14 @@
 import type {
-  ScmHostingProviderRef,
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type {
   ScmPullRequestSummary,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
+import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it } from 'vitest';
 
 const provider: ScmHostingProviderRef = {
-  id: 'happier.scm.hosting.bitbucket/bitbucket',
+  id: 'happier.scm.forge.bitbucket/bitbucket',
   kind: 'bitbucket',
   displayName: 'Bitbucket',
   baseUrl: 'https://bitbucket.org',

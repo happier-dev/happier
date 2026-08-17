@@ -1,0 +1,119 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [
+      {
+        "description": "Git command line executable used for local source-control operations.",
+        "executable": "git",
+        "id": "git-cli",
+        "sources": [
+          {
+            "executableNames": [
+              "git"
+            ],
+            "kind": "system",
+            "versionArguments": [
+              "--version"
+            ]
+          }
+        ],
+        "title": "Git"
+      }
+    ],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [
+      {
+        "capabilities": [
+          "detect",
+          "clone",
+          "fetch",
+          "status",
+          "diff",
+          "commit",
+          "push",
+          "pullRequest"
+        ],
+        "description": "Local Git repository backend.",
+        "id": "git",
+        "kind": "git",
+        "title": "Git"
+      }
+    ],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "First-party local Git SCM backend.",
+  "displayName": "Git SCM backend",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "git-process",
+        "reason": "Run the declared Git executable for local source-control operations.",
+        "scope": {
+          "executables": [
+            {
+              "id": "git-cli",
+              "kind": "managedDependency"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.scm.backend.git",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

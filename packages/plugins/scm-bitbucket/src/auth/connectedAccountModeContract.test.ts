@@ -60,7 +60,7 @@ describe('Bitbucket Connected Account mode contract', () => {
         attemptId: 'reconnect-attempt',
         account: {
           service: {
-            pluginId: 'happier.scm.hosting.bitbucket',
+            pluginId: 'happier.scm.forge.bitbucket',
             contributionId: 'bitbucket-account',
           },
           accountId: 'account@example.com',

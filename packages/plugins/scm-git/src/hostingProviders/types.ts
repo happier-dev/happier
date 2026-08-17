@@ -1,23 +1,22 @@
 import type {
-    ScmHostingProviderRemoteDetectionInput,
-    ScmHostingProviderResolvedRemote,
-    ScmHostingProviderRuntimeAdapter,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+    HostingProviderRemoteDetectionInput as ScmHostingProviderRemoteDetectionInput,
+    HostingProviderResolvedRemote as ScmHostingProviderResolvedRemote,
+    HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 export type {
-    ScmHostingProviderCompareUrlResult,
-    ScmHostingProviderDescriptor,
-    ScmHostingProviderRemoteDetectionInput,
-    ScmHostingProviderRemoteDetectionResult,
-    ScmHostingProviderResolvedProvider as ResolvedScmHostingProvider,
-    ScmHostingProviderResolvedRegistry as ResolvedScmHostingProviderRegistry,
-    ScmHostingProviderResolvedRemote,
-    ScmHostingProviderRuntimeAdapter as ScmHostingProviderAdapter,
-    ScmHostingProviderRuntimeBinding,
-    ScmHostingProviderRuntimeRegistration,
-    ScmHostingProviderRegistryDiagnostic,
-    ScmHostingProviderUnresolvedRemote as UnresolvedScmHostingProvider,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+    HostingProviderCompareUrlResult,
+    HostingProviderDescriptor,
+    HostingProviderRemoteDetectionInput,
+    HostingProviderRemoteDetectionResult,
+    HostingProviderResolvedProvider as ResolvedScmHostingProvider,
+    HostingProviderResolvedRegistry as ResolvedScmHostingProviderRegistry,
+    HostingProviderResolvedRemote,
+    HostingProviderRuntimeAdapter as ScmHostingProviderAdapter,
+    HostingProviderRuntimeRegistration,
+    HostingProviderRegistryDiagnostic,
+    HostingProviderUnresolvedRemote as UnresolvedScmHostingProvider,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 
 export type ScmHostingProviderRoutingAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
     detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderResolvedRemote | null;

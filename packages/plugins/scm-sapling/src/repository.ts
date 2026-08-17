@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import type {
   ScmWorkingEntry,
   ScmWorkingSnapshot,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import type { ScmBackendRuntimeDetection as ScmRepoDetection } from '@happier-dev/plugin-sdk/experimental/scm/backend';
+} from '@happier-dev/plugin-sdk/scm';
+import type { BackendRuntimeDetection as ScmRepoDetection } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { createSaplingCapabilities } from './capabilities.js';
 import { runSaplingCommand as runScmCommand } from './runtime.js';

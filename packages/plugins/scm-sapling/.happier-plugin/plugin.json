@@ -1,0 +1,117 @@
+{
+  "contributes": {
+    "accountCollections": [],
+    "actions": [],
+    "agents": [],
+    "backgroundServices": [],
+    "browserActions": [],
+    "browserTargets": [],
+    "commands": [],
+    "composerAttachments": [],
+    "composerControls": [],
+    "composerReferences": [],
+    "composerRegions": [],
+    "connectedAccountDescriptors": [],
+    "daemonDatabases": [],
+    "events": [],
+    "executionRunProfiles": [],
+    "hooks": [],
+    "managedDependencies": [
+      {
+        "description": "Sapling source control command-line tool used for local Sapling repositories.",
+        "executable": "sl",
+        "id": "sapling-cli",
+        "sources": [
+          {
+            "executableNames": [
+              "sl"
+            ],
+            "kind": "system",
+            "versionArguments": [
+              "--version"
+            ]
+          }
+        ],
+        "title": "Sapling"
+      }
+    ],
+    "mcp": {
+      "discoverySources": [],
+      "servers": []
+    },
+    "notificationChannels": [],
+    "notifications": [],
+    "openableContentViewers": [],
+    "pluginContributionPoints": [],
+    "promptAssets": [],
+    "providers": [],
+    "requestInterceptors": [],
+    "resources": [],
+    "scmBackends": [
+      {
+        "capabilities": [
+          "detect",
+          "fetch",
+          "status",
+          "diff",
+          "commit",
+          "push"
+        ],
+        "description": "Sapling local source control backend.",
+        "id": "sapling",
+        "kind": "sapling",
+        "title": "Sapling"
+      }
+    ],
+    "scmHostingProviders": [],
+    "sessionHeaderActions": [],
+    "settings": [],
+    "systemTools": [],
+    "targetedPluginContributions": [],
+    "tools": [],
+    "transcriptActivities": [],
+    "ui": {
+      "renderers": [],
+      "settingsGroups": [],
+      "settingsPages": [],
+      "translations": [],
+      "views": []
+    },
+    "voiceModelPacks": [],
+    "voiceProviders": [],
+    "webhooks": []
+  },
+  "description": "Provides the first-party local Sapling SCM backend with audited limited capabilities.",
+  "displayName": "Sapling SCM backend",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "entrypoints": {
+    "daemon": "./dist/index.js"
+  },
+  "hostAccess": {
+    "optional": [],
+    "required": [
+      {
+        "capability": "process",
+        "id": "sapling-process",
+        "reason": "Run the declared Sapling executable for local source-control operations.",
+        "scope": {
+          "executables": [
+            {
+              "id": "sapling-cli",
+              "kind": "managedDependency"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "id": "happier.scm.backend.sapling",
+  "runtime": {
+    "apiVersion": 1
+  },
+  "schemaVersion": 2,
+  "secrets": [],
+  "version": "0.0.0"
+}

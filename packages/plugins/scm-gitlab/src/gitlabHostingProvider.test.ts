@@ -26,10 +26,10 @@ type Adapter = Readonly<{
 describe('bundled GitLab SCM hosting provider plugin', () => {
   it('declares a strict target SCM hosting-provider contribution with configured-origin access', async () => {
     expect(PLUGIN_MANIFEST).toMatchObject({
-      id: 'happier.scm.hosting.gitlab',
+      id: 'happier.scm.forge.gitlab',
       entrypoints: { daemon: './dist/index.js' },
       hostAccess: { required: expect.arrayContaining([
-        expect.objectContaining({ id: 'gitlab-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'scmProviderOrigin', provider: 'gitlab' }] }) }),
+        expect.objectContaining({ id: 'gitlab-api', capability: 'network', scope: expect.objectContaining({ targets: expect.arrayContaining([{ kind: 'scmProviderOrigin', provider: 'gitlab' }]) }) }),
         expect.objectContaining({ id: 'gitlab-cli-process', capability: 'process', scope: { executables: [{ kind: 'systemTool', id: 'gitlab-cli' }] } }),
       ]), optional: [] },
       contributes: {
@@ -51,9 +51,11 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
   });
 
-  it('registers exactly the manifest-declared local provider id', async () => {
+  it('registers exactly what the manifest declares, and nothing else', async () => {
     const { activate } = await import('./activate.js');
     const registrations: Array<Readonly<{ id: string }>> = [];
+    const accountRuntimes: string[] = [];
+    const actionIds: string[] = [];
     // Boundary fixture intentionally supplies only the activation surface exercised here.
     activate({
       scm: {
@@ -62,8 +64,23 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
           return { dispose() {} };
         },
       },
-    } as Parameters<typeof activate>[0]);
+      connectedAccounts: {
+        register(id: string) {
+          accountRuntimes.push(id);
+          return { dispose() {} };
+        },
+      },
+      actions: {
+        register(id: string) {
+          actionIds.push(id);
+        },
+      },
+    } as unknown as Parameters<typeof activate>[0]);
     expect(registrations.map(({ id }) => id)).toEqual(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
+    expect(accountRuntimes).toEqual(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.map(({ id }) => id));
+    // Every declared Action has a registered handler, and no handler is
+    // registered for an Action the manifest never declared.
+    expect([...actionIds].sort()).toEqual(PLUGIN_MANIFEST.contributes.actions.map(({ id }) => id).sort());
   });
 
   it('detects bundled GitLab remotes and supports enterprise hosts through test-local options', async () => {
@@ -76,7 +93,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'git@gitlab.com:happier-dev/mobile/app.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.gitlab/gitlab',
+      id: 'happier.scm.forge.gitlab/gitlab',
       kind: 'gitlab',
       baseUrl: 'https://gitlab.com',
       nameWithOwner: 'happier-dev/mobile/app',
@@ -86,7 +103,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'https://gitlab.company.com/platform/happier/app.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.gitlab/gitlab',
+      id: 'happier.scm.forge.gitlab/gitlab',
       baseUrl: 'https://gitlab.company.com',
       nameWithOwner: 'platform/happier/app',
     });
@@ -94,7 +111,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       remoteName: 'origin',
       remoteUrl: 'ssh://git@code.internal.test/platform/happier/app.git',
     })).toMatchObject({
-      id: 'happier.scm.hosting.gitlab/gitlab',
+      id: 'happier.scm.forge.gitlab/gitlab',
       baseUrl: 'https://code.internal.test',
       nameWithOwner: 'platform/happier/app',
       urlSafety: {

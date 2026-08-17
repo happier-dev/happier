@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { gitRemoteAdd, gitRemoteSetUrl } from './remoteManagementOperations.js';
 import type { ScmBackendContext } from '../types.js';

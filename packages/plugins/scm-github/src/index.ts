@@ -1,6 +1,7 @@
 export * from './adapter.js';
 export * from './activate.js';
 export * from './manifest.js';
+export { PLUGIN_MANIFEST as manifest } from './manifest.js';
 export * from './pullRequests/authChain.js';
 export * from './pullRequests/checkoutReference.js';
 export * from './pullRequests/cliAdapter.js';
@@ -10,3 +11,4 @@ export * from './pullRequests/mapping.js';
 export * from './pullRequests/restAdapter.js';
 export * from './repositoryProvisioning/index.js';
 export * from './remoteUrl.js';
+export * from './webhookAction.js';

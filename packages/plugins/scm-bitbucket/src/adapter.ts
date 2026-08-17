@@ -1,10 +1,12 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
-import { PLUGIN_MANIFEST } from './manifest.js';
+import {
+  BITBUCKET_SCM_HOSTING_PROVIDER_ID,
+  BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID,
+} from './bitbucketContracts.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
-export const BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID = 'bitbucket';
-export const BITBUCKET_SCM_HOSTING_PROVIDER_ID = `${PLUGIN_MANIFEST.id}/${BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID}`;
+export { BITBUCKET_SCM_HOSTING_PROVIDER_ID, BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID };
 export const BITBUCKET_REMOTE_HOST_MATCHERS = Object.freeze({
   exactHosts: Object.freeze(['bitbucket.org']),
 });

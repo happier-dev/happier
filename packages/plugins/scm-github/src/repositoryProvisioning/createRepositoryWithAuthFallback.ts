@@ -1,19 +1,20 @@
 import type {
-  ScmHostingProviderRepositoryCreateInput,
-  ScmHostingProviderRepositoryDescribeCloneTargetsInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsInput,
-  ScmHostingProviderRepositoryDescribePublishTargetsResult,
-  ScmHostingProviderRepositoryGetInput,
-} from '@happier-dev/plugin-sdk/experimental/scm/hostingProvider';
+  HostingProviderRepositoryCreateInput as ScmHostingProviderRepositoryCreateInput,
+  HostingProviderRepositoryDescribeCloneTargetsInput as ScmHostingProviderRepositoryDescribeCloneTargetsInput,
+  HostingProviderRepositoryDescribePublishTargetsInput as ScmHostingProviderRepositoryDescribePublishTargetsInput,
+  HostingProviderRepositoryDescribePublishTargetsResult as ScmHostingProviderRepositoryDescribePublishTargetsResult,
+  HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
+} from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmOperationErrorCode,
-  ScmHostingProviderRef,
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositorySummary,
   ScmRepositoryCloneTarget,
   ScmRepositoryCloneTargetDescription,
-} from '@happier-dev/plugin-sdk/experimental/scm';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/experimental/scm';
+} from '@happier-dev/plugin-sdk/scm';
+import type {
+  ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { parseScmRemoteUrl } from '../remoteUrl.js';

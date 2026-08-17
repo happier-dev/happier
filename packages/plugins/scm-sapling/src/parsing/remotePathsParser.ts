@@ -1,4 +1,4 @@
-import type { ScmRemoteInfo } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmRemoteInfo } from '@happier-dev/plugin-sdk/scm';
 
 const SAPLING_PATH_LINE = /^([^=\s][^=]*?)\s*=\s*(.+)$/;
 const PUSH_PATH_SUFFIX = '-push';

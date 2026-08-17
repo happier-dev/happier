@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import { AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID } from '../detection/adapter.js';
 import { createAzureInvalidRequestError } from '../operations/errors.js';

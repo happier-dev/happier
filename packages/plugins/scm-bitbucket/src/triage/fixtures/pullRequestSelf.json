@@ -1,0 +1,116 @@
+{
+  "type": "pullrequest",
+  "id": 42,
+  "title": "Bound the deployment poller to its invocation deadline",
+  "state": "OPEN",
+  "draft": true,
+  "queued": false,
+  "comment_count": 3,
+  "task_count": 1,
+  "close_source_branch": true,
+  "created_on": "2026-08-10T09:14:22.113940+00:00",
+  "updated_on": "2026-08-12T16:02:41.884210+00:00",
+  "links": {
+    "self": {
+      "href": "https://api.bitbucket.org/2.0/repositories/example-workspace/deploy-tools/pullrequests/42"
+    },
+    "html": {
+      "href": "https://bitbucket.org/example-workspace/deploy-tools/pull-requests/42"
+    }
+  },
+  "summary": {
+    "type": "rendered",
+    "raw": "The poller outlived its own invocation. Bind it to the supplied signal.",
+    "markup": "markdown",
+    "html": "<p>The poller outlived its own invocation. Bind it to the supplied signal.</p>"
+  },
+  "author": {
+    "type": "user",
+    "uuid": "{9f1c2a44-5d0e-4c8b-8b0a-1d7e6f3a2c19}",
+    "account_id": "712020:00000000-0000-0000-0000-00000000a001",
+    "nickname": "example-author",
+    "display_name": "Example Author"
+  },
+  "reviewers": [
+    {
+      "type": "user",
+      "uuid": "{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}",
+      "nickname": "example-maintainer",
+      "display_name": "Example Maintainer"
+    },
+    {
+      "type": "user",
+      "uuid": "{5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b}",
+      "nickname": "example-reviewer",
+      "display_name": "Example Reviewer"
+    }
+  ],
+  "participants": [
+    {
+      "type": "participant",
+      "role": "REVIEWER",
+      "approved": true,
+      "state": "approved",
+      "participated_on": "2026-08-12T15:40:03.220000+00:00",
+      "user": {
+        "type": "user",
+        "uuid": "{7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f}",
+        "nickname": "example-maintainer",
+        "display_name": "Example Maintainer"
+      }
+    },
+    {
+      "type": "participant",
+      "role": "REVIEWER",
+      "approved": false,
+      "state": "changes_requested",
+      "participated_on": "2026-08-12T16:01:55.000000+00:00",
+      "user": {
+        "type": "user",
+        "uuid": "{5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b}",
+        "nickname": "example-reviewer",
+        "display_name": "Example Reviewer"
+      }
+    },
+    {
+      "type": "participant",
+      "role": "PARTICIPANT",
+      "approved": false,
+      "state": null,
+      "participated_on": null,
+      "user": {
+        "type": "user",
+        "uuid": "{0a1b2c3d-4e5f-4061-8273-8495a6b7c8d9}",
+        "nickname": "example-commenter",
+        "display_name": "Example Commenter"
+      }
+    }
+  ],
+  "source": {
+    "branch": { "name": "fix/poller-deadline" },
+    "commit": { "type": "commit", "hash": "3f6c1a8e9b24" },
+    "repository": {
+      "type": "repository",
+      "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+      "name": "deploy-tools",
+      "full_name": "example-workspace/deploy-tools"
+    }
+  },
+  "destination": {
+    "branch": {
+      "name": "main",
+      "merge_strategies": ["merge_commit", "squash", "fast_forward"],
+      "default_merge_strategy": "merge_commit"
+    },
+    "commit": { "type": "commit", "hash": "c07d5b21f4ae" },
+    "repository": {
+      "type": "repository",
+      "uuid": "{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}",
+      "name": "deploy-tools",
+      "full_name": "example-workspace/deploy-tools"
+    }
+  },
+  "merge_commit": null,
+  "closed_by": null,
+  "reason": ""
+}

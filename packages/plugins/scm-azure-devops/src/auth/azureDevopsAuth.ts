@@ -1,5 +1,5 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/experimental/scm';
-import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
 
 const AZ_CLI_SETUP_URL = 'https://learn.microsoft.com/cli/azure/install-azure-cli' as const;
 const AZURE_CLI_LOCAL_ID = 'azure-cli' as const;
