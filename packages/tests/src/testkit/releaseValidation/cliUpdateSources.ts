@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
@@ -28,10 +28,6 @@ const CLI_UPDATE_ENV_KEYS = [
     'HAPPIER_RELEASE_VALIDATION_CLI_UPDATE_TO_SOURCE_REF',
 ] as const;
 
-function npmCommand(): string {
-    return process.platform === 'win32' ? 'npm.cmd' : 'npm';
-}
-
 function normalizeCliUpdateSourceKind(raw: unknown): CliUpdateSourceKind | null {
     const value = String(raw ?? '').trim();
     if (
@@ -53,16 +49,24 @@ function normalizeCliUpdateChannel(raw: string): 'stable' | 'preview' | 'publicd
     throw new Error(`Unsupported cli-update published channel: ${raw}`);
 }
 
-function npmDistTagForChannel(channel: 'stable' | 'preview' | 'publicdev'): 'latest' | 'next' {
-    return channel === 'stable' ? 'latest' : 'next';
-}
-
-function resolveCliUpdatePublishedTagNpmRef(tag: string): string {
+function resolveCliUpdatePublishedTag(tag: string): Readonly<{
+    tag: string;
+    releaseChannel: 'stable' | 'preview' | 'publicdev';
+    version: string | null;
+}> {
     const value = tag.trim();
-    if (value === 'cli-stable') return 'latest';
-    if (value === 'cli-preview' || value === 'cli-dev') return 'next';
+    if (value === 'cli-stable') return { tag: value, releaseChannel: 'stable', version: null };
+    if (value === 'cli-preview') return { tag: value, releaseChannel: 'preview', version: null };
+    if (value === 'cli-dev') return { tag: value, releaseChannel: 'publicdev', version: null };
     const version = /^cli-v(.+)$/.exec(value)?.[1]?.trim();
-    if (version) return version;
+    if (version) {
+        const releaseChannel = version.includes('-preview.')
+            ? 'preview'
+            : version.includes('-dev.')
+                ? 'publicdev'
+                : 'stable';
+        return { tag: value, releaseChannel, version };
+    }
     throw new Error(`Unsupported cli-update published tag: ${tag}`);
 }
 
@@ -95,15 +99,55 @@ export function resolveCliUpdateSourcePairFromEnv(env: NodeJS.ProcessEnv): CliUp
     };
 }
 
-export function resolveCliUpdateNpmPackageSpec(source: CliUpdateSource): string {
+export function resolveCliUpdatePublishedReleasePlan(
+    source: CliUpdateSource,
+    platform: NodeJS.Platform = process.platform,
+    arch: string = process.arch,
+): Readonly<{
+    tag: string;
+    releaseChannel: 'stable' | 'preview' | 'publicdev';
+    version: string | null;
+    installRootName: 'cli' | 'cli-preview' | 'cli-dev';
+    archivePattern: string;
+    checksumsPattern: string;
+    signaturePattern: string;
+}> {
+    let published: Readonly<{
+        tag: string;
+        releaseChannel: 'stable' | 'preview' | 'publicdev';
+        version: string | null;
+    }>;
     if (source.kind === 'published-channel') {
-        const channel = normalizeCliUpdateChannel(source.ref);
-        return `@happier-dev/cli@${npmDistTagForChannel(channel)}`;
+        const releaseChannel = normalizeCliUpdateChannel(source.ref);
+        const suffix = releaseChannel === 'stable' ? 'stable' : releaseChannel === 'preview' ? 'preview' : 'dev';
+        published = { tag: `cli-${suffix}`, releaseChannel, version: null };
+    } else if (source.kind === 'published-tag') {
+        published = resolveCliUpdatePublishedTag(source.ref);
+    } else {
+        throw new Error(`cli-update source ${source.kind} does not resolve to a published GitHub release`);
     }
-    if (source.kind === 'published-tag') {
-        return `@happier-dev/cli@${resolveCliUpdatePublishedTagNpmRef(source.ref)}`;
+
+    const releaseOs = platform === 'win32' ? 'windows' : platform;
+    if ((releaseOs !== 'linux' && releaseOs !== 'darwin' && releaseOs !== 'windows') || (arch !== 'x64' && arch !== 'arm64')) {
+        throw new Error(`Unsupported cli-update release target: ${platform}-${arch}`);
     }
-    throw new Error(`cli-update source ${source.kind} does not resolve to an npm package spec`);
+    if (releaseOs === 'windows' && arch !== 'x64') {
+        throw new Error(`Unsupported cli-update release target: ${platform}-${arch}`);
+    }
+
+    const versionPattern = published.version ?? '*';
+    const installRootName = published.releaseChannel === 'stable'
+        ? 'cli'
+        : published.releaseChannel === 'preview'
+            ? 'cli-preview'
+            : 'cli-dev';
+    return {
+        ...published,
+        installRootName,
+        archivePattern: `happier-v${versionPattern}-${releaseOs}-${arch}.tar.gz`,
+        checksumsPattern: `checksums-happier-v${versionPattern}.txt`,
+        signaturePattern: `checksums-happier-v${versionPattern}.txt.minisig`,
+    };
 }
 
 export function resolveCliUpdateValidationLaunchEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -117,49 +161,92 @@ function resolveLocalPackPath(sourceRef: string): string {
     return isAbsolute(sourceRef) ? sourceRef : resolve(repoRootDir(), sourceRef);
 }
 
-async function findNewestTarball(dir: string): Promise<string> {
-    const entries = await readdir(dir);
-    const candidates = await Promise.all(
-        entries
-            .filter((entry) => entry.endsWith('.tgz'))
-            .map(async (entry) => {
-                const abs = resolve(dir, entry);
-                return { abs, mtimeMs: (await stat(abs)).mtimeMs };
-            }),
-    );
-    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    const newest = candidates[0]?.abs;
-    if (!newest) {
-        throw new Error(`Expected npm pack to produce a .tgz under ${dir}`);
-    }
-    return newest;
-}
-
-async function packPublishedCliSource(params: {
+async function preparePublishedCliSourceSnapshot(params: {
     testDir: string;
     role: 'from' | 'to';
     source: CliUpdateSource;
     env: NodeJS.ProcessEnv;
-}): Promise<string> {
-    const packDir = resolve(params.testDir, `cli-update-${params.role}-packs`);
-    await rm(packDir, { recursive: true, force: true });
-    await mkdir(packDir, { recursive: true });
+    snapshotDir: string;
+}): Promise<void> {
+    const plan = resolveCliUpdatePublishedReleasePlan(params.source);
+    const assetsDir = resolve(params.testDir, `cli-update-${params.role}-release-assets`);
+    const installDir = resolve(params.testDir, `cli-update-${params.role}-install`);
+    const binDir = resolve(params.testDir, `cli-update-${params.role}-bin`);
+    await rm(assetsDir, { recursive: true, force: true });
+    await rm(installDir, { recursive: true, force: true });
+    await mkdir(assetsDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
 
-    const packageSpec = resolveCliUpdateNpmPackageSpec(params.source);
+    const repo = String(params.env.GITHUB_REPOSITORY ?? 'happier-dev/happier').trim();
+    if (!repo.includes('/')) {
+        throw new Error(`Invalid GITHUB_REPOSITORY for cli-update release validation: ${repo}`);
+    }
     await runLoggedCommand({
-        command: npmCommand(),
-        args: ['pack', packageSpec, '--pack-destination', packDir, '--silent'],
+        command: 'gh',
+        args: [
+            'release', 'download', plan.tag,
+            '--repo', repo,
+            '--dir', assetsDir,
+            '--clobber',
+            '--pattern', plan.archivePattern,
+            '--pattern', plan.checksumsPattern,
+            '--pattern', plan.signaturePattern,
+        ],
         cwd: repoRootDir(),
         env: {
             ...params.env,
-            npm_config_loglevel: 'silent',
+            GH_TOKEN: params.env.GH_TOKEN ?? params.env.GITHUB_TOKEN ?? '',
         },
-        stdoutPath: resolve(params.testDir, `cli-update.${params.role}.npm-pack.stdout.log`),
-        stderrPath: resolve(params.testDir, `cli-update.${params.role}.npm-pack.stderr.log`),
-        timeoutMs: 180_000,
+        stdoutPath: resolve(params.testDir, `cli-update.${params.role}.release-download.stdout.log`),
+        stderrPath: resolve(params.testDir, `cli-update.${params.role}.release-download.stderr.log`),
+        timeoutMs: 600_000,
     });
 
-    return await findNewestTarball(packDir);
+    const installerPath = resolve(
+        repoRootDir(),
+        'apps',
+        'website',
+        'public',
+        process.platform === 'win32' ? 'install.ps1' : 'install.sh',
+    );
+    await runLoggedCommand({
+        command: process.platform === 'win32' ? 'pwsh' : 'bash',
+        args: process.platform === 'win32' ? ['-NoProfile', '-File', installerPath] : [installerPath],
+        cwd: repoRootDir(),
+        env: {
+            ...params.env,
+            HAPPIER_CHANNEL: plan.releaseChannel,
+            HAPPIER_PRODUCT: 'cli',
+            HAPPIER_INSTALL_DIR: installDir,
+            HAPPIER_BIN_DIR: binDir,
+            HAPPIER_WITH_DAEMON: '0',
+            HAPPIER_NO_PATH_UPDATE: '1',
+            HAPPIER_NONINTERACTIVE: '1',
+            HAPPIER_RELEASE_ASSETS_DIR: assetsDir,
+            HAPPIER_INSTALL_VERSION: plan.version ?? '',
+            HAPPIER_GITHUB_REPO: repo,
+        },
+        stdoutPath: resolve(params.testDir, `cli-update.${params.role}.release-install.stdout.log`),
+        stderrPath: resolve(params.testDir, `cli-update.${params.role}.release-install.stderr.log`),
+        timeoutMs: 600_000,
+    });
+
+    const installedPayload = await realpath(resolve(installDir, plan.installRootName, 'current'));
+    if (!existsSync(resolve(installedPayload, 'package-dist', 'index.mjs')) || !existsSync(resolve(installedPayload, 'node_modules'))) {
+        throw new Error(`Installed cli-update release payload is incomplete: ${installedPayload}`);
+    }
+    await rm(params.snapshotDir, { recursive: true, force: true });
+    await rename(installedPayload, params.snapshotDir);
+    await writeFile(
+        resolve(params.snapshotDir, '.cli-dist-snapshot.ready.json'),
+        JSON.stringify({ v: 1, source: 'cli-update-release-validation', role: params.role }, null, 2),
+        'utf8',
+    );
+    await writeFile(
+        resolve(params.snapshotDir, '.cli-update-release-validation-source.json'),
+        JSON.stringify({ source: params.source, release: plan }, null, 2),
+        'utf8',
+    );
 }
 
 async function extractCliPackageTarball(params: {
@@ -254,10 +341,12 @@ export async function prepareCliUpdateSourceSnapshot(params: {
         return snapshotDir;
     }
 
-    const tarballPath =
-        params.source.kind === 'local-pack'
-            ? resolveLocalPackPath(params.source.ref)
-            : await packPublishedCliSource(params);
+    if (params.source.kind === 'published-channel' || params.source.kind === 'published-tag') {
+        await preparePublishedCliSourceSnapshot({ ...params, snapshotDir });
+        return snapshotDir;
+    }
+
+    const tarballPath = resolveLocalPackPath(params.source.ref);
     await extractCliPackageTarball({
         ...params,
         tarballPath,

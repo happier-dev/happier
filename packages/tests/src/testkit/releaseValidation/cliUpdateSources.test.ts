@@ -16,7 +16,7 @@ vi.mock('../process/cliLaunchSpec', () => cliLaunchSpecMock);
 
 import {
     prepareCliUpdateSourceSnapshot,
-    resolveCliUpdateNpmPackageSpec,
+    resolveCliUpdatePublishedReleasePlan,
     resolveCliUpdateSourcePairFromEnv,
     resolveCliUpdateValidationLaunchEnv,
 } from './cliUpdateSources';
@@ -42,11 +42,34 @@ describe('cli update release-validation sources', () => {
         ).toThrow(/complete cli-update source env/i);
     });
 
-    it('resolves published channels and release tags to npm package specs', () => {
-        expect(resolveCliUpdateNpmPackageSpec({ kind: 'published-channel', ref: 'stable' })).toBe('@happier-dev/cli@latest');
-        expect(resolveCliUpdateNpmPackageSpec({ kind: 'published-channel', ref: 'preview' })).toBe('@happier-dev/cli@next');
-        expect(resolveCliUpdateNpmPackageSpec({ kind: 'published-tag', ref: 'cli-preview' })).toBe('@happier-dev/cli@next');
-        expect(resolveCliUpdateNpmPackageSpec({ kind: 'published-tag', ref: 'cli-v1.2.3-preview.4' })).toBe('@happier-dev/cli@1.2.3-preview.4');
+    it('resolves published channels and immutable tags to signed GitHub release assets', () => {
+        expect(resolveCliUpdatePublishedReleasePlan({ kind: 'published-channel', ref: 'dev' }, 'linux', 'x64')).toEqual({
+            tag: 'cli-dev',
+            releaseChannel: 'publicdev',
+            version: null,
+            installRootName: 'cli-dev',
+            archivePattern: 'happier-v*-linux-x64.tar.gz',
+            checksumsPattern: 'checksums-happier-v*.txt',
+            signaturePattern: 'checksums-happier-v*.txt.minisig',
+        });
+        expect(resolveCliUpdatePublishedReleasePlan({ kind: 'published-tag', ref: 'cli-preview' }, 'darwin', 'arm64')).toEqual({
+            tag: 'cli-preview',
+            releaseChannel: 'preview',
+            version: null,
+            installRootName: 'cli-preview',
+            archivePattern: 'happier-v*-darwin-arm64.tar.gz',
+            checksumsPattern: 'checksums-happier-v*.txt',
+            signaturePattern: 'checksums-happier-v*.txt.minisig',
+        });
+        expect(resolveCliUpdatePublishedReleasePlan({ kind: 'published-tag', ref: 'cli-v1.2.3-preview.4' }, 'win32', 'x64')).toEqual({
+            tag: 'cli-v1.2.3-preview.4',
+            releaseChannel: 'preview',
+            version: '1.2.3-preview.4',
+            installRootName: 'cli-preview',
+            archivePattern: 'happier-v1.2.3-preview.4-windows-x64.tar.gz',
+            checksumsPattern: 'checksums-happier-v1.2.3-preview.4.txt',
+            signaturePattern: 'checksums-happier-v1.2.3-preview.4.txt.minisig',
+        });
     });
 
     it('uses dist/package launch mode rather than source-entrypoint mode for update validation', () => {
