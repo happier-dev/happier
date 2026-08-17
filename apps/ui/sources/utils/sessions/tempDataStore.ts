@@ -45,8 +45,6 @@ export interface NewSessionData {
      * belongs to one authoring attempt, not to the user's saved configuration.
      */
     sourceContext?: SessionSpawnSourceContextV1;
-    /** Display-only quotation of the message at the cutoff. */
-    sourceContextPreview?: string;
     /** The source Session's server; V1 requires the target to match it. */
     sourceContextServerId?: string | null;
 }

@@ -39,7 +39,7 @@ function normalize(value: string | null | undefined): string | null {
  */
 export function useNewSessionSourceContext(params: Readonly<{
     /** The one-shot navigation payload; already read once by the screen model. */
-    seed: Pick<NewSessionData, 'sourceContext' | 'sourceContextPreview' | 'sourceContextServerId'> | null | undefined;
+    seed: Pick<NewSessionData, 'sourceContext' | 'sourceContextServerId'> | null | undefined;
     targetServerId: string | null;
 }>): NewSessionSourceContextState {
     const seededSourceContext = params.seed?.sourceContext ?? null;

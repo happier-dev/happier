@@ -26,8 +26,6 @@ export function buildNewSessionSourceContextNavigation(params: Readonly<{
     machineId: string | null;
     /** Restored user text when the fork point is an editable user message. */
     restoredDraftText?: string | null;
-    /** Display-only quotation of the message at the cutoff. */
-    sourcePreview?: string | null;
 }>): NewSessionSourceContextNavigation {
     const seed = buildNewSessionTempDataFromSessionConfiguration({
         session: params.session,
@@ -36,10 +34,6 @@ export function buildNewSessionSourceContextNavigation(params: Readonly<{
     const restoredDraftText = typeof params.restoredDraftText === 'string' && params.restoredDraftText.trim().length > 0
         ? params.restoredDraftText
         : null;
-    const sourcePreview = typeof params.sourcePreview === 'string' && params.sourcePreview.trim().length > 0
-        ? params.sourcePreview
-        : null;
-
     const dataId = storeTempData({
         ...seed,
         ...(restoredDraftText ? { prompt: restoredDraftText } : {}),
@@ -49,7 +43,6 @@ export function buildNewSessionSourceContextNavigation(params: Readonly<{
             sourceSessionId: params.sourceSessionId,
             forkPoint: params.forkPoint,
         },
-        ...(sourcePreview ? { sourceContextPreview: sourcePreview } : {}),
         sourceContextServerId: params.serverId,
     });
 

@@ -83,7 +83,6 @@ export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowP
                 serverId: params.serverId,
                 machineId: params.machineId,
                 restoredDraftText: params.restoredDraftText ?? null,
-                sourcePreview: params.sourcePreview ?? null,
             }));
         },
     };
