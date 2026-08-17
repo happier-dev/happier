@@ -223,6 +223,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
         try {
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           let providerText = text;
+          let settleReplaySeedOnProviderAcceptance: (() => Promise<unknown>) | null = null;
           if (typeof session.getMetadataSnapshot === 'function') {
             try {
               if (!isCurrentBinding(session, messageBindingGeneration)) return;
@@ -264,6 +265,9 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               if (!isCurrentBinding(session, messageBindingGeneration)) return;
               didReplaySeedBootstrapForSteer = true;
               providerText = seedResolution.providerPrompt;
+              if (seedResolution.seedApplied) {
+                settleReplaySeedOnProviderAcceptance = seedResolution.settleReplaySeedOnProviderAcceptance;
+              }
             } catch {
               if (!isCurrentBinding(session, messageBindingGeneration)) return;
               // Best-effort only; fall back to steering the raw user text.
@@ -276,6 +280,9 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           } else {
             await steer.steerText(providerText, deliveryIdentity.steerOptions);
           }
+          // The steered text — seed included — is with the provider only now. A steer that
+          // threw above bounces to the queue, and the seed must survive for that retry.
+          if (settleReplaySeedOnProviderAcceptance) await settleReplaySeedOnProviderAcceptance();
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           return;
         } catch {

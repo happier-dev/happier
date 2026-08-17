@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveCodexQueuedPromptForDispatch } from './resolveCodexQueuedPromptForDispatch';
 
 describe('resolveCodexQueuedPromptForDispatch', () => {
-  it('prefixes replaySeedV1 and consumes it (refreshing metadata once on first use)', async () => {
+  it('prefixes replaySeedV1 and retires it only once Codex accepted the prompt', async () => {
     const calls: string[] = [];
     let metadata: any = {};
 
@@ -36,6 +36,9 @@ describe('resolveCodexQueuedPromptForDispatch', () => {
 
     expect(res.didBootstrap).toBe(true);
     expect(res.text).toBe('SEED\n\nhello');
+    expect(calls).toEqual(['refresh']);
+
+    await res.settleReplaySeedOnProviderAcceptance();
     expect(calls).toEqual(['refresh', 'consume']);
   });
 });

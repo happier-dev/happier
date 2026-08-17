@@ -1,5 +1,6 @@
 import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
 import type { StructuredInputCatalogReaders } from '@/agent/runtime/prompt/resolveStructuredInputProviderContext';
+import type { ReplaySeedSettlementResultV1 } from '@/agent/runtime/replaySeed/replaySeedV1';
 
 /**
  * Codex's adapter onto the shared prompt-finalization owner. Codex is remote-dev's only
@@ -19,7 +20,14 @@ export async function resolveCodexQueuedPromptForDispatch(params: Readonly<{
   didBootstrap: boolean;
   metadata?: unknown;
   catalogs?: StructuredInputCatalogReaders;
-}>): Promise<{ text: string; metadata: unknown; didBootstrap: boolean }> {
+}>): Promise<{
+  text: string;
+  metadata: unknown;
+  didBootstrap: boolean;
+  seedApplied: boolean;
+  /** Call only after Codex accepted this prompt; see the replay-seed owner. */
+  settleReplaySeedOnProviderAcceptance: () => Promise<ReplaySeedSettlementResultV1>;
+}> {
   const resolution = await resolveProviderPromptForDispatch({
     session: params.sessionClient,
     userText: params.text,
@@ -31,5 +39,11 @@ export async function resolveCodexQueuedPromptForDispatch(params: Readonly<{
     ...(params.catalogs ? { catalogs: params.catalogs } : {}),
   });
 
-  return { text: resolution.providerPrompt, metadata: resolution.meta, didBootstrap: true };
+  return {
+    text: resolution.providerPrompt,
+    metadata: resolution.meta,
+    didBootstrap: true,
+    seedApplied: resolution.seedApplied,
+    settleReplaySeedOnProviderAcceptance: resolution.settleReplaySeedOnProviderAcceptance,
+  };
 }

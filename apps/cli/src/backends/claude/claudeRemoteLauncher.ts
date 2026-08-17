@@ -1328,6 +1328,16 @@ export async function claudeRemoteLauncher(
             });
             applyActiveLaunchPermissionMetadata = applyUnifiedTerminalPermissionMetadata;
             let didReplaySeedBootstrap = false;
+            // Retiring the replay seed is scoped to Claude accepting the prompt it was prefixed
+            // to, so the seed survives a prompt the provider never received.
+            let pendingReplaySeedSettlement: (() => Promise<unknown>) | null = null;
+            const settleReplaySeedOnProviderAcceptance = (): void => {
+                const settle = pendingReplaySeedSettlement;
+                if (!settle) return;
+                pendingReplaySeedSettlement = null;
+                // The seed owner reports its own failures and never rejects.
+                void settle();
+            };
             let unifiedTerminalLaunchOptionsHash: string | null = null;
             let lastUnifiedTerminalRestartOnlyNoticeHash: string | null = null;
             let readyTurnContext: ReadyNotificationTurnContext | undefined;
@@ -1622,6 +1632,11 @@ export async function claudeRemoteLauncher(
                             didBootstrap: didReplaySeedBootstrap,
                         });
                         didReplaySeedBootstrap = replaySeedResolution.didBootstrap;
+                        if (replaySeedResolution.seedApplied) {
+                            // Held until Claude reports acceptance. A prompt that never reaches the
+                            // provider must leave the seed live so a later one still carries it.
+                            pendingReplaySeedSettlement = replaySeedResolution.settleReplaySeedOnProviderAcceptance;
+                        }
                         if (msg.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(nextMode)) {
                             await beginPromptTurn();
                         } else {
@@ -1804,6 +1819,7 @@ export async function claudeRemoteLauncher(
                         appliedModelId?: string;
                     }) => {
                         remoteProviderInputOutcomes?.observeAccepted(userMessageLocalIds, appliedModelId);
+                        settleReplaySeedOnProviderAcceptance();
                         resetUnifiedParkRelaunchBudget();
                     },
                     onPromptTransportFailure: (failure: Readonly<{
@@ -2000,6 +2016,7 @@ export async function claudeRemoteLauncher(
                                 appliedModelId?: string;
                             }) => {
                                 providerInputOutcomes.observeAccepted({ userMessageLocalIds, appliedModelId });
+                                settleReplaySeedOnProviderAcceptance();
                                 resetUnifiedParkRelaunchBudget();
                             },
                             resolvePromptDeliveryState: (batch) => {

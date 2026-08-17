@@ -1138,6 +1138,10 @@ export async function runCodex(opts: {
                             userMessageSeq,
                         });
                     });
+                    if (dispatchResolution.seedApplied) {
+                        // Codex has the steered prompt, seed included: only now may it be retired.
+                        await dispatchResolution.settleReplaySeedOnProviderAcceptance();
+                    }
                 } catch (error) {
                     const localIds = normalizeProviderPromptLocalIds([message.localId ?? null]);
                     if (didChangePermissionMode && permissionHandlerApplyGenerationForSteer !== null) {
@@ -2343,6 +2347,19 @@ export async function runCodex(opts: {
                 const turnToken = session.beginTurnAssistantTextSnapshot({ startSeqExclusive });
                 readyTurnContext = { turnToken, startSeqExclusive };
                 let resolvedProviderDispatch: Readonly<{ text: string; metadata: unknown }> | null = null;
+                // Retiring the replay seed is scoped to Codex actually accepting the prompt it
+                // was prefixed to; every path that bails before acceptance leaves it live.
+                // Null unless a seed was actually applied, so an ordinary turn's dispatch adds
+                // no extra await and its scheduling is untouched.
+                let settleResolvedReplaySeed: (() => Promise<unknown>) | null = null;
+                // Returns null when there is nothing to settle, so the caller adds no await
+                // (and no microtask tick) to an ordinary turn's dispatch path.
+                const settleResolvedReplaySeedIfApplied = (): Promise<unknown> | null => {
+                    const settle = settleResolvedReplaySeed;
+                    if (!settle) return null;
+                    settleResolvedReplaySeed = null;
+                    return settle();
+                };
                 // Prompt finalization runs once per queued message and owns BOTH the provider
                 // prompt text and the dispatch metadata: every Codex send/steer below reads
                 // `metadata` from here, never from `message.mode.promptMetadata` directly, so
@@ -2359,6 +2376,9 @@ export async function runCodex(opts: {
                         catalogs: codexDispatchCatalogReaders(),
                     });
                     didReplaySeedBootstrap = dispatchResolution.didBootstrap;
+                    if (dispatchResolution.seedApplied) {
+                        settleResolvedReplaySeed = dispatchResolution.settleReplaySeedOnProviderAcceptance;
+                    }
                     resolvedProviderDispatch = { text: dispatchResolution.text, metadata: dispatchResolution.metadata };
                     return resolvedProviderDispatch;
                 };
@@ -2390,6 +2410,8 @@ export async function runCodex(opts: {
                             if (shouldLogAcpDebug) {
                                 logger.debug('[CodexAppServer] steerPrompt complete for queued message while turn is in flight');
                             }
+                            const seedSettlement = settleResolvedReplaySeedIfApplied();
+                            if (seedSettlement) await seedSettlement;
                             continue;
                         } catch (error) {
                             if (!isCodexAppServerNoActiveTurnToSteerError(error)) {
@@ -2705,6 +2727,8 @@ export async function runCodex(opts: {
                     publishCodexThreadIdToMetadata();
                 }
                 confirmProviderAcceptedPrompt(message, message.mode.model ?? null);
+                const seedSettlement = settleResolvedReplaySeedIfApplied();
+                if (seedSettlement) await seedSettlement;
                 }
             } catch (error) {
                 if (shouldBlockProviderDeliveryOnTurnFailure) {

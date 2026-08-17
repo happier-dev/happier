@@ -1,3 +1,5 @@
+import { logger } from '@/ui/logger';
+
 export type ReplaySeedV1 = {
   v: 1;
   seedText: string;
@@ -61,6 +63,33 @@ export function createReplaySeedV1ConsumeUpdater(params: Readonly<{ localId: str
   };
 }
 
+export type ReplaySeedSettlementResultV1 =
+  /** No seed was applied to this prompt, or this resolution already settled. */
+  | Readonly<{ status: 'not_applicable' }>
+  /** The seed is retired and will not be applied to another prompt. */
+  | Readonly<{ status: 'retired' }>
+  /** Retirement did not happen; the seed is still live and may be applied again. */
+  | Readonly<{ status: 'failed'; error: unknown }>;
+
+export type ResolvedProviderPromptWithReplaySeed = Readonly<{
+  providerPrompt: string;
+  seedApplied: boolean;
+  seedText: string;
+  /**
+   * Retire the seed. Call this only once the provider has ACCEPTED the prompt this
+   * seed was prefixed to.
+   *
+   * A prompt that was rejected before any provider effect must not call it: the seed
+   * is the target runtime's only carry-over context, and retiring it at composition
+   * time destroys that context whenever the prompt never reaches the provider.
+   *
+   * An ambiguous delivery (the effect may or may not have occurred) also does not call
+   * it. The seed stays live, so the worst case is the runtime seeing the carry-over
+   * context twice — strictly safer than a runtime that receives none of it.
+   */
+  settleReplaySeedOnProviderAcceptance: () => Promise<ReplaySeedSettlementResultV1>;
+}>;
+
 export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   session: {
     getMetadataSnapshot: () => unknown;
@@ -73,7 +102,7 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   localId: string | null;
   nowMs: number;
   refreshMetadataBeforeRead: boolean;
-}>): Promise<{ providerPrompt: string; seedApplied: boolean; seedText: string }> {
+}>): Promise<ResolvedProviderPromptWithReplaySeed> {
   if (params.refreshMetadataBeforeRead && typeof params.session.refreshSessionSnapshotFromServerBestEffort === 'function') {
     try {
       await params.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
@@ -94,17 +123,30 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
     allowSeed: params.allowSeed,
   });
 
-  if (seedResolution.shouldConsumeSeed) {
+  let settled = false;
+  const settleReplaySeedOnProviderAcceptance = async (): Promise<ReplaySeedSettlementResultV1> => {
+    if (!seedResolution.shouldConsumeSeed || settled) return { status: 'not_applicable' };
+    settled = true;
     try {
       await params.session.updateMetadata(createReplaySeedV1ConsumeUpdater({ localId: params.localId, nowMs: params.nowMs }));
-    } catch {
-      // Best-effort: avoid blocking the turn if metadata updates are unavailable.
+      return { status: 'retired' };
+    } catch (error) {
+      // The seed is still live, so let a later prompt retire it rather than leaving this
+      // resolution permanently settled. A silent failure here would either lose the
+      // carry-over context or replay it without anyone knowing, so it is reported.
+      settled = false;
+      logger.warn(
+        '[ReplaySeed] Failed to retire the replay seed after provider acceptance; it stays live and may be applied again',
+        error,
+      );
+      return { status: 'failed', error };
     }
-  }
+  };
 
   return {
     providerPrompt: seedResolution.providerPrompt,
     seedApplied: seedResolution.shouldConsumeSeed,
     seedText: seedResolution.seedText,
+    settleReplaySeedOnProviderAcceptance,
   };
 }

@@ -1109,6 +1109,10 @@ export async function runGemini(opts: {
           error.name = 'AbortError';
           throw error;
         }
+        if (replaySeedResolution.seedApplied) {
+          // Gemini has the prompt, seed included: only now may the seed be retired.
+          await replaySeedResolution.settleReplaySeedOnProviderAcceptance();
+        }
         promptTurnOutcome = dispatchOutcome.value;
         
         // Mark as not first message after sending prompt

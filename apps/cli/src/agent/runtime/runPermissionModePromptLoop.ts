@@ -526,6 +526,12 @@ export async function runPermissionModePromptLoop(opts: {
           await opts.runtime.sendPrompt(providerPrompt);
           confirmProviderAccepted();
         }
+        if (seedResolution.seedApplied) {
+          // Only now does the seed's carry-over context actually sit with the provider,
+          // so this is the only safe point to retire it. Guarded so an ordinary turn
+          // adds no extra await to the dispatch path.
+          await seedResolution.settleReplaySeedOnProviderAcceptance();
+        }
       };
       if (opts.inputConsumer) {
         const outcome = await opts.inputConsumer.runProviderInputDispatch({

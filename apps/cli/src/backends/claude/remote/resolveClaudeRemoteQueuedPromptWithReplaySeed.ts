@@ -1,4 +1,5 @@
 import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
+import type { ReplaySeedSettlementResultV1 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import type { EnhancedMode } from '@/backends/claude/loop';
 
 export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Readonly<{
@@ -12,7 +13,13 @@ export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Read
     mode: Pick<EnhancedMode, 'localId' | 'replaySeedAllowed'>;
   }>;
   didBootstrap: boolean;
-}>): Promise<{ message: string; didBootstrap: boolean }> {
+}>): Promise<{
+  message: string;
+  didBootstrap: boolean;
+  seedApplied: boolean;
+  /** Call only after Claude accepted this prompt; see the replay-seed owner. */
+  settleReplaySeedOnProviderAcceptance: () => Promise<ReplaySeedSettlementResultV1>;
+}> {
   // Claude has no structured-input consumer, but prompt finalization has exactly one owner
   // (D-21a): no second module may turn a queued message into a provider prompt.
   const resolution = await resolveProviderPromptForDispatch({
@@ -27,5 +34,7 @@ export async function resolveClaudeRemoteQueuedPromptWithReplaySeed(params: Read
   return {
     message: resolution.providerPrompt,
     didBootstrap: true,
+    seedApplied: resolution.seedApplied,
+    settleReplaySeedOnProviderAcceptance: resolution.settleReplaySeedOnProviderAcceptance,
   };
 }

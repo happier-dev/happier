@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveClaudeRemoteQueuedPromptWithReplaySeed } from './resolveClaudeRemoteQueuedPromptWithReplaySeed';
 
 describe('resolveClaudeRemoteQueuedPromptWithReplaySeed', () => {
-  it('prefixes replaySeedV1 and consumes it (refreshing metadata once on first use)', async () => {
+  it('prefixes replaySeedV1 and retires it only once Claude accepted the prompt', async () => {
     const calls: string[] = [];
     let metadata: any = {};
 
@@ -37,6 +37,10 @@ describe('resolveClaudeRemoteQueuedPromptWithReplaySeed', () => {
 
     expect(res.didBootstrap).toBe(true);
     expect(res.message).toBe('SEED\n\nhello');
+    expect(res.seedApplied).toBe(true);
+    expect(calls).toEqual(['refresh']);
+
+    await res.settleReplaySeedOnProviderAcceptance();
     expect(calls).toEqual(['refresh', 'consume']);
   });
 });

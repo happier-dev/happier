@@ -11,6 +11,7 @@ import {
     ResolvedMentionContextTooLargeError,
     resolveProviderPromptForDispatch,
 } from './resolveProviderPromptForDispatch';
+import { configuration } from '@/configuration';
 
 /**
  * D-27's total bound, at the one prompt-finalization owner.
@@ -137,8 +138,9 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
     });
 
     it('does not burn the replay seed on a rejected send', async () => {
-        // Positive control FIRST: with the same pending seed, an ADMITTED send consumes it. Without
-        // this, "not called" would also be satisfied by a session that has no seed to burn.
+        // Positive control FIRST: with the same pending seed, an ADMITTED send retires it once the
+        // provider accepts. Without this, "not called" would also be satisfied by a session that
+        // has no seed to burn.
         const admitted = createSession({ withPendingSeed: true });
         const admittedResolution = await resolveProviderPromptForDispatch({
             session: admitted.session,
@@ -151,6 +153,8 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
             catalogs: skillCatalog('Review a diff'),
         });
         expect(admittedResolution.seedApplied).toBe(true);
+        expect(admitted.updateMetadata).not.toHaveBeenCalled();
+        await admittedResolution.settleReplaySeedOnProviderAcceptance();
         expect(admitted.updateMetadata).toHaveBeenCalledTimes(1);
 
         const { session, updateMetadata } = createSession({ withPendingSeed: true });
@@ -177,6 +181,60 @@ describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound
         expect(resolution.providerPrompt).toContain('sess-referenced-1');
         const envelope = (resolution.meta as Record<string, any>)[HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1];
         expect(envelope.skillMentions).toEqual([expect.objectContaining({ name: 'review' })]);
+    });
+
+    it('spends ONE total on the replay seed and the Session-reference block together', async () => {
+        // The seed's cap is enforced when the seed is built; the reference block is appended
+        // here. Without one shared total the prompt exceeds the configured seed cap by up to
+        // the reference bound every time a replayed session carries an @session mention.
+        const { session } = createSession({ withPendingSeed: true });
+        const oversizedSeed = 'S'.repeat(configuration.replaySeedMaxChars);
+        session.getMetadataSnapshot = () => ({
+            replaySeedV1: {
+                v: 1,
+                seedText: oversizedSeed,
+                sourceSessionId: 'sess-source-1',
+                sourceCutoffSeqInclusive: 7,
+                createdAtMs: 500,
+            },
+        });
+
+        const resolution = await resolveProviderPromptForDispatch({
+            session,
+            userText: 'do the thing',
+            allowSeed: true,
+            localId: 'local-1',
+            nowMs: 1_000,
+            refreshMetadataBeforeRead: false,
+            meta: metaWith([SESSION_MENTION]),
+        });
+
+        expect(resolution.seedApplied).toBe(true);
+        expect(resolution.providerPrompt).toContain('<happier_session_reference>');
+        expect(resolution.providerPrompt).toContain('sess-referenced-1');
+        // The seed plus the reference block fit the single configured total. The user's own
+        // message is not part of that budget, so it and its joiner are removed before measuring.
+        const brief = resolution.providerPrompt.replace('\n\ndo the thing\n\n', '\n\n');
+        expect(brief.length).toBeLessThanOrEqual(configuration.replaySeedMaxChars);
+        // The loss is stated, never silent.
+        expect(resolution.providerPrompt).toContain('omitted to fit the replay budget');
+    });
+
+    it('leaves the reference block whole and does not touch a prompt with no applied seed', async () => {
+        const { session } = createSession();
+        const resolution = await resolveProviderPromptForDispatch({
+            session,
+            userText: 'do the thing',
+            allowSeed: true,
+            localId: 'local-1',
+            nowMs: 1_000,
+            refreshMetadataBeforeRead: false,
+            meta: metaWith([SESSION_MENTION]),
+        });
+
+        expect(resolution.seedApplied).toBe(false);
+        expect(resolution.providerPrompt.startsWith('do the thing\n\n<happier_session_reference>')).toBe(true);
+        expect(resolution.providerPrompt).toContain('sess-referenced-1');
     });
 
     it('leaves a message with no references unbounded and unmeasured (legacy path untouched)', async () => {
