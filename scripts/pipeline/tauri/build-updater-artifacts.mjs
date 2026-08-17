@@ -373,6 +373,8 @@ function main() {
       'build-version': { type: 'string', default: '' },
       'tauri-target': { type: 'string', default: '' },
       'ui-dir': { type: 'string', default: 'apps/ui' },
+      'no-bundle': { type: 'boolean', default: false },
+      'bundle-only': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -396,6 +398,11 @@ function main() {
 
   const tauriTarget = String(values['tauri-target'] ?? '').trim();
   const uiDir = String(values['ui-dir'] ?? '').trim() || 'apps/ui';
+  const noBundle = values['no-bundle'] === true;
+  const bundleOnly = values['bundle-only'] === true;
+  if (noBundle && bundleOnly) {
+    fail('--no-bundle and --bundle-only are mutually exclusive');
+  }
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
 
@@ -445,7 +452,7 @@ function main() {
     configs.push('--config', linuxHsetupOverridePath);
   }
 
-  const signingKeyValue = String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
+  const signingKeyValue = noBundle ? '' : String(process.env.TAURI_SIGNING_PRIVATE_KEY ?? '').trim();
   const signingKeyPassword = resolveTauriSigningPrivateKeyPassword(process.env);
   const signingKeyPath = signingKeyValue
     ? ensureTauriSigningKeyFile({ tmpRoot, keyValue: signingKeyValue, dryRun: opts.dryRun })
@@ -460,6 +467,9 @@ function main() {
     }
     configs.push('--config', updaterOverridePath);
   }
+  if (bundleOnly && !signingKeyPath && !opts.dryRun) {
+    fail('TAURI_SIGNING_PRIVATE_KEY is required for --bundle-only updater finalization');
+  }
 
   // Tauri `beforeBuildCommand` uses Corepack internally (`corepack yarn -s tauri:prepare:build`) which
   // has proven flaky on Windows runners (Corepack tries to spawn `yarn` and fails). We avoid that
@@ -472,6 +482,16 @@ function main() {
     fs.writeFileSync(beforeBuildOverridePath, `${JSON.stringify(payload)}\n`, 'utf8');
   }
   configs.push('--config', beforeBuildOverridePath);
+
+  if (bundleOnly) {
+    const beforeBundleOverridePath = tempFile(tmpRoot, 'tauri.beforeBundle.override.json');
+    if (opts.dryRun) {
+      console.log(`[dry-run] write ${beforeBundleOverridePath} (disable beforeBundleCommand)`);
+    } else {
+      fs.writeFileSync(beforeBundleOverridePath, `${JSON.stringify({ build: { beforeBundleCommand: '' } })}\n`, 'utf8');
+    }
+    configs.push('--config', beforeBundleOverridePath);
+  }
 
   const appleSigningIdentity = String(process.env.APPLE_SIGNING_IDENTITY ?? '').trim();
   if (process.platform === 'darwin' && appleSigningIdentity) {
@@ -495,18 +515,18 @@ function main() {
   };
 
   // Build the frontend assets once, outside of Tauri's internal beforeBuild hook.
-  if (platform === 'win32') {
+  if (!bundleOnly && platform === 'win32') {
     const npm = resolveTauriPrepareBuildInvocation({
       platform,
       nodeExecPath: process.execPath,
       npmExecPath: process.env.npm_execpath,
     });
     run(opts, npm.cmd, npm.args, { cwd: absUiDir, env: baseTauriEnv });
-  } else {
+  } else if (!bundleOnly) {
     run(opts, yarn.cmd, [...yarn.prefixArgs, '-s', 'tauri:prepare:build'], { cwd: absUiDir, env: baseTauriEnv });
   }
 
-  if (platform === 'linux' && shouldRunLinuxHsetupLddPreflight()) {
+  if (!bundleOnly && platform === 'linux' && shouldRunLinuxHsetupLddPreflight()) {
     const hsetupPath = path.join(repoRoot, 'apps', 'bootstrap', 'dist', 'bin', 'hsetup');
     try {
       console.log(`[pipeline] tauri linux preflight: file ${hsetupPath}`);
@@ -536,7 +556,7 @@ function main() {
 
     if (platform === 'win32') {
       const tauri = resolveTauriCliInvocation({ platform, absUiDir });
-      run(opts, tauri.cmd, ['build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs], {
+      run(opts, tauri.cmd, [bundleOnly ? 'bundle' : 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
         cwd: absUiDir,
         env: baseTauriEnv,
       });
@@ -545,7 +565,7 @@ function main() {
         run(
           opts,
           yarn.cmd,
-          [...yarn.prefixArgs, 'tauri', 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs],
+          [...yarn.prefixArgs, 'tauri', bundleOnly ? 'bundle' : 'build', '-v', '--config', configPath, '--config', versionOverride, ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])],
           {
             cwd: absUiDir,
             env: baseTauriEnv,
@@ -561,14 +581,14 @@ function main() {
 
   if (platform === 'win32') {
     const tauri = resolveTauriCliInvocation({ platform, absUiDir });
-    run(opts, tauri.cmd, ['build', '-v', ...configs, ...targetArgs], {
+    run(opts, tauri.cmd, [bundleOnly ? 'bundle' : 'build', '-v', ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
       cwd: absUiDir,
       env: baseTauriEnv,
     });
     return;
   }
 
-  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', 'build', '-v', ...configs, ...targetArgs], {
+  run(opts, yarn.cmd, [...yarn.prefixArgs, 'tauri', bundleOnly ? 'bundle' : 'build', '-v', ...configs, ...targetArgs, ...(noBundle ? ['--no-bundle'] : [])], {
     cwd: absUiDir,
     env: baseTauriEnv,
   });

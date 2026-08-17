@@ -57,6 +57,8 @@ export const COMMAND_HELP_TAURI = {
       '--build-version <semver>          Optional.',
       '--tauri-target <target>           Optional; build a single target.',
       '--ui-dir <dir>                    (default: apps/ui).',
+      '--no-bundle                      Build candidate binaries without bundles.',
+      '--bundle-only                    Bundle already-built candidate binaries.',
       '--dry-run',
       '--secrets-source <auto|env|keychain>',
       '--keychain-service <name>          (default: happier/pipeline).',
@@ -64,6 +66,32 @@ export const COMMAND_HELP_TAURI = {
     ],
     bullets: ['Requires TAURI_SIGNING_PRIVATE_KEY (and Apple signing/notarization secrets for macOS).'],
     examples: ['node scripts/pipeline/run.mjs tauri-build-updater-artifacts --environment dev --build-version 0.1.0-dev.123 --ui-dir apps/ui'],
+  },
+
+  'tauri-bundle-candidate': {
+    summary: 'Pack or materialize a strictly bound Tauri candidate-binary envelope.',
+    usage:
+      'node scripts/pipeline/run.mjs tauri-bundle-candidate --mode <pack|materialize> --platform-key <key> [binding and path options]',
+    options: [
+      '--mode <pack|materialize>         Required.',
+      '--platform-key <key>              Required.',
+      '--source-sha <sha>                Required for pack.',
+      '--expected-source-sha <sha>       Required for materialize.',
+      '--environment <name>              Required for pack.',
+      '--expected-environment <name>     Required for materialize.',
+      '--ui-version <semver>             Required for pack.',
+      '--expected-ui-version <semver>    Required for materialize.',
+      '--build-version <semver>          Required for pack.',
+      '--expected-build-version <semver> Required for materialize.',
+      '--tauri-target <target>           Optional.',
+      '--ui-dir <dir>                    (default: apps/ui).',
+      '--out-dir <dir>                   Required for pack.',
+      '--candidate-dir <dir>             Required for materialize.',
+    ],
+    bullets: ['Carries only the fixed candidate binary layout across the trusted finalization boundary.'],
+    examples: [
+      'node scripts/pipeline/run.mjs tauri-bundle-candidate --mode pack --platform-key linux-x86_64 --source-sha 0123456789012345678901234567890123456789 --environment dev --ui-version 0.1.0 --build-version 0.1.0-dev.1 --out-dir dist/tauri/candidate',
+    ],
   },
 
   'tauri-notarize-macos-artifacts': {
@@ -79,6 +107,17 @@ export const COMMAND_HELP_TAURI = {
     ],
     bullets: ['Requires Apple notarization credentials (API key + team/issuer).'],
     examples: ['node scripts/pipeline/run.mjs tauri-notarize-macos-artifacts --ui-dir apps/ui'],
+  },
+
+  'tauri-sign-updater-artifacts': {
+    summary: 'Replace updater signature files using the configured Tauri private key.',
+    usage: 'node scripts/pipeline/run.mjs tauri-sign-updater-artifacts [--ui-dir <dir>] [--tauri-target <target>]',
+    options: [
+      '--ui-dir <dir>                    (default: apps/ui).',
+      '--tauri-target <target>           Optional.',
+    ],
+    bullets: ['Requires TAURI_SIGNING_PRIVATE_KEY and rewrites signatures for existing updater bundles.'],
+    examples: ['node scripts/pipeline/run.mjs tauri-sign-updater-artifacts --ui-dir apps/ui'],
   },
 
   'tauri-collect-updater-artifacts': {

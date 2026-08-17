@@ -55,10 +55,9 @@ on:
           - ota
           - native
           - native_submit
-      expo_update_message:
-        description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
-        required: false
-        default: ""
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID"
+        required: true
         type: string
       desktop_mode:
         description: "Deploy (Desktop) — Desktop bundle mode"
@@ -110,10 +109,9 @@ on:
         required: false
         default: none
         type: string
-      expo_update_message:
-        description: "Deploy (Expo) — Optional EAS update message (ota); defaults to a generated message when unset"
-        required: false
-        default: ""
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID"
+        required: true
         type: string
       desktop_mode:
         description: "Deploy (Desktop) — Desktop bundle mode"
@@ -132,14 +130,41 @@ env:
   EXPO_UNSTABLE_WEB_MODAL: "1"
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: promote-ui.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -147,213 +172,409 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  promote:
+  resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
-    environment: release-shared
-    env:
-      EAS_CLI_VERSION: 18.0.1
+    permissions:
+      contents: read
     outputs:
-      source_ref: ${{ steps.resolve.outputs.ref }}
-      release_sha: ${{ steps.release_sha.outputs.sha }}
-      desktop_mode: ${{ inputs.desktop_mode }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
     steps:
-      - name: Resolve source ref
-        id: resolve
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Enforce trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
-          env_name="${{ inputs.environment }}"
-          src="${{ inputs.source_ref }}"
-          if [ "$src" = "auto" ]; then
-            if [ "$env_name" = "preview" ]; then
-              src="preview"
-            else
-              src="main"
-            fi
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-ui.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-ui.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-ui.yml@refs/heads/main") ;;
+            *) echo "Untrusted promote-ui workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+      - name: Resolve source ref
+        id: resolve
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          ALLOW_CROSS_PROMOTE: ${{ inputs.allow_cross_promote }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          src="$SOURCE_REF"
+          if [ "$src" = auto ]; then
+            if [ "$DEPLOY_ENVIRONMENT" = preview ]; then src=preview; else src=main; fi
           fi
-
-          # Guardrails: allow using non-default source ref only when explicitly confirmed.
-          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "${{ inputs.allow_cross_promote }}" != "true" ]; then
+          if [ "$DEPLOY_ENVIRONMENT" = production ] && [ "$src" != main ] && [ "$ALLOW_CROSS_PROMOTE" != true ]; then
             echo "Refusing to promote '$src' to production without allow_cross_promote=true." >&2
             exit 1
           fi
-
-          # Bumps require a real branch target we can push back to.
-          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "preview" ] && [ "$src" != "dev" ]; then
-            echo "Refusing to bump versions when source_ref is not a branch (main/preview/dev). Set bump=none or use a branch." >&2
+          if [ "$BUMP" != none ] && [ "$src" != main ] && [ "$src" != preview ] && [ "$src" != dev ]; then
+            echo "Refusing to bump versions when source_ref is not a branch (main/preview/dev)." >&2
             exit 1
           fi
-
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
-
+          if [[ "$src" == *$'\n'* || "$src" == *$'\r'* ]] || ! git check-ref-format --branch "$src" >/dev/null 2>&1; then
+            if [[ ! "$src" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "Invalid promotion source ref." >&2
+              exit 1
+            fi
+          fi
+          echo "source_ref=$src" >> "$GITHUB_OUTPUT"
       - name: Enforce trusted refs for manual dispatch
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
-            exit 0
-          fi
-          case "${GITHUB_REF_NAME}" in
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then exit 0; fi
+          case "$GITHUB_REF_NAME" in
             dev|preview|main) ;;
-            *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
-              exit 1
-              ;;
+            *) echo "Refusing workflow_dispatch from untrusted ref '$GITHUB_REF_NAME'." >&2; exit 1 ;;
           esac
+      - name: Bind exact authorized source SHA
+        id: candidate
+        env:
+          SOURCE_REF: ${{ steps.resolve.outputs.source_ref }}
+        run: |
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "$SOURCE_REF" --remote origin --github-output "$GITHUB_OUTPUT"
 
+  apply_bump:
+    needs: [release_actor_guard, resolve_source]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: write
+    outputs:
+      release_sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout exact candidate as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.resolve_source.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+      - name: Apply app version bump with trusted control
+        id: bump
+        working-directory: candidate
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          out="$(node "$GITHUB_WORKSPACE/scripts/pipeline/release/bump-version.mjs" --component app --bump "$BUMP")"
+          if [ "$out" = SKIP ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+            echo "version=$out" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit and push version bump with trusted control
+        if: steps.bump.outputs.skipped != 'true'
+        working-directory: candidate
+        env:
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+          SOURCE_REF: ${{ needs.resolve_source.outputs.source_ref }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          node "$GITHUB_WORKSPACE/scripts/pipeline/github/commit-and-push.mjs" \
+            --paths "apps/ui/package.json,apps/ui/app.config.js,apps/ui/src-tauri" \
+            --allow-missing true \
+            --message "chore(release): bump app to v$VERSION" \
+            --push-ref "$SOURCE_REF" \
+            --push-mode auto
+      - name: Capture exact release SHA
+        id: release
+        working-directory: candidate
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout source ref
-        uses: actions/checkout@v4
+  validate_candidate:
+    needs: [apply_bump]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_notes_github_markdown: ${{ steps.release_notes.outputs.github_markdown }}
+      release_notes_expo_message: ${{ steps.release_notes.outputs.expo_message }}
+    env:
+      EAS_CLI_VERSION: 18.0.1
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ steps.resolve.outputs.ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.apply_bump.outputs.release_sha }}
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
-
+          persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
+      - name: Install candidate dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
-          # Speed up installs for mobile-only and unit-test flows (desktop/web builds happen elsewhere).
           HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
+        run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
       - name: Verify generated Mermaid WebView bundle
         run: yarn --cwd apps/ui verify:mermaid-webview-bundle
-
-      - name: Bump app version (source ref)
-        id: bump_app
-        run: |
-          set -euo pipefail
-          out="$(node scripts/pipeline/run.mjs release-bump-version --component app --bump "${{ inputs.bump }}")"
-          if [ "$out" = "SKIP" ]; then
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-          echo "version=$out" >> "$GITHUB_OUTPUT"
-
       - name: Run app tests
         if: inputs.run_tests
         run: |
           yarn --cwd apps/ui test:unit
           yarn --cwd apps/ui test:integration
-
-      - name: Commit + push version bump (pipeline)
-        if: steps.bump_app.outputs.skipped != 'true'
-        run: |
-          set -euo pipefail
-          src="${{ steps.resolve.outputs.ref }}"
-          node scripts/pipeline/run.mjs github-commit-and-push \
-            --paths "apps/ui/package.json,apps/ui/app.config.js,apps/ui/src-tauri" \
-            --allow-missing true \
-            --message "chore(release): bump app to v${{ steps.bump_app.outputs.version }}" \
-            --push-ref "${src}" \
-            --push-mode auto
-
-      - name: Capture release SHA
-        id: release_sha
-        run: |
-          set -euo pipefail
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Generate release notes manifest
-        run: |
-          set -euo pipefail
-          yarn --cwd apps/ui tsx sources/scripts/parseReleaseNotes.ts
-
+        run: yarn --cwd apps/ui tsx sources/scripts/parseReleaseNotes.ts
       - name: Build release notes assets
+        run: node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs --out-dir "$RUNNER_TEMP/release-notes-assets"
+      - name: Project approved release notes from exact candidate
+        id: release_notes
+        env:
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs \
-            --out-dir "dist/release-notes-assets"
-
-      - name: Publish release notes assets
+          UI_VERSION="$(node -p "require('./apps/ui/package.json').version")"
+          export UI_VERSION
+          node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+            --release-id "$RELEASE_NOTES_ID" \
+            --source-sha "$RELEASE_SHA" \
+            --component-version "ui=$UI_VERSION" \
+            --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" | \
+            node --input-type=module -e '
+              import { appendFileSync } from "node:fs";
+              import { createHash } from "node:crypto";
+              let raw = "";
+              for await (const chunk of process.stdin) raw += chunk;
+              const bundle = JSON.parse(raw);
+              if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.RELEASE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify({ ui: process.env.UI_VERSION })) {
+                throw new Error("Invalid exact-candidate release-notes projection");
+              }
+              const values = {
+                github_markdown: bundle.projections?.github?.markdown,
+                expo_message: bundle.projections?.expo?.message,
+              };
+              for (const [key, value] of Object.entries(values)) {
+                if (typeof value !== "string") throw new Error(`Missing ${key} projection`);
+                const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`${key}:${value}`).digest("hex")}`;
+                appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\n${value}\n${delimiter}\n`);
+              }
+            '
+      - name: Upload release notes assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-release-notes-${{ needs.apply_bump.outputs.release_sha }}
+          path: ${{ runner.temp }}/release-notes-assets
+          if-no-files-found: error
+          retention-days: 1
+      - name: Prepare Android OTA artifact without credentials
+        if: inputs.expo_action == 'ota'
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        run: |
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase prepare --environment "$DEPLOY_ENVIRONMENT" --platform android \
+            --input-dir "$RUNNER_TEMP/prepared-ota/android" --source-sha "$RELEASE_SHA" \
+            --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Prepare iOS OTA artifact without credentials
+        if: inputs.expo_action == 'ota'
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        run: |
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase prepare --environment "$DEPLOY_ENVIRONMENT" --platform ios \
+            --input-dir "$RUNNER_TEMP/prepared-ota/ios" --source-sha "$RELEASE_SHA" \
+            --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Upload prepared OTA artifacts
+        if: inputs.expo_action == 'ota'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
+          path: ${{ runner.temp }}/prepared-ota
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  promote:
+    needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: write
+    env:
+      EAS_CLI_VERSION: 18.0.1
+    outputs:
+      source_ref: ${{ needs.resolve_source.outputs.source_ref }}
+      release_sha: ${{ needs.apply_bump.outputs.release_sha }}
+      desktop_mode: ${{ inputs.desktop_mode }}
+      release_notes_github_markdown: ${{ needs.validate_candidate.outputs.release_notes_github_markdown }}
+      release_notes_expo_message: ${{ needs.validate_candidate.outputs.release_notes_expo_message }}
+    steps:
+      - name: Checkout trusted promotion control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install trusted promotion dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+      - name: Download release notes assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ui-release-notes-${{ needs.apply_bump.outputs.release_sha }}
+          path: ${{ runner.temp }}/release-notes-assets
+      - name: Download prepared OTA artifacts
+        if: inputs.expo_action == 'ota'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ui-ota-${{ needs.apply_bump.outputs.release_sha }}
+          path: ${{ runner.temp }}/prepared-ota
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Create release notes asset token
+        id: release_notes_assets_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: happier-assets
+          permission-contents: write
+      - name: Publish release notes assets with trusted control
+        env:
+          GH_TOKEN: ${{ steps.release_notes_assets_token.outputs.token }}
           GH_REPO: happier-dev/happier-assets
         run: |
-          set -euo pipefail
           node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
-            --in-dir "dist/release-notes-assets" \
-            --repo "happier-dev/happier-assets" \
-            --tag "release-notes"
-
-      - name: Expo OTA update
+            --in-dir "$RUNNER_TEMP/release-notes-assets" --repo happier-dev/happier-assets --tag release-notes
+      - name: Publish Android OTA from validated bytes
         if: inputs.expo_action == 'ota'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
         run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs ui-mobile-release \
-            --environment "${{ inputs.environment }}" \
-            --action "${{ inputs.expo_action }}" \
-            --platform all \
-            --release-message "${{ inputs.expo_update_message }}" \
-            --secrets-source env \
-            --eas-cli-version "${EAS_CLI_VERSION}"
-
-      - name: Resolve deploy branch SHA (before)
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform android \
+            --input-dir "$RUNNER_TEMP/prepared-ota/android" --expected-source-sha "$RELEASE_SHA" \
+            --message "$UPDATE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Publish iOS OTA from validated bytes
+        if: inputs.expo_action == 'ota'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+          UPDATE_MESSAGE: ${{ needs.promote.outputs.release_notes_expo_message }}
+        run: |
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase publish --environment "$DEPLOY_ENVIRONMENT" --platform ios \
+            --input-dir "$RUNNER_TEMP/prepared-ota/ios" --expected-source-sha "$RELEASE_SHA" \
+            --message "$UPDATE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Resolve deploy branch SHA before promotion
         if: inputs.deploy_web
         id: deploy_before
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/ui"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Promote source ref to deploy branch (web)
+          ref="deploy/$DEPLOY_ENVIRONMENT/ui"
+          sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Promote exact release SHA to deploy branch
         if: inputs.deploy_web
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
         run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs promote-deploy-branch \
-            --deploy-environment "${{ inputs.environment }}" \
-            --component ui \
-            --sha "$(git rev-parse HEAD)" \
-            --summary-file "${GITHUB_STEP_SUMMARY}"
-
-      - name: Resolve deploy branch SHA (after)
+          node scripts/pipeline/github/promote-deploy-branch.mjs \
+            --deploy-environment "$DEPLOY_ENVIRONMENT" --component ui --sha "$RELEASE_SHA" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
+      - name: Resolve deploy branch SHA after promotion
         if: inputs.deploy_web
         id: deploy_after
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/ui"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Trigger deploy webhook(s) (web) (force_deploy, no branch change)
+          ref="deploy/$DEPLOY_ENVIRONMENT/ui"
+          sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Trigger deploy webhooks when forced without branch change
         if: inputs.deploy_web && inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
@@ -361,21 +582,21 @@ jobs:
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
           HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs deploy \
-            --deploy-environment "${{ inputs.environment }}" \
-            --component "ui" \
-            --repository "${{ github.repository }}" \
-            --ref-name "deploy/${{ inputs.environment }}/ui"
-
-      - name: Deploy note (web)
+          node scripts/pipeline/deploy/trigger-webhooks.mjs \
+            --environment "$DEPLOY_ENVIRONMENT" --component ui --repository "$REPOSITORY" \
+            --ref-name "deploy/$DEPLOY_ENVIRONMENT/ui" --sha "$DEPLOY_SHA"
+      - name: Deploy note
         if: inputs.deploy_web
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
         run: |
-          set -euo pipefail
-          echo "Web deployment is triggered automatically by pushes to deploy/${{ inputs.environment }}/ui." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- deploy_branch_sha: \`${{ steps.deploy_after.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Web deployment is triggered automatically by pushes to deploy/$DEPLOY_ENVIRONMENT/ui." >> "$GITHUB_STEP_SUMMARY"
+          echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
 
   mobile_native:
     name: Mobile native (local runner)
@@ -392,6 +613,8 @@ jobs:
       profile: auto
       action: ${{ inputs.expo_action == 'native_submit' && 'build_and_submit' || 'build_only' }}
       publish_apk_release: "false"
+      release_message: ${{ needs.promote.outputs.release_notes_expo_message }}
+      release_notes_id: ${{ inputs.release_notes_id }}
 
   mobile_apk_release:
     name: Mobile APK release (local runner)
@@ -408,6 +631,8 @@ jobs:
       profile: ${{ inputs.environment == 'production' && 'production-apk' || 'preview-apk' }}
       action: build_only
       publish_apk_release: "true"
+      release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
+      release_notes_id: ${{ inputs.release_notes_id }}
 
   desktop:
     name: Desktop bundles (Tauri)
@@ -421,3 +646,5 @@ jobs:
       environment: ${{ inputs.environment }}
       source_ref: ${{ needs.promote.outputs.release_sha }}
       publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
+      release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
+      release_notes_id: ${{ inputs.release_notes_id }}

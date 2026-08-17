@@ -27,6 +27,8 @@ test('pipeline CLI release dry-run reports preview target and force inputs witho
         'true',
         '--repository',
         'happier-dev/happier',
+        '--release-notes-id',
+        'test-release',
         '--dry-run',
       ],
       {

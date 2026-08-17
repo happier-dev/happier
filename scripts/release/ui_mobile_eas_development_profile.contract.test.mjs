@@ -182,14 +182,24 @@ test('UI GitHub workflows keep their install scope aligned with apps/ui eas.json
 
   for (const workflowPath of workflowPaths) {
     const raw = fs.readFileSync(workflowPath, 'utf8');
-    const matches = [...raw.matchAll(/HAPPIER_INSTALL_SCOPE:\s*"([^"]+)"/g)];
-    assert.ok(matches.length > 0, `${path.basename(workflowPath)} should define HAPPIER_INSTALL_SCOPE`);
-    for (const [, scope = ''] of matches) {
+    let currentStep = '';
+    let scopeCount = 0;
+    for (const line of raw.split('\n')) {
+      const stepName = line.match(/^\s*- name:\s*(.+)\s*$/)?.[1];
+      if (stepName) currentStep = stepName;
+      const scope = line.match(/HAPPIER_INSTALL_SCOPE:\s*"([^"]+)"/)?.[1];
+      if (!scope) continue;
+      scopeCount += 1;
+      if (currentStep === 'Install trusted OTA publisher dependencies') {
+        assert.equal(scope, 'ui,protocol,release-runtime', 'the trusted OTA publisher should install only its trusted control dependencies');
+        continue;
+      }
       assert.equal(
         scope,
         expectedScope,
         `${path.basename(workflowPath)} should use the canonical UI install scope from apps/ui/eas.json`,
       );
     }
+    assert.ok(scopeCount > 0, `${path.basename(workflowPath)} should define HAPPIER_INSTALL_SCOPE`);
   }
 });

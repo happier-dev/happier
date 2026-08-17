@@ -16,18 +16,36 @@ function resolveDbProvider(env, serverComponent) {
   });
 }
 
-async function readGitHead(repoDir) {
+const BUILD_METADATA_GIT_CONFIG_ARGS = ['-c', 'core.fsmonitor=false'];
+
+async function runBuildMetadataGit(repoDir, args, runCaptureImpl) {
+  return await runCaptureImpl(
+    'git',
+    [...BUILD_METADATA_GIT_CONFIG_ARGS, ...args],
+    { cwd: repoDir },
+  );
+}
+
+async function readGitHead(repoDir, runCaptureImpl) {
   try {
-    return (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: repoDir })).trim();
+    return (await runBuildMetadataGit(repoDir, ['rev-parse', 'HEAD'], runCaptureImpl)).trim();
   } catch {
     return 'nogit';
   }
 }
 
-async function readGitDirtyHash(repoDir) {
+async function readGitDirtyHash(repoDir, runCaptureImpl) {
   try {
-    const trackedDiff = await runCapture('git', ['diff', '--no-ext-diff', '--binary', 'HEAD', '--'], { cwd: repoDir });
-    const untrackedRaw = await runCapture('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: repoDir });
+    const trackedDiff = await runBuildMetadataGit(
+      repoDir,
+      ['diff', '--no-ext-diff', '--binary', 'HEAD', '--'],
+      runCaptureImpl,
+    );
+    const untrackedRaw = await runBuildMetadataGit(
+      repoDir,
+      ['ls-files', '--others', '--exclude-standard', '-z'],
+      runCaptureImpl,
+    );
     const untrackedPaths = untrackedRaw.split('\0').map((value) => value.trim()).filter(Boolean);
     if (!trackedDiff.trim() && untrackedPaths.length === 0) return 'clean';
 
@@ -50,12 +68,12 @@ async function readGitDirtyHash(repoDir) {
   }
 }
 
-export async function collectBuildSourceMetadata({ rootDir, env = process.env }) {
+export async function collectBuildSourceMetadata({ rootDir, env = process.env, runCaptureImpl = runCapture }) {
   const repoDir = getRepoDir(rootDir, env);
   const serverComponent = parseServerComponentFromEnv(env);
   const dbProvider = resolveDbProvider(env, serverComponent);
-  const commitSha = await readGitHead(repoDir);
-  const dirtyHash = await readGitDirtyHash(repoDir);
+  const commitSha = await readGitHead(repoDir, runCaptureImpl);
+  const dirtyHash = await readGitDirtyHash(repoDir, runCaptureImpl);
   const sourceFingerprint = createRuntimeFingerprint({
     repoDir,
     commitSha,

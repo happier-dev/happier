@@ -7,13 +7,23 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('tests workflow delegates binary smoke to the unified release-validation runner', async () => {
+test('tests workflow binds binary and artifact validation to an exact caller candidate checkout', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
 
   assert.match(
     raw,
-    /binary-smoke:[\s\S]*?node scripts\/pipeline\/run\.mjs release-validate[\s\S]*?--suite binary-smoke[\s\S]*?--platform linux[\s\S]*?--source local-build[\s\S]*?--ref "\."/,
-    'binary smoke workflow should call the unified release-validation runner with the local-build smoke suite',
+    /checkout_sha:\n\s+required: false\n\s+default: ""\n\s+type: string/,
+    'reusable tests must accept a candidate SHA from release verification',
+  );
+  assert.match(
+    raw,
+    /binary-smoke:[\s\S]*?ref: \$\{\{ inputs\.checkout_sha != '' && inputs\.checkout_sha \|\| github\.sha \}\}[\s\S]*?Verify exact requested checkout[\s\S]*?--suite binary-smoke[\s\S]*?--source git-ref-build[\s\S]*?--ref "\$CHECKOUT_SHA"/,
+    'binary smoke must build and execute the exact candidate checkout, not treat the checkout directory as a packed manifest',
+  );
+  assert.match(
+    raw,
+    /artifact-verify:[\s\S]*?Verify exact requested checkout[\s\S]*?--suite artifact-verify[\s\S]*?--source local-build[\s\S]*?--ref dist\/release-assets\/cli/,
+    'artifact verification must execute against artifacts built from the exact candidate checkout',
   );
   assert.doesNotMatch(
     raw,

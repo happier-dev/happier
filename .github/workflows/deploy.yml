@@ -56,14 +56,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: deploy.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -78,11 +105,15 @@ jobs:
     if: ${{ needs.release_actor_guard.result == 'success' }}
     environment: ${{ inputs.environment }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -156,6 +187,10 @@ jobs:
       - name: Trigger deploy webhook(s)
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPLOY_ENVIRONMENT: ${{ steps.target.outputs.environment }}
+          DEPLOY_COMPONENT: ${{ steps.target.outputs.component }}
+          DEPLOY_REPOSITORY: ${{ github.repository }}
+          DEPLOY_REF_NAME: deploy/${{ steps.target.outputs.environment }}/${{ steps.target.outputs.component }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
@@ -167,7 +202,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs deploy \
-            --deploy-environment "${{ steps.target.outputs.environment }}" \
-            --component "${{ steps.target.outputs.component }}" \
-            --repository "${{ github.repository }}" \
-            --ref-name "deploy/${{ steps.target.outputs.environment }}/${{ steps.target.outputs.component }}"
+            --deploy-environment "$DEPLOY_ENVIRONMENT" \
+            --component "$DEPLOY_COMPONENT" \
+            --repository "$DEPLOY_REPOSITORY" \
+            --ref-name "$DEPLOY_REF_NAME"

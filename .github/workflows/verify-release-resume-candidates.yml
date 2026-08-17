@@ -1,0 +1,138 @@
+name: RELEASE — Verify resumable immutable candidates
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      candidate_source_sha:
+        required: true
+        type: string
+      candidate_cli_version:
+        required: false
+        default: ''
+        type: string
+      candidate_stack_version:
+        required: false
+        default: ''
+        type: string
+      candidate_server_version:
+        required: false
+        default: ''
+        type: string
+      candidate_ui_web_version:
+        required: false
+        default: ''
+        type: string
+    outputs:
+      cli_verified:
+        value: ${{ jobs.verify.outputs.cli_verified }}
+      stack_verified:
+        value: ${{ jobs.verify.outputs.stack_verified }}
+      server_verified:
+        value: ${{ jobs.verify.outputs.server_verified }}
+      ui_web_verified:
+        value: ${{ jobs.verify.outputs.ui_web_verified }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify each published sibling independently
+    runs-on: ubuntu-latest
+    outputs:
+      cli_verified: ${{ steps.outputs.outputs.cli_verified }}
+      stack_verified: ${{ steps.outputs.outputs.stack_verified }}
+      server_verified: ${{ steps.outputs.outputs.server_verified }}
+      ui_web_verified: ${{ steps.outputs.outputs.ui_web_verified }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-control
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Install minisign from trusted control bytes
+        if: ${{ inputs.candidate_cli_version != '' || inputs.candidate_stack_version != '' || inputs.candidate_server_version != '' || inputs.candidate_ui_web_version != '' }}
+        uses: ./.release-control/.github/actions/bootstrap-minisign
+      - name: Verify CLI candidate
+        id: verify_cli
+        if: ${{ always() && inputs.candidate_cli_version != '' }}
+        continue-on-error: true
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: cli
+          version: ${{ inputs.candidate_cli_version }}
+      - name: Verify HStack candidate
+        id: verify_stack
+        if: ${{ always() && inputs.candidate_stack_version != '' }}
+        continue-on-error: true
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: hstack
+          version: ${{ inputs.candidate_stack_version }}
+      - name: Verify server candidate
+        id: verify_server
+        if: ${{ always() && inputs.candidate_server_version != '' }}
+        continue-on-error: true
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: server
+          version: ${{ inputs.candidate_server_version }}
+      - name: Verify UI-web candidate
+        id: verify_ui_web
+        if: ${{ always() && inputs.candidate_ui_web_version != '' }}
+        continue-on-error: true
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: ui-web
+          version: ${{ inputs.candidate_ui_web_version }}
+      - name: Export fail-closed per-product results
+        id: outputs
+        if: ${{ always() }}
+        env:
+          CLI_REQUESTED: ${{ inputs.candidate_cli_version != '' }}
+          CLI_OUTCOME: ${{ steps.verify_cli.outcome }}
+          STACK_REQUESTED: ${{ inputs.candidate_stack_version != '' }}
+          STACK_OUTCOME: ${{ steps.verify_stack.outcome }}
+          SERVER_REQUESTED: ${{ inputs.candidate_server_version != '' }}
+          SERVER_OUTCOME: ${{ steps.verify_server.outcome }}
+          UI_WEB_REQUESTED: ${{ inputs.candidate_ui_web_version != '' }}
+          UI_WEB_OUTCOME: ${{ steps.verify_ui_web.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          emit_result() {
+            name="$1"
+            requested="$2"
+            outcome="$3"
+            value=false
+            if [ "$requested" = 'true' ] && [ "$outcome" = 'success' ]; then
+              value=true
+            fi
+            echo "${name}_verified=$value" >> "$GITHUB_OUTPUT"
+          }
+          emit_result cli "$CLI_REQUESTED" "$CLI_OUTCOME"
+          emit_result stack "$STACK_REQUESTED" "$STACK_OUTCOME"
+          emit_result server "$SERVER_REQUESTED" "$SERVER_OUTCOME"
+          emit_result ui_web "$UI_WEB_REQUESTED" "$UI_WEB_OUTCOME"

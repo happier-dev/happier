@@ -29,11 +29,21 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        description: "Resume — verified immutable version to return without rebuilding or promoting (requires authorized_sha)"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         description: "Caller-bound source SHA"
         required: false
         default: ""
         type: string
+      publish_rolling:
+        description: "Publication — move the rolling channel after publishing the immutable release"
+        required: true
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -55,10 +65,22 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
         type: string
+      publish_rolling:
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      version:
+        description: Exact immutable server version published by this invocation
+        value: ${{ jobs.finalize_publish.outputs.version || jobs.release_actor_guard.outputs.resume_version }}
 
 permissions:
   contents: read
@@ -100,13 +122,44 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      resume_version: ${{ steps.resume.outputs.version }}
     steps:
       - name: Checkout trusted workflow bytes
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           persist-credentials: false
+      - name: Reject conflicting recovery modes
+        env:
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+        run: |
+          set -euo pipefail
+          test -z "$RETRY_VERSION" || test -z "$RESUME_VERSION"
+      - name: Setup Node for immutable candidate verification
+        if: ${{ inputs.resume_version != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Verify resumed immutable server candidate
+        id: resume
+        if: ${{ inputs.resume_version != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-release-candidate-identity.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$AUTHORIZED_SHA" \
+            --candidate-product server \
+            --candidate-version "$RESUME_VERSION"
+          echo "version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -114,9 +167,9 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  build_candidate:
-    name: Build unsigned server candidate
-    if: ${{ inputs.retry_version == '' }}
+  prepare:
+    name: Freeze source and release version
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-24.04
     permissions:
@@ -124,6 +177,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       source_sha: ${{ steps.source.outputs.source_sha }}
+      base_version: ${{ steps.candidate_base.outputs.base_version }}
       embedded_policy_env: ${{ steps.channel_meta.outputs.embedded_policy_env }}
     steps:
       - name: Enforce stable publishing gate
@@ -132,31 +186,35 @@ jobs:
           echo "Stable server runtime publishing is disabled." >&2
           exit 1
       - name: Checkout trusted workflow control bytes
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
       - name: Resolve channel metadata
         id: channel_meta
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
-            --channel "${{ inputs.channel }}" \
-            --source-ref "${{ inputs.source_ref }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --source-ref "$SOURCE_REF" \
             --github-output "$GITHUB_OUTPUT"
-      - name: Checkout source without persisted credentials
-        uses: actions/checkout@v4
+      - name: Checkout exact source as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.channel_meta.outputs.source_ref }}
+          path: .candidate-source
           fetch-depth: 0
           persist-credentials: false
       - name: Freeze and verify source SHA
@@ -165,15 +223,48 @@ jobs:
           CALLER_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
-          source_sha="$(git rev-parse HEAD)"
+          source_sha="$(git -C .candidate-source rev-parse HEAD)"
           if [ -n "$CALLER_SHA" ]; then test "$source_sha" = "$CALLER_SHA"; fi
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Read candidate base version as data
+        id: candidate_base
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { normalizeRollingBaseVersion } from "./scripts/pipeline/release/lib/rolling-version-allocation.mjs";
+            const value = JSON.parse(fs.readFileSync(".candidate-source/apps/server/package.json", "utf8")).version;
+            if (typeof value !== "string" || normalizeRollingBaseVersion(value) !== value) {
+              throw new Error("Candidate server package version must be exact canonical base semver");
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `base_version=${value}\n`);
+          '
+
+      - name: Package exact candidate source as inert transport data
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git -C .candidate-source archive \
+            --format=tar.gz \
+            --output "${RUNNER_TEMP}/server-runtime-source-${SOURCE_SHA}.tar.gz" \
+            HEAD
+
+      - name: Upload exact candidate source transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: server-runtime-source-${{ steps.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/server-runtime-source-${{ steps.source.outputs.source_sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
       - name: Enable Corepack
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
       - name: Install dependencies
@@ -181,57 +272,48 @@ jobs:
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         uses: ./.github/actions/install-yarn-dependencies
         with:
-          args: --frozen-lockfile --ignore-engines
+          args: --frozen-lockfile --ignore-engines --ignore-platform
       - name: Allocate immutable version
         id: version
         env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          CANDIDATE_BASE_VERSION: ${{ steps.candidate_base.outputs.base_version }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/publish-server-runtime.mjs \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --base-version "$CANDIDATE_BASE_VERSION" \
             --resolve-version-only \
             --github-output "$GITHUB_OUTPUT"
-      - name: Build unsigned server archives
+
+  build_candidate:
+    name: Build unsigned server candidate
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare]
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Download exact candidate source transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: server-runtime-source-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/server-runtime-source
+      - name: Materialize candidate source without repository authority
         env:
-          MINISIGN_SECRET_KEY: ""
-          MINISIGN_PASSPHRASE: ""
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/release/build-server-binaries.mjs \
-            --channel "${{ inputs.channel }}" \
-            --version "${{ steps.version.outputs.version }}"
-          find dist/release-assets/server -type f ! -name '*.tar.gz' -delete
-          test "$(find dist/release-assets/server -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" -gt 0
-      - name: Upload unsigned candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: server-runtime-candidate-${{ steps.version.outputs.version }}
-          path: dist/release-assets/server/*.tar.gz
-          if-no-files-found: error
-          retention-days: 2
-
-  finalize_publish:
-    name: Sign and publish exact server candidate
-    if: ${{ inputs.retry_version == '' }}
-    needs: [build_candidate]
-    runs-on: ubuntu-24.04
-    environment: release-shared
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout trusted workflow control bytes
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          fetch-depth: 1
-          persist-credentials: false
+          archive="${RUNNER_TEMP}/server-runtime-source/server-runtime-source-${SOURCE_SHA}.tar.gz"
+          test -f "$archive"
+          tar -xzf "$archive" -C "$GITHUB_WORKSPACE"
+          test -f "$GITHUB_WORKSPACE/apps/server/package.json"
+          test -f "$GITHUB_WORKSPACE/scripts/pipeline/run.mjs"
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -241,7 +323,197 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.5
+      - name: Install dependencies
+        env:
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-platform
+      - name: Build unsigned server archives
+        env:
+          MINISIGN_SECRET_KEY: ""
+          MINISIGN_PASSPHRASE: ""
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/build-server-binaries.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --version "$RELEASE_VERSION"
+          node scripts/pipeline/release/verify-artifacts.mjs \
+            --artifacts-dir dist/release-assets/server \
+            --require-all-archives-checksummed
+          find dist/release-assets/server -type f ! -name '*.tar.gz' -delete
+          test "$(find dist/release-assets/server -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" -gt 0
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: server-runtime-candidate-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/release-assets/server/*.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
+  finalize_darwin:
+    name: Sign and notarize server (${{ matrix.platform_key }})
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare, build_candidate]
+    runs-on: ${{ matrix.runner }}
+    environment: release-shared
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: darwin-x64
+            runner: macos-15-intel
+            target: darwin-x64
+          - platform_key: darwin-arm64
+            runner: macos-15
+            target: darwin-arm64
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-scripts
+      - name: Build trusted release archive runtime
+        run: yarn workspace @happier-dev/release-runtime build
+      - name: Require Apple signing and notarization credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER_ID APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required macOS payload signing/notarization secret: ${name}" >&2
+              exit 1
+            fi
+          done
+      - name: Setup Apple code signing identity
+        id: apple_id
+        uses: ./.github/actions/setup-apple-codesigning
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Download unsigned candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: server-runtime-candidate-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/release-assets/server
+      - name: Sign, notarize, and verify exact server archive
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          SERVER_TARGET: ${{ matrix.target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${GITHUB_WORKSPACE}/dist/release-assets/server/happier-server-v${RELEASE_VERSION}-${SERVER_TARGET}.tar.gz"
+          PAYLOAD="happier-server-v${RELEASE_VERSION}-${SERVER_TARGET}"
+          EVIDENCE="${GITHUB_WORKSPACE}/dist/notary/${PLATFORM_KEY}.server.json"
+          node scripts/pipeline/release/notarize-standalone-binary.mjs \
+            --archive "${ARCHIVE}" \
+            --expected-payload "${PAYLOAD}" \
+            --identity "${APPLE_SIGNING_IDENTITY}" \
+            --out "${EVIDENCE}"
+          VERIFY_DIR="${RUNNER_TEMP}/server-verify-${PLATFORM_KEY}"
+          node scripts/pipeline/release/node-archive.mjs \
+            --extract-archive-path "${ARCHIVE}" \
+            --extract-dir "${VERIFY_DIR}"
+          node scripts/pipeline/release/notarize-standalone-binary.mjs \
+            --verify-evidence \
+            --payload "${VERIFY_DIR}/${PAYLOAD}" \
+            --evidence "${EVIDENCE}"
+      - name: Clean Apple signing material
+        if: always()
+        env:
+          APPLE_KEYCHAIN_PATH: ${{ steps.apple_id.outputs.keychain-path }}
+          APPLE_CERTIFICATE_PATH: ${{ steps.apple_id.outputs.certificate-path }}
+        run: |
+          security delete-keychain "$APPLE_KEYCHAIN_PATH" >/dev/null 2>&1 || true
+          rm -f "$APPLE_CERTIFICATE_PATH"
+      - name: Assemble signed Darwin leaf handoff
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          SERVER_TARGET: ${{ matrix.target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+        run: |
+          set -euo pipefail
+          rm -rf dist/signed-leaf
+          mkdir -p dist/signed-leaf
+          cp "dist/release-assets/server/happier-server-v${RELEASE_VERSION}-${SERVER_TARGET}.tar.gz" dist/signed-leaf/
+          cp "dist/notary/${PLATFORM_KEY}.server.json" dist/signed-leaf/
+          cp "dist/notary/${PLATFORM_KEY}.server.json.notary-log.json" dist/signed-leaf/
+      - name: Upload signed Darwin leaf and evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: server-runtime-signed-${{ matrix.platform_key }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/signed-leaf
+          if-no-files-found: error
+          retention-days: 2
+
+  finalize_publish:
+    name: Sign and publish exact server candidate
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare, build_candidate, finalize_darwin]
+    runs-on: ubuntu-24.04
+    environment: release-shared
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
       - name: Install minisign
@@ -253,13 +525,28 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
       - name: Download exact unsigned candidate
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: server-runtime-candidate-${{ needs.build_candidate.outputs.version }}
+          name: server-runtime-candidate-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
           path: dist/release-assets/server
+      - name: Download signed Darwin leaves
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: server-runtime-signed-*-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/signed-darwin
+          merge-multiple: true
+      - name: Overlay exact signed Darwin leaves and evidence
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp "dist/signed-darwin/happier-server-v${RELEASE_VERSION}-darwin-arm64.tar.gz" dist/release-assets/server/
+          cp "dist/signed-darwin/happier-server-v${RELEASE_VERSION}-darwin-x64.tar.gz" dist/release-assets/server/
+          cp "dist/signed-darwin/darwin-arm64.server.json" dist/release-assets/server/
+          cp "dist/signed-darwin/darwin-x64.server.json" dist/release-assets/server/
       - name: Create scoped release token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -272,22 +559,32 @@ jobs:
           GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.build_candidate.outputs.embedded_policy_env }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CANDIDATE_BASE_VERSION: ${{ needs.prepare.outputs.base_version }}
+          AUTHORIZED_SHA: ${{ needs.prepare.outputs.source_sha }}
+          PUBLISH_PHASE: ${{ inputs.publish_rolling == false && 'publish-immutable' || 'publish' }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/publish-server-runtime.mjs \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
-            --release-message "${{ inputs.release_message }}" \
-            --version "${{ needs.build_candidate.outputs.version }}" \
-            --authorized-sha "${{ needs.build_candidate.outputs.source_sha }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
+            --version "$RELEASE_VERSION" \
+            --base-version "$CANDIDATE_BASE_VERSION" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \
+            --skip-smoke \
             --run-contracts true \
             --check-installers true
 
   promote_existing:
     name: Recover rolling server projection
-    if: ${{ inputs.retry_version != '' }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-24.04
     environment: release-shared
@@ -295,14 +592,14 @@ jobs:
       contents: write
     steps:
       - name: Checkout trusted workflow control bytes
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -319,7 +616,7 @@ jobs:
           args: --frozen-lockfile --ignore-engines
       - name: Create scoped release token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -341,12 +638,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/publish-server-runtime.mjs \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
-            --release-message "${{ inputs.release_message }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

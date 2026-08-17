@@ -28,5 +28,6 @@ test('GitHub release titles are prefixed with Happier', async () => {
   assert.match(buildTauri, /title: Happier UI Desktop Dev/);
   assert.match(buildTauri, /title: Happier UI Desktop Preview/);
   assert.match(buildTauri, /title: Happier UI Desktop v/);
-  assert.match(buildTauri, /title: Happier UI Desktop Stable/);
+  assert.match(buildTauri, /--title\s+"Happier UI Desktop Stable"/);
+  assert.doesNotMatch(buildTauri, /title: Happier UI Desktop Stable/);
 });

@@ -20,3 +20,12 @@ test('build-ui-mobile-local validation jobs use release-shared so environment se
   assert.match(expoBlock, /\benvironment:\s*release-shared/);
   assert.match(appleBlock, /\benvironment:\s*release-shared/);
 });
+
+test('build-ui-mobile-local passes release signing material only to the Android APK publisher', () => {
+  const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
+  const androidBlock = src.match(/build_android:\n([\s\S]*?)\n  build_ios:/)?.[1] ?? '';
+
+  assert.match(androidBlock, /MINISIGN_SECRET_KEY:\s*\$\{\{\s*secrets\.MINISIGN_SECRET_KEY\s*\}\}/);
+  assert.match(androidBlock, /MINISIGN_PASSPHRASE:\s*\$\{\{\s*secrets\.MINISIGN_PASSPHRASE\s*\}\}/);
+  assert.doesNotMatch(src.match(/build_ios:\n([\s\S]*?)\n  ota_update:/)?.[1] ?? '', /MINISIGN_SECRET_KEY/);
+});

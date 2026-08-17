@@ -15,6 +15,11 @@ on:
         required: true
         default: auto
         type: string
+      authorized_sha:
+        description: "Caller-authorized exact source SHA"
+        required: false
+        default: ""
+        type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
         required: true
@@ -59,6 +64,10 @@ on:
         required: false
         default: auto
         type: string
+      authorized_sha:
+        required: false
+        default: ""
+        type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
         required: false
@@ -91,22 +100,50 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-npm-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: release-npm.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     # We install Sapling via a Ubuntu 22.04 package; pin runner for compatibility.
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -117,10 +154,8 @@ jobs:
   release:
     needs: [release_actor_guard]
     permissions:
-      contents: write
-      id-token: write
-    runs-on: ubuntu-latest
-    environment: release-shared
+      contents: read
+    runs-on: ubuntu-22.04
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'production' && 'production' || 'preview' }}
     outputs:
@@ -196,22 +231,20 @@ jobs:
               ;;
           esac
 
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
       - name: Checkout source ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ steps.resolve_source.outputs.ref }}
+          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.resolve_source.outputs.ref }}
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
+
+      - name: Enforce caller-authorized source SHA
+        if: ${{ inputs.authorized_sha != '' }}
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
 
       - name: Admit Qualified V4 npm CLI payload publication
         if: inputs.publish_cli
@@ -242,7 +275,7 @@ jobs:
             --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
@@ -256,12 +289,9 @@ jobs:
           corepack prepare yarn@1.22.22 --activate
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
-
-      - name: Install minisign (signing + verification)
-        uses: ./.github/actions/bootstrap-minisign
 
       - name: Install dependencies
         env:
@@ -308,7 +338,9 @@ jobs:
 
       - name: Run server runner tests
         if: inputs.publish_server && inputs.run_tests
-        run: yarn --cwd "${{ steps.server_runner.outputs.dir }}" test
+        env:
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
+        run: yarn --cwd "${SERVER_RUNNER_DIR}" test
 
       - name: Release metadata
         id: meta
@@ -317,12 +349,33 @@ jobs:
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          RESOLVED_SOURCE_REF: ${{ steps.resolve_source.outputs.ref }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
+          write_version_output() {
+            local output_name="$1"
+            local product_id="$2"
+            local raw_version="$3"
+            RELEASE_CHANNEL="${INPUT_CHANNEL}" PRODUCT_ID="${product_id}" RAW_VERSION="${raw_version}" \
+              node --input-type=module <<'NODE'
+          const productId = process.env.PRODUCT_ID;
+          const rawVersion = process.env.RAW_VERSION ?? '';
+          const canonicalVersionPatterns = {
+            production: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/,
+            preview: /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-preview\.(?:[1-9]\d*)(?:\.(?:[1-9]\d*))?$/,
+          };
+          const versionPattern = canonicalVersionPatterns[process.env.RELEASE_CHANNEL ?? ''];
+          if (rawVersion.includes('\n') || rawVersion.includes('\r') || !versionPattern?.test(rawVersion)) {
+            throw new Error(`npm release metadata rejected non-canonical ${productId} version`);
+          }
+          NODE
+            printf '%s=%s\n' "$output_name" "$raw_version" >> "$GITHUB_OUTPUT"
+          }
+
           sha="$(git rev-parse HEAD)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "source_ref=${{ steps.resolve_source.outputs.ref }}" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${RESOLVED_SOURCE_REF}" >> "$GITHUB_OUTPUT"
           echo "channel=${INPUT_CHANNEL}" >> "$GITHUB_OUTPUT"
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
@@ -344,95 +397,76 @@ jobs:
             if [ "${INPUT_CHANNEL}" = "preview" ]; then
               cli_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.cli||\"\"));' "${versions_json}")"
             else
-              cli_version="$(node -p 'require("./apps/cli/package.json").version' | tr -d '\n')"
+              cli_version="$(node -e 'process.stdout.write(String(require("./apps/cli/package.json").version ?? ""));')"
             fi
-            echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
-          else
-            echo "cli_version=SKIP" >> "$GITHUB_OUTPUT"
+            write_version_output cli_version cli "$cli_version"
           fi
 
           if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
             if [ "${INPUT_CHANNEL}" = "preview" ]; then
               stack_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.stack||\"\"));' "${versions_json}")"
             else
-              stack_version="$(node -p 'require("./apps/stack/package.json").version' | tr -d '\n')"
+              stack_version="$(node -e 'process.stdout.write(String(require("./apps/stack/package.json").version ?? ""));')"
             fi
-            echo "stack_version=${stack_version}" >> "$GITHUB_OUTPUT"
-          else
-            echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
+            write_version_output stack_version stack "$stack_version"
           fi
 
           if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
             if [ "${INPUT_CHANNEL}" = "preview" ]; then
               server_version="$(node -e 'const raw=process.argv[1]; const v=JSON.parse(raw); process.stdout.write(String(v.server||\"\"));' "${versions_json}")"
             else
-              server_version="$(node -p 'require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version' | tr -d '\n')"
+              server_version="$(node -e 'process.stdout.write(String(require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version ?? ""));')"
             fi
-            echo "server_version=${server_version}" >> "$GITHUB_OUTPUT"
-          else
-            echo "server_version=SKIP" >> "$GITHUB_OUTPUT"
+            write_version_output server_version server "$server_version"
           fi
-
-      - name: Bootstrap minisign
-        uses: ./.github/actions/bootstrap-minisign
-
-      - name: Prepare CLI release assets
-        if: inputs.publish_cli
-        env:
-          ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.channel == 'production' && 'cli-stable' || 'cli-preview' }}
-          RELEASE_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs release-prepare-binary-assets \
-            --product cli \
-            --channel "${RELEASE_CHANNEL}" \
-            --version "${{ steps.meta.outputs.cli_version }}" \
-            --assets-base-url="${ASSETS_BASE_URL}" \
-            --commit-sha="${{ steps.meta.outputs.sha }}" \
-            --workflow-run-id="${{ github.run_id }}" \
-            --skip-smoke
 
       - name: npm pack (pipeline)
         if: inputs.publish_cli || inputs.publish_stack || inputs.publish_server
         env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          PUBLISH_CLI: ${{ inputs.publish_cli }}
+          PUBLISH_STACK: ${{ inputs.publish_stack }}
+          PUBLISH_SERVER: ${{ inputs.publish_server }}
+          CLI_VERSION: ${{ steps.meta.outputs.cli_version }}
+          STACK_VERSION: ${{ steps.meta.outputs.stack_version }}
+          SERVER_VERSION: ${{ steps.meta.outputs.server_version }}
+          RUN_TESTS: ${{ inputs.run_tests }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs npm-release \
-            --channel "${{ inputs.channel }}" \
-            --publish-cli "${{ inputs.publish_cli }}" \
-            --publish-stack "${{ inputs.publish_stack }}" \
-            --publish-server "${{ inputs.publish_server }}" \
+            --channel "${RELEASE_CHANNEL}" \
+            --publish-cli "${PUBLISH_CLI}" \
+            --publish-stack "${PUBLISH_STACK}" \
+            --publish-server "${PUBLISH_SERVER}" \
             --server-runner-dir "${SERVER_RUNNER_DIR}" \
-            --cli-version "${{ steps.meta.outputs.cli_version }}" \
-            --stack-version "${{ steps.meta.outputs.stack_version }}" \
-            --server-version "${{ steps.meta.outputs.server_version }}" \
-            --run-tests "${{ inputs.run_tests }}" \
+            --cli-version "${CLI_VERSION}" \
+            --stack-version "${STACK_VERSION}" \
+            --server-version "${SERVER_VERSION}" \
+            --run-tests "${RUN_TESTS}" \
             --mode pack
 
       - name: Upload npm pack artifact (cli)
         if: inputs.publish_cli
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: npm-pack-cli
+          name: npm-pack-cli-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.cli_version }}
           path: dist/release-assets/cli
           if-no-files-found: error
 
       - name: Upload npm pack artifact (stack)
         if: inputs.publish_stack
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: npm-pack-stack
+          name: npm-pack-stack-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.stack_version }}
           path: dist/release-assets/stack
           if-no-files-found: error
 
       - name: Upload npm pack artifact (server runner)
         if: inputs.publish_server
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: npm-pack-server
+          name: npm-pack-server-${{ steps.meta.outputs.sha }}-${{ steps.meta.outputs.server_version }}
           path: dist/release-assets/server
           if-no-files-found: error
 
@@ -443,11 +477,16 @@ jobs:
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
           INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          NPM_TAG: ${{ steps.meta.outputs.npm_tag }}
+          CLI_VERSION: ${{ steps.meta.outputs.cli_version }}
+          STACK_VERSION: ${{ steps.meta.outputs.stack_version }}
+          SERVER_VERSION: ${{ steps.meta.outputs.server_version }}
+          SOURCE_REF: ${{ steps.meta.outputs.source_ref }}
         run: |
-          npm_tag="${{ steps.meta.outputs.npm_tag }}"
-          cli_version="${{ steps.meta.outputs.cli_version }}"
-          stack_version="${{ steps.meta.outputs.stack_version }}"
-          server_version="${{ steps.meta.outputs.server_version }}"
+          npm_tag="${NPM_TAG}"
+          cli_version="${CLI_VERSION}"
+          stack_version="${STACK_VERSION}"
+          server_version="${SERVER_VERSION}"
           [ -n "${npm_tag}" ] || npm_tag="(unavailable)"
           [ -n "${cli_version}" ] || cli_version="(unavailable)"
           [ -n "${stack_version}" ] || stack_version="(unavailable)"
@@ -456,7 +495,7 @@ jobs:
           {
             echo "### npm publish"
             echo ""
-            echo "- source ref: \`${{ steps.meta.outputs.source_ref }}\`"
+            echo "- source ref: \`${SOURCE_REF}\`"
             echo "- channel: \`${INPUT_CHANNEL}\`"
             echo "- npm dist-tag: \`${npm_tag}\`"
             if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
@@ -480,17 +519,22 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Download npm pack artifact (cli)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: npm-pack-cli
-          path: .
+          name: npm-pack-cli-${{ needs.release.outputs.sha }}-${{ needs.release.outputs.cli_version }}
+          path: dist/release-assets/cli
 
       - name: Setup Node (npm publish)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
@@ -528,10 +572,11 @@ jobs:
       - name: npm publish (cli tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs npm-publish \
-            --channel "${{ inputs.channel }}" \
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/cli"
 
   publish-stack:
@@ -544,17 +589,22 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Download npm pack artifact (stack)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: npm-pack-stack
-          path: .
+          name: npm-pack-stack-${{ needs.release.outputs.sha }}-${{ needs.release.outputs.stack_version }}
+          path: dist/release-assets/stack
 
       - name: Setup Node (npm publish)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
@@ -562,10 +612,11 @@ jobs:
       - name: npm publish (stack tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs npm-publish \
-            --channel "${{ inputs.channel }}" \
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/stack"
 
   publish-server-runner:
@@ -578,17 +629,22 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Download npm pack artifact (server runner)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: npm-pack-server
-          path: .
+          name: npm-pack-server-${{ needs.release.outputs.sha }}-${{ needs.release.outputs.server_version }}
+          path: dist/release-assets/server
 
       - name: Setup Node (npm publish)
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
@@ -596,8 +652,9 @@ jobs:
       - name: npm publish (server runner tarball) (pipeline)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs npm-publish \
-            --channel "${{ inputs.channel }}" \
+          node scripts/pipeline/npm/publish-tarball.mjs \
+            --channel "${RELEASE_CHANNEL}" \
             --tarball-dir "dist/release-assets/server"

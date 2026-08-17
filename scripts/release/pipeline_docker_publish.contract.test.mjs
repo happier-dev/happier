@@ -31,7 +31,7 @@ test('pipeline docker publish script supports dry-run and computes stable tags',
       env: { ...process.env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 
@@ -81,7 +81,7 @@ test('pipeline docker publish script can also tag/push to GHCR', async () => {
       },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 

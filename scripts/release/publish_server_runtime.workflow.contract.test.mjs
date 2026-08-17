@@ -27,7 +27,7 @@ test('publish-server-runtime workflow publishes rolling server-preview tag via r
   const raw = await loadWorkflow('publish-server-runtime.yml');
   const parsed = YAML.parse(raw);
 
-  assert.match(raw, /actions\/create-github-app-token@v1/);
+  assert.match(raw, /actions\/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547/);
   assert.match(raw, /RELEASE_BOT_APP_ID/);
   assert.match(raw, /RELEASE_BOT_PRIVATE_KEY/);
 
@@ -44,9 +44,10 @@ test('publish-server-runtime supports dev and resolves auto source_ref from the 
   assert.deepEqual(parsed.on.workflow_dispatch.inputs.channel.options, ['preview', 'dev', 'stable']);
   assert.match(raw, /node scripts\/pipeline\/release\/resolve-public-release-channel-meta\.mjs/);
   assert.match(raw, /id:\s*channel_meta/);
-  const sourceCheckout = parsed.jobs.build_candidate.steps.find((step) => step.name === 'Checkout source without persisted credentials');
+  const sourceCheckout = parsed.jobs.prepare.steps.find((step) => step.name === 'Checkout exact source as inert data');
   assert.match(sourceCheckout.with.ref, /steps\.channel_meta\.outputs\.source_ref/);
   assert.match(sourceCheckout.with.ref, /inputs\.authorized_sha/);
+  assert.equal(sourceCheckout.with.path, '.candidate-source');
   assert.doesNotMatch(
     raw,
     /if \[ "\$src" = "auto" \]; then[\s\S]*?src="dev"[\s\S]*?src="preview"[\s\S]*?src="main"/,
@@ -58,8 +59,16 @@ test('publish-server-runtime embeds build feature policy defaults by channel', a
 
   assert.match(
     raw,
-    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*steps\.channel_meta\.outputs\.embedded_policy_env\s*\}\}/,
+    /HAPPIER_EMBEDDED_POLICY_ENV:\s*\$\{\{\s*needs\.prepare\.outputs\.embedded_policy_env\s*\}\}/,
     'server runtime publishing should set HAPPIER_EMBEDDED_POLICY_ENV to production for stable artifacts',
   );
   assert.doesNotMatch(raw, /inputs\.channel\s*==\s*'publicdev'/);
+});
+
+test('publish-server-runtime installs cross-target optional native packages for the candidate build', async () => {
+  const raw = await loadWorkflow('publish-server-runtime.yml');
+  const parsed = YAML.parse(raw);
+  const install = parsed.jobs.build_candidate.steps.find((step) => step.name === 'Install dependencies');
+
+  assert.match(install.with.args, /(?:^|\s)--ignore-platform(?:\s|$)/);
 });

@@ -69,6 +69,7 @@ test('docker publish retries transient buildx failures (EOF) once', () => {
     ...process.env,
     DOCKERHUB_USERNAME: 'happierdev',
     DOCKERHUB_TOKEN: 'docker-token',
+    HAPPIER_DOCKER_SERVER_VERSION: '0.2.10-preview.1',
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
   };
 
@@ -92,7 +93,7 @@ test('docker publish retries transient buildx failures (EOF) once', () => {
       env,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 

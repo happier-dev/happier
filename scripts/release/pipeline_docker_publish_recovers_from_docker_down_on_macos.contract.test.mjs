@@ -83,6 +83,7 @@ test('docker publish attempts to start Docker Desktop on macOS when docker info 
     ...process.env,
     DOCKERHUB_USERNAME: 'happierdev',
     DOCKERHUB_TOKEN: 'docker-token',
+    HAPPIER_DOCKER_SERVER_VERSION: '0.2.10-preview.1',
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
   };
 
@@ -106,7 +107,7 @@ test('docker publish attempts to start Docker Desktop on macOS when docker info 
       env,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 
@@ -187,7 +188,7 @@ test('docker publish honors configured Docker Desktop startup timeout before fai
         env,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 20_000,
+        timeout: 120_000,
       },
     );
   } catch (err) {

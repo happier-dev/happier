@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,4 +72,33 @@ test('feature-policy manifests exist and can generate embedded policy module', a
   assert.match(generated, /DEFAULT_EMBEDDED_FEATURE_POLICY_ENV/, 'generated module must export default env');
   assert.match(generated, /production/, 'generated module should embed production as the default env');
   assert.match(generated, /EMBEDDED_FEATURE_BUILD_POLICY_RAW/, 'generated module must export embedded policy raw values');
+});
+
+test('feature-policy compiler-input check rejects stale output without rewriting it', async () => {
+  const policyDir = join(repoRoot, '.github', 'feature-policy');
+  const outDir = await mkdtemp(join(tmpdir(), 'happier-feature-policy-check-'));
+  const outPath = join(outDir, 'embeddedFeaturePolicies.generated.ts');
+  const staleSource = 'export const stale = true;\n';
+  await writeFile(outPath, staleSource, 'utf8');
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(repoRoot, 'packages', 'protocol', 'scripts', 'generate-embedded-feature-policies.mjs'),
+      '--check',
+      '--policy-dir', policyDir,
+      '--out', outPath,
+    ],
+    {
+      env: {
+        ...process.env,
+        HAPPIER_EMBEDDED_POLICY_ENV: 'production',
+      },
+      encoding: 'utf8',
+    },
+  );
+
+  assert.notEqual(result.status, 0, result.stderr || result.stdout || 'stale compiler input must fail --check');
+  assert.match(result.stderr || result.stdout, /generate-embedded-feature-policies\.mjs/);
+  assert.equal(await readFile(outPath, 'utf8'), staleSource, '--check must not rewrite compiler input');
 });

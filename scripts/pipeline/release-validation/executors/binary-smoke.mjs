@@ -10,6 +10,7 @@ import {
   extractArchivePayloadToDirectory,
 } from '@happier-dev/release-runtime/archiveExtraction';
 import {
+  capturePackedAuthorCandidateArtifacts,
   loadPackedAuthorCandidateManifest,
 } from '../../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 import {
@@ -126,8 +127,21 @@ export async function runCandidateHostPayloadSmoke(
  */
 export function resolveBinarySmokeExecution({ repoRoot, platform, source }) {
   void platform;
-  if (!source || source.kind !== 'local-build') {
-    throw new Error('binary-smoke currently supports only --source local-build');
+  if (!source) {
+    throw new Error('binary-smoke requires a validation source');
+  }
+  if (source.kind === 'git-ref-build') {
+    return {
+      type: 'command',
+      command: process.execPath,
+      args: [
+        resolve(repoRoot, 'apps', 'stack', 'scripts', 'release_binary_smoke.integration.test.mjs'),
+      ],
+      cwd: repoRoot,
+    };
+  }
+  if (source.kind !== 'local-build') {
+    throw new Error('binary-smoke supports only --source local-build or --source git-ref-build');
   }
   return {
     type: 'command',
@@ -167,6 +181,8 @@ export function runBinarySmokeValidation({ repoRoot, platform, source }) {
  *   }>;
  *   execFileSyncImpl?: typeof execFileSync;
  *   runCandidateHostPayloadSmokeImpl?: typeof runCandidateHostPayloadSmoke;
+ *   captureCandidateImpl?: typeof capturePackedAuthorCandidateArtifacts;
+ *   removeCapturedRootImpl?: (root: string) => Promise<void>;
  * }} [dependencies]
  */
 export async function runCandidateBinarySmoke(
@@ -179,48 +195,66 @@ export async function runCandidateBinarySmoke(
     prepareMinisignEnvImpl = prepareReleaseValidationMinisignEnv,
     execFileSyncImpl = execFileSync,
     runCandidateHostPayloadSmokeImpl = runCandidateHostPayloadSmoke,
+    captureCandidateImpl = capturePackedAuthorCandidateArtifacts,
+    removeCapturedRootImpl = async (root) => await rm(root, { recursive: true, force: true }),
   } = {},
 ) {
   const manifestPath = resolve(candidateManifestPath);
-  const candidate = await loadCandidateImpl(manifestPath);
-  if (!candidate.standaloneCli?.signature) {
-    throw new Error('binary-smoke exact candidate requires a bound minisign signature');
-  }
-  const hostPayload = resolveCandidateHostPayloadSmokeInput(candidate);
-  const artifactsDir = dirname(candidate.standaloneCli.archives[0].archivePath);
-  const boundAssetPaths = [
-    ...candidate.standaloneCli.archives.map((artifact) => artifact.archivePath),
-    candidate.standaloneCli.checksums.filePath,
-    candidate.standaloneCli.signature.filePath,
-  ];
-  if (boundAssetPaths.some((artifactPath) => dirname(artifactPath) !== artifactsDir)) {
-    throw new Error('binary-smoke candidate native matrix must share one assets directory');
-  }
-  const minisign = await prepareMinisignEnvImpl({ repoRoot: REPO_ROOT });
+  let captured = null;
   try {
-    execFileSyncImpl(
-      process.execPath,
-      [
-        resolve(REPO_ROOT, 'scripts', 'pipeline', 'release', 'verify-artifacts.mjs'),
-        '--artifacts-dir',
-        artifactsDir,
-        '--checksums',
-        candidate.standaloneCli.checksums.filePath,
-        '--public-key',
-        candidate.installers.publicKey.filePath,
-      ],
-      {
-        cwd: REPO_ROOT,
-        env: minisign.env,
-        stdio: 'inherit',
+    const sourceCandidate = await loadCandidateImpl(manifestPath);
+    if (!sourceCandidate.standaloneCli?.signature) {
+      throw new Error('binary-smoke exact candidate requires a bound minisign signature');
+    }
+    captured = await captureCandidateImpl(sourceCandidate, {
+      manifestPath,
+      destinationParent: tmpdir(),
+      selection: {
+        installers: ['publicKey'],
+        standaloneCli: 'all',
       },
-    );
-    await runCandidateHostPayloadSmokeImpl({
-      ...hostPayload,
-      env: minisign.env,
+      rmImpl: removeCapturedRootImpl,
     });
+    const candidate = captured.candidate;
+    const hostPayload = resolveCandidateHostPayloadSmokeInput(candidate);
+    const artifactsDir = dirname(candidate.standaloneCli.archives[0].archivePath);
+    const boundAssetPaths = [
+      ...candidate.standaloneCli.archives.map((artifact) => artifact.archivePath),
+      candidate.standaloneCli.checksums.filePath,
+      candidate.standaloneCli.signature.filePath,
+      ...candidate.standaloneCli.notarization.map(({ evidence }) => evidence.filePath),
+    ];
+    if (boundAssetPaths.some((artifactPath) => dirname(artifactPath) !== artifactsDir)) {
+      throw new Error('binary-smoke candidate native matrix must share one assets directory');
+    }
+    const minisign = await prepareMinisignEnvImpl({ repoRoot: REPO_ROOT });
+    try {
+      execFileSyncImpl(
+        process.execPath,
+        [
+          resolve(REPO_ROOT, 'scripts', 'pipeline', 'release', 'verify-artifacts.mjs'),
+          '--artifacts-dir',
+          artifactsDir,
+          '--checksums',
+          candidate.standaloneCli.checksums.filePath,
+          '--public-key',
+          candidate.installers.publicKey.filePath,
+        ],
+        {
+          cwd: REPO_ROOT,
+          env: minisign.env,
+          stdio: 'inherit',
+        },
+      );
+      await runCandidateHostPayloadSmokeImpl({
+        ...hostPayload,
+        env: minisign.env,
+      });
+    } finally {
+      await minisign.cleanup();
+    }
   } finally {
-    await minisign.cleanup();
+    if (captured) await captured.cleanup();
   }
 }
 

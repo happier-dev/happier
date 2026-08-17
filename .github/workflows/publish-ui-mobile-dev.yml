@@ -75,20 +75,181 @@ env:
   EXPO_UNSTABLE_WEB_MODAL: "1"
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: publish-ui-mobile-dev.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+  prepare_ota:
+    name: Prepare exact dev OTA bytes without credentials
+    needs: [release_actor_guard]
+    if: inputs.publish_ota
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - name: Checkout candidate source as untrusted preparation input
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Bind exact candidate source
+        id: source
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          test "$(printf '%s' "$source_sha" | wc -c | tr -d ' ')" = "40"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install candidate preparation dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Prepare Android OTA artifact without credentials
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase prepare --environment dev --platform android \
+            --input-dir "$RUNNER_TEMP/prepared-ota/android" --source-sha "$SOURCE_SHA" \
+            --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Prepare iOS OTA artifact without credentials
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase prepare --environment dev --platform ios \
+            --input-dir "$RUNNER_TEMP/prepared-ota/ios" --source-sha "$SOURCE_SHA" \
+            --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Upload exact prepared OTA bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ui-mobile-dev-ota-${{ steps.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/prepared-ota
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  publish_ota:
+    name: Publish prepared dev OTA bytes from trusted control
+    needs: [release_actor_guard, prepare_ota]
+    if: inputs.publish_ota
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install trusted OTA publisher dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,release-runtime"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Download exact prepared OTA bytes
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ui-mobile-dev-ota-${{ needs.prepare_ota.outputs.source_sha }}
+          path: ${{ runner.temp }}/prepared-ota
+      - name: Publish Android OTA from validated bytes
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          SOURCE_SHA: ${{ needs.prepare_ota.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase publish --environment dev --platform android \
+            --input-dir "$RUNNER_TEMP/prepared-ota/android" --expected-source-sha "$SOURCE_SHA" \
+            --message "$RELEASE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
+      - name: Publish iOS OTA from validated bytes
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          SOURCE_SHA: ${{ needs.prepare_ota.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/expo/ota-update.mjs \
+            --phase publish --environment dev --platform ios \
+            --input-dir "$RUNNER_TEMP/prepared-ota/ios" --expected-source-sha "$SOURCE_SHA" \
+            --message "$RELEASE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
 
   publish:
     needs: [release_actor_guard]
@@ -97,7 +258,7 @@ jobs:
     steps:
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -106,7 +267,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout source ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
@@ -114,7 +275,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -143,37 +304,6 @@ jobs:
           set -euo pipefail
           yarn --cwd apps/ui tsx sources/scripts/parseReleaseNotes.ts
 
-      - name: Build release notes assets
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs \
-            --out-dir "dist/release-notes-assets"
-
-      - name: Publish release notes assets
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          GH_REPO: happier-dev/happier-assets
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/release/release-notes/publish-release-notes-assets.mjs \
-            --in-dir "dist/release-notes-assets" \
-            --repo "happier-dev/happier-assets" \
-            --tag "release-notes"
-
-      - name: Expo OTA update (dev lane)
-        if: inputs.publish_ota
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs ui-mobile-release \
-            --environment dev \
-            --action ota \
-            --platform all \
-            --release-message "${{ inputs.release_message }}" \
-            --eas-cli-version "${EAS_CLI_VERSION}" \
-            --secrets-source env
-
       - name: Android APK (dev lane) + rolling GitHub release
         if: inputs.publish_android_apk && inputs.eas_builder == 'eas_cloud'
         env:
@@ -199,7 +329,7 @@ jobs:
 
       - name: Install Dagger (local Android builds)
         if: inputs.publish_android_apk && inputs.eas_builder == 'eas_local'
-        uses: dagger/dagger-for-github@v8.3.0
+        uses: dagger/dagger-for-github@456fc3af63a2ba6f9789af9c55045b459115541b
         with:
           version: "0.19.11"
 
@@ -248,7 +378,7 @@ jobs:
     steps:
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -257,7 +387,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout source ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
@@ -265,7 +395,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -324,7 +454,7 @@ jobs:
     steps:
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -333,7 +463,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout source ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
@@ -341,7 +471,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn

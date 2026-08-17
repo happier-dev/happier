@@ -199,7 +199,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--assets-base-url <url>           Script flag (required).',
       '--commit-sha <sha>                Script flag (required).',
       '--workflow-run-id <id>            Script flag (optional).',
-      '--skip-smoke                      Script flag; skip executable smoke in artifact verification.',
+      '--skip-smoke                      Skip optional smoke tests; native CLI version attestation still runs.',
     ],
     bullets: ['Builds artifacts, generates manifests, and verifies artifacts through the shared product metadata.'],
     examples: [
@@ -237,7 +237,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   },
 
   'release-verify-artifacts': {
-    summary: 'Verify checksums/signatures and optionally smoke-test release artifacts (advanced helper).',
+    summary: 'Verify checksums/signatures, attest native CLI versions, and optionally smoke-test release artifacts (advanced helper).',
     usage:
       'node scripts/pipeline/run.mjs release-verify-artifacts [--artifacts-dir <dir>] [--checksums <path>] [--public-key <path>] [--skip-smoke]',
     options: [
@@ -249,7 +249,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--artifacts-dir <dir>             Script flag (default: dist/release-assets).',
       '--checksums <path>                Script flag; defaults to first checksums-*.txt found.',
       '--public-key <path>               Script flag; or set MINISIGN_PUBLIC_KEY.',
-      '--skip-smoke                      Script flag.',
+      '--skip-smoke                      Skip optional smoke tests; native CLI version attestation still runs.',
     ],
     bullets: ['This is safety-critical; prefer running it in CI in addition to local runs.'],
     examples: [
@@ -267,7 +267,8 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--keychain-service <name>         Wrapper flag (default: happier/pipeline).',
       '--keychain-account <name>         Wrapper flag.',
       '--dry-run                         Wrapper flag.',
-      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|server-upgrade|daemon-continuity|session-continuity.',
+      '--suite <suite>                   Script flag; installers-smoke|binary-smoke|artifact-verify|docker-release-assets|cli-update|daemon-continuity|session-continuity.',
+      '--profile <integrated|stable|deep>  Profile planning only; mutually exclusive with --suite and requires --dry-run.',
       '--platform <linux|darwin|win32>   Script flag; defaults to current runtime platform.',
       '--source <kind>                   Direct source mode (published-channel|published-tag|local-build|local-pack|git-ref-build).',
       '--ref <ref>                       Direct source ref.',
@@ -278,16 +279,17 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--product <cli|hstack|server>     Script flag for artifact-verify; resolves artifacts/checksums/manifests centrally.',
       '--version <ver>                   Script flag for artifact-verify product targets.',
       '--release-channel <stable|preview|dev>  Script flag for artifact-verify product targets and installers-smoke local-build validation.',
+      '--payload-publication-admission <status>  Internal installers-smoke update flag; exact payload reversion requires canonical pre-activation admission.',
       '--checksums <path>                Script flag for artifact-verify local-build overrides.',
       '--public-key <path>               Script flag for artifact-verify local-build overrides.',
-      '--skip-smoke                      Script flag for artifact-verify.',
+      '--skip-smoke                      Skip optional artifact smoke; native CLI version attestation still runs.',
     ],
     bullets: [
       'Executable suites: installers-smoke (published-channel|published-tag|local-build with --release-channel), binary-smoke (local-build on linux), artifact-verify (local-build or --product/--version).',
       'Docker suite: docker-release-assets (local-build|published-channel; published-channel -> local-build upgrade).',
       'Continuity suites: daemon-continuity, session-continuity (local-build).',
       'cli-update (published-channel|published-tag -> published-channel|published-tag|local-build|local-pack).',
-      'server-upgrade (dry-run planning only).',
+      'Profiles list canonical suite IDs only; run each automatic suite separately with its required source inputs.',
     ],
     examples: [
       'node scripts/pipeline/run.mjs release-validate --suite installers-smoke --platform linux --source published-channel --ref preview --dry-run',

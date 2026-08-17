@@ -36,6 +36,12 @@ This document describes how to deploy the Happier backend (`apps/server`) and th
 - `S3_PORT`: optional S3 port.
 - `S3_USE_SSL`: `true`/`false` (default `true`).
 
+**Optional browser-hosted plugin Artifacts**
+- `HAPPIER_PLUGIN_UI_ARTIFACT_BROWSER_ORIGIN`: opt in to browser Artifact delivery with a dedicated HTTPS origin. Leave it unset to keep browser Artifact hosting unavailable; desktop/native Artifact delivery is independent.
+- The Artifact origin must differ from both the effective web-app origin and `HAPPIER_PUBLIC_SERVER_URL`. The server fails closed if either configured origin aliases it.
+- The deployment operator must provision DNS, TLS, and a dedicated path-restricted virtual host that forwards only the `/v1/plugins/availability/ui-artifacts/browser/` route prefix to the existing API service. Preserve the trusted request host/protocol projection so the server can validate the Artifact origin. This repository does not provision that host or start a second static server.
+- Browser Preview uses this delivery path only for online plaintext Accounts; E2EE Accounts receive the typed unavailable result.
+
 **Optional integrations**
 - GitHub (OAuth + optional org allowlist enforcement)
   - OAuth (used for linking a GitHub identity and for GitHub-only signup when enabled):
@@ -90,6 +96,13 @@ Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.
 - The server entrypoint (`apps/server/scripts/run-server.sh`) runs `prisma migrate deploy` on startup by default (set `RUN_MIGRATIONS=0` to disable). On Postgres, it retries on advisory-lock contention.
+- Before a MySQL deployment first applies
+  `20260729102000_add_voice_conversation_grant_provenance`, follow the
+  maintenance-window, old-writer drain, trigger-authority/configuration, and
+  definer-lifetime preflight in `docs/release-process.md`. The MySQL migration
+  command fails closed unless that pending transition has exact operator
+  admission and its live trigger prerequisites pass. A normal rolling
+  entrypoint deployment is unsafe for that one non-atomic transition.
 
 ## Kubernetes manifests
 Example manifests live in `apps/server/deploy`:

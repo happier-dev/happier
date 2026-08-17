@@ -28,7 +28,7 @@ test('publish-github-release uses release bot GitHub App token for rolling tag u
     'publish job must expose RELEASE_BOT_PRIVATE_KEY via env for conditional app token creation',
   );
 
-  assert.match(raw, /actions\/create-github-app-token@v1/, 'publish-github-release must use actions/create-github-app-token@v1');
+  assert.match(raw, /actions\/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547/, 'publish-github-release must pin actions/create-github-app-token to the reviewed commit');
   assert.match(raw, /node scripts\/pipeline\/run\.mjs github-publish-release/, 'publish-github-release must delegate to pipeline script');
   assert.match(
     raw,

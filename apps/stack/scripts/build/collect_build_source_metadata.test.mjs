@@ -41,3 +41,43 @@ test('collectBuildSourceMetadata changes dirtyHash when dirty file contents chan
   assert.notEqual(first.dirtyHash, second.dirtyHash);
   assert.notEqual(first.sourceFingerprint, second.sourceFingerprint);
 });
+
+test('collectBuildSourceMetadata bypasses the optional Git fsmonitor for deterministic source reads', async (t) => {
+  const repoDir = await createTempRepo(t);
+  const calls = [];
+  const runCaptureImpl = async (command, args, options) => {
+    calls.push({ command, args, options });
+    if (args.includes('rev-parse')) return '0123456789abcdef\n';
+    return '';
+  };
+
+  await collectBuildSourceMetadata({
+    rootDir: repoDir,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_REPO_DIR: repoDir,
+    },
+    runCaptureImpl,
+  });
+
+  assert.deepEqual(
+    calls.map(({ command, args, options }) => ({ command, args, cwd: options.cwd })),
+    [
+      {
+        command: 'git',
+        args: ['-c', 'core.fsmonitor=false', 'rev-parse', 'HEAD'],
+        cwd: repoDir,
+      },
+      {
+        command: 'git',
+        args: ['-c', 'core.fsmonitor=false', 'diff', '--no-ext-diff', '--binary', 'HEAD', '--'],
+        cwd: repoDir,
+      },
+      {
+        command: 'git',
+        args: ['-c', 'core.fsmonitor=false', 'ls-files', '--others', '--exclude-standard', '-z'],
+        cwd: repoDir,
+      },
+    ],
+  );
+});

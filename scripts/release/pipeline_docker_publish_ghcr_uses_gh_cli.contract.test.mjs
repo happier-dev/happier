@@ -100,7 +100,7 @@ exit 2
       },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 

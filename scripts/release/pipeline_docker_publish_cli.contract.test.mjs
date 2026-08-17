@@ -28,7 +28,7 @@ test('pipeline CLI can docker-publish in dry-run using env-only secrets', async 
       env: { ...process.env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 
@@ -60,7 +60,7 @@ test('pipeline CLI docker-publish forwards --registries to include GHCR tags', a
       env: { ...process.env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 

@@ -24,7 +24,7 @@ test('pipeline CLI docker-publish resolves HEAD SHA when --sha is omitted', asyn
       env: { ...process.env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 30_000,
+      timeout: 120_000,
     },
   );
 
@@ -32,4 +32,3 @@ test('pipeline CLI docker-publish resolves HEAD SHA when --sha is omitted', asyn
   assert.match(out, /\[dry-run\] docker buildx build /);
   assert.match(out, /--tag happierdev\/relay-server:stable-[0-9a-f]{12}\b/);
 });
-

@@ -25,6 +25,8 @@ test('release dev to preview dry-run reports CLI and stack facts without predict
         'preview',
         '--deploy-targets',
         'cli,stack',
+        '--release-notes-id',
+        'test-release',
         '--dry-run',
       ],
       {

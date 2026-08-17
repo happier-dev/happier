@@ -342,7 +342,7 @@ async function createArchiveViaNodeBackend({
   const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
-      execOrThrow(
+      await execOrThrow(
         process.execPath,
         [
           NODE_ARCHIVE_HELPER_PATH,
@@ -615,7 +615,7 @@ async function execTarWithRetry(args, options = {}) {
   const retryOnTimeout = options.retryOnTimeout !== false;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
-      execOrThrow('tar', args, {
+      await execOrThrow('tar', args, {
         ...options,
         env: resolveArchiveTarEnv(options.env ?? process.env),
         timeoutMs,
@@ -663,7 +663,7 @@ export async function maybeSignFile({ path, trustedComment = '' }) {
     args.push('-t', trustedComment);
   }
   try {
-    execOrThrow('minisign', args, {
+    await execOrThrow('minisign', args, {
       stdio: ['pipe', 'inherit', 'inherit'],
       // Support empty passphrases (operators sometimes intentionally leave the key unencrypted).
       // If the env var is present, always feed a newline to avoid minisign prompting/hanging.

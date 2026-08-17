@@ -18,7 +18,13 @@ test('tests workflow exposes a thin docker release-assets job through release-va
 
   assert.match(
     raw,
-    /release-assets-docker:[\s\S]*?node scripts\/pipeline\/run\.mjs release-validate \\\n[\s\S]*?--suite docker-release-assets \\\n[\s\S]*?--platform linux \\\n[\s\S]*?--source local-build \\\n[\s\S]*?--ref "\."/,
-    'release-assets-docker job should call the unified release-validation runner against the local-build Docker suite',
+    /release-assets-docker:[\s\S]*?ref: \$\{\{ inputs\.checkout_sha != '' && inputs\.checkout_sha \|\| github\.sha \}\}/,
+    'release-assets-docker should check out the exact candidate SHA',
+  );
+  assert.match(raw, /release-assets-docker:[\s\S]*?test "\$\(git rev-parse HEAD\)" = "\$CHECKOUT_SHA"/);
+  assert.match(
+    raw,
+    /release-assets-docker:[\s\S]*?RELAY_UPGRADE_TO_SOURCE:[\s\S]*?inputs\.relay_upgrade_to_source[\s\S]*?RELAY_UPGRADE_TO_REF:[\s\S]*?inputs\.relay_upgrade_to_ref[\s\S]*?--to-source "\$\{RELAY_UPGRADE_TO_SOURCE\}" \\\n[\s\S]*?--to-ref "\$\{RELAY_UPGRADE_TO_REF\}"/,
+    'release-assets-docker should upgrade the selected published predecessor to the exact requested candidate artifact',
   );
 });

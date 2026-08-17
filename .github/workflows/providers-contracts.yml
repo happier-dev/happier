@@ -79,13 +79,18 @@ concurrency:
 
 jobs:
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -94,25 +99,25 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   trusted_ref_guard:
-    needs: [release_actor_guard]
     runs-on: ubuntu-latest
     steps:
-      - name: Enforce trusted refs for manual dispatch
+      - name: Enforce trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
-            exit 0
-          fi
-          case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
-            *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
-              exit 1
-              ;;
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/providers-contracts.yml@refs/heads/main") ;;
+            *) echo "Untrusted providers workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
           esac
 
   providers:
-    needs: [trusted_ref_guard]
+    needs: [release_actor_guard]
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:

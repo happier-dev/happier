@@ -67,6 +67,21 @@ test('pipeline CLI supports help for checks', async () => {
   assert.match(out, /--profile/);
 });
 
+test('pipeline CLI release help documents conductor and canonical notes identities', async () => {
+  const out = execFileSync(process.execPath, [pipelineCli, 'help', 'release'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+
+  assert.match(out, /--operation-id <id>/);
+  assert.match(out, /--release-notes-id <id>/);
+  assert.match(out, /same conductor operation identity/i);
+  assert.match(out, /approved canonical release-note entry/i);
+});
+
 test('pipeline CLI supports <command> --help', async () => {
   const out = execFileSync(process.execPath, [pipelineCli, 'expo-submit', '--help'], {
     cwd: repoRoot,
@@ -173,8 +188,42 @@ test('pipeline CLI help reflects the current release-validate execution surface'
   assert.match(help, /artifact-verify \(local-build or --product\/--version\)/);
   assert.match(help, /docker-release-assets \(local-build\|published-channel; published-channel -> local-build upgrade\)/);
   assert.match(help, /cli-update \(published-channel\|published-tag -> published-channel\|published-tag\|local-build\|local-pack\)/);
-  assert.match(help, /server-upgrade \(dry-run planning only\)/);
+  assert.doesNotMatch(help, /server-upgrade/);
   assert.doesNotMatch(help, /Later phases will add executor wiring/);
+});
+
+test('pipeline CLI help describes the public release contract reader', async () => {
+  const help = execFileSync(process.execPath, [pipelineCli, 'help', 'release-contract'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+
+  assert.match(help, /release-contract/);
+  assert.match(help, /JSON/);
+  assert.match(help, /integrated.*stable.*deep/s);
+});
+
+test('pipeline CLI help describes bounded release-profile selection', async () => {
+  const help = execFileSync(process.execPath, [pipelineCli, 'help', 'release'], {
+    cwd: repoRoot,
+    env: { ...process.env },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
+
+  assert.match(help, /--release-profile/);
+  assert.match(help, /--qualified-v4-activation-approval/);
+  assert.match(help, /--resume-run-id/);
+  assert.match(help, /separate irreversible-migration approval/i);
+  assert.match(help, /integrated.*stable.*deep/s);
+  assert.match(help, /production.*stable/i);
+  assert.match(help, /--bump.*must be none.*exact-SHA/i);
+  assert.match(help, /Materialize and commit CHANGELOG and version changes.*--bump none/i);
+  assert.match(help, /Dry-run remains available only with --bump none/i);
 });
 
 test('pipeline help covers every supported subcommand', async () => {

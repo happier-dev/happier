@@ -32,11 +32,21 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        description: "Resume — verified immutable version to return without rebuilding or promoting (requires authorized_sha)"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         description: "Caller-bound source SHA (required when invoked by the full release)"
         required: false
         default: ""
         type: string
+      publish_rolling:
+        description: "Publication — move the rolling channel after publishing the immutable release"
+        required: true
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -58,10 +68,22 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
         type: string
+      publish_rolling:
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      version:
+        description: Exact immutable HStack version published by this invocation
+        value: ${{ jobs.finalize_publish.outputs.version || jobs.release_actor_guard.outputs.resume_version }}
 
 permissions:
   contents: read
@@ -103,14 +125,45 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      resume_version: ${{ steps.resume.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Reject conflicting recovery modes
+        env:
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+        run: |
+          set -euo pipefail
+          test -z "$RETRY_VERSION" || test -z "$RESUME_VERSION"
+      - name: Setup Node for immutable candidate verification
+        if: ${{ inputs.resume_version != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Verify resumed immutable HStack candidate
+        id: resume
+        if: ${{ inputs.resume_version != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-release-candidate-identity.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$AUTHORIZED_SHA" \
+            --candidate-product hstack \
+            --candidate-version "$RESUME_VERSION"
+          echo "version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -118,11 +171,15 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  publish:
-    if: ${{ inputs.retry_version == '' }}
+  prepare:
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
-    environment: release-shared
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      base_version: ${{ steps.candidate_base.outputs.base_version }}
+      embedded_policy_env: ${{ steps.channel_meta.outputs.embedded_policy_env }}
     steps:
       - name: Enforce stable publishing gate
         if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
@@ -130,8 +187,8 @@ jobs:
           echo "Stable hstack binary publishing is disabled. Re-run with allow_stable=true if intentional." >&2
           exit 1
 
-      - name: Checkout workflow repo
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
@@ -139,7 +196,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -147,39 +204,66 @@ jobs:
 
       - name: Resolve channel metadata
         id: channel_meta
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
-            --channel "${{ inputs.channel }}" \
-            --source-ref "${{ inputs.source_ref }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --source-ref "$SOURCE_REF" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
-      - name: Checkout source ref
-        uses: actions/checkout@v4
+      - name: Checkout exact source as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
-          ref: ${{ steps.channel_meta.outputs.source_ref }}
+          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.channel_meta.outputs.source_ref }}
+          path: .candidate-source
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
           persist-credentials: false
 
-      - name: Enforce caller-authorized source SHA
-        if: ${{ inputs.authorized_sha != '' }}
+      - name: Freeze and verify source SHA
+        id: source
         env:
-          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          CALLER_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
+          source_sha="$(git -C .candidate-source rev-parse HEAD)"
+          if [ -n "$CALLER_SHA" ]; then test "$source_sha" = "$CALLER_SHA"; fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Read candidate base version as data
+        id: candidate_base
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { normalizeRollingBaseVersion } from "./scripts/pipeline/release/lib/rolling-version-allocation.mjs";
+            const value = JSON.parse(fs.readFileSync(".candidate-source/apps/stack/package.json", "utf8")).version;
+            if (typeof value !== "string" || normalizeRollingBaseVersion(value) !== value) {
+              throw new Error("Candidate HStack package version must be exact canonical base semver");
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `base_version=${value}\n`);
+          '
+
+      - name: Package exact candidate source as inert transport data
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git -C .candidate-source archive \
+            --format=tar.gz \
+            --output "${RUNNER_TEMP}/hstack-source-${SOURCE_SHA}.tar.gz" \
+            HEAD
+
+      - name: Upload exact candidate source transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hstack-source-${{ steps.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/hstack-source-${{ steps.source.outputs.source_sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -188,12 +272,9 @@ jobs:
           corepack prepare yarn@1.22.22 --activate
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
-
-      - name: Install minisign (signing + verification)
-        uses: ./.github/actions/bootstrap-minisign
 
       - name: Install dependencies
         env:
@@ -206,28 +287,319 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Publish hstack binaries (pipeline)
+      - name: Allocate immutable version
+        id: version
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          CANDIDATE_BASE_VERSION: ${{ steps.candidate_base.outputs.base_version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/publish-hstack-binaries.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --base-version "$CANDIDATE_BASE_VERSION" \
+            --resolve-version-only \
+            --github-output "$GITHUB_OUTPUT" \
+            --run-contracts false \
+            --check-installers false
+
+  build_candidate:
+    name: Build unsigned HStack candidate
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare]
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Download exact candidate source transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-source-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/hstack-source
+      - name: Materialize candidate source without repository authority
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/hstack-source/hstack-source-${SOURCE_SHA}.tar.gz"
+          test -f "$archive"
+          tar -xzf "$archive" -C "$GITHUB_WORKSPACE"
+          test -f "$GITHUB_WORKSPACE/apps/stack/package.json"
+          test -f "$GITHUB_WORKSPACE/scripts/pipeline/run.mjs"
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.5
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Build unsigned HStack archives
+        env:
+          MINISIGN_SECRET_KEY: ""
+          MINISIGN_PASSPHRASE: ""
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/build-hstack-binaries.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --version "$RELEASE_VERSION"
+          node scripts/pipeline/release/verify-artifacts.mjs \
+            --artifacts-dir dist/release-assets/stack \
+            --require-all-archives-checksummed
+          find dist/release-assets/stack -type f ! -name '*.tar.gz' -delete
+          test "$(find dist/release-assets/stack -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hstack-candidate-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/release-assets/stack/*.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
+  finalize_darwin:
+    name: Sign and notarize HStack (${{ matrix.platform_key }})
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare, build_candidate]
+    runs-on: ${{ matrix.runner }}
+    environment: release-shared
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: darwin-x64
+            runner: macos-15-intel
+            target: darwin-x64
+          - platform_key: darwin-arm64
+            runner: macos-15
+            target: darwin-arm64
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-scripts
+      - name: Build trusted release archive runtime
+        run: yarn workspace @happier-dev/release-runtime build
+      - name: Require Apple signing and notarization credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER_ID APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required macOS payload signing/notarization secret: ${name}" >&2
+              exit 1
+            fi
+          done
+      - name: Setup Apple code signing identity
+        id: apple_id
+        uses: ./.github/actions/setup-apple-codesigning
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Download unsigned candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-candidate-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/release-assets/stack
+      - name: Sign, notarize, and verify exact HStack archive
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          HSTACK_TARGET: ${{ matrix.target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${GITHUB_WORKSPACE}/dist/release-assets/stack/hstack-v${RELEASE_VERSION}-${HSTACK_TARGET}.tar.gz"
+          PAYLOAD="hstack-v${RELEASE_VERSION}-${HSTACK_TARGET}"
+          EVIDENCE="${GITHUB_WORKSPACE}/dist/notary/${PLATFORM_KEY}.hstack.json"
+          node scripts/pipeline/release/notarize-standalone-binary.mjs \
+            --archive "${ARCHIVE}" \
+            --expected-payload "${PAYLOAD}" \
+            --identity "${APPLE_SIGNING_IDENTITY}" \
+            --out "${EVIDENCE}"
+          VERIFY_DIR="${RUNNER_TEMP}/hstack-verify-${PLATFORM_KEY}"
+          node scripts/pipeline/release/node-archive.mjs \
+            --extract-archive-path "${ARCHIVE}" \
+            --extract-dir "${VERIFY_DIR}"
+          node scripts/pipeline/release/notarize-standalone-binary.mjs \
+            --verify-evidence \
+            --payload "${VERIFY_DIR}/${PAYLOAD}" \
+            --evidence "${EVIDENCE}"
+      - name: Clean Apple signing material
+        if: always()
+        env:
+          APPLE_KEYCHAIN_PATH: ${{ steps.apple_id.outputs.keychain-path }}
+          APPLE_CERTIFICATE_PATH: ${{ steps.apple_id.outputs.certificate-path }}
+        run: |
+          security delete-keychain "$APPLE_KEYCHAIN_PATH" >/dev/null 2>&1 || true
+          rm -f "$APPLE_CERTIFICATE_PATH"
+      - name: Assemble signed Darwin leaf handoff
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          HSTACK_TARGET: ${{ matrix.target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+        run: |
+          set -euo pipefail
+          rm -rf dist/signed-leaf
+          mkdir -p dist/signed-leaf
+          cp "dist/release-assets/stack/hstack-v${RELEASE_VERSION}-${HSTACK_TARGET}.tar.gz" dist/signed-leaf/
+          cp "dist/notary/${PLATFORM_KEY}.hstack.json" dist/signed-leaf/
+          cp "dist/notary/${PLATFORM_KEY}.hstack.json.notary-log.json" dist/signed-leaf/
+      - name: Upload signed Darwin leaf and evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hstack-signed-${{ matrix.platform_key }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/signed-leaf
+          if-no-files-found: error
+          retention-days: 2
+
+  finalize_publish:
+    name: Finalize and publish exact HStack candidate
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
+    needs: [prepare, build_candidate, finalize_darwin]
+    runs-on: ubuntu-24.04
+    environment: release-shared
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Install minisign
+        uses: ./.github/actions/bootstrap-minisign
+      - name: Install dependencies
+        env:
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Download unsigned candidate matrix
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: hstack-candidate-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/release-assets/stack
+      - name: Download signed Darwin leaves
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: hstack-signed-*-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/signed-darwin
+          merge-multiple: true
+      - name: Overlay exact signed Darwin leaves and evidence
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          cp "dist/signed-darwin/hstack-v${RELEASE_VERSION}-darwin-arm64.tar.gz" dist/release-assets/stack/
+          cp "dist/signed-darwin/hstack-v${RELEASE_VERSION}-darwin-x64.tar.gz" dist/release-assets/stack/
+          cp "dist/signed-darwin/darwin-arm64.hstack.json" dist/release-assets/stack/
+          cp "dist/signed-darwin/darwin-x64.hstack.json" dist/release-assets/stack/
+      - name: Create scoped release token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Finalize immutable Release then rolling projection
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CANDIDATE_BASE_VERSION: ${{ needs.prepare.outputs.base_version }}
+          AUTHORIZED_SHA: ${{ needs.prepare.outputs.source_sha }}
+          PUBLISH_PHASE: ${{ inputs.publish_rolling == false && 'publish-immutable' || 'publish' }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs publish-hstack-binaries \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
-            --release-message "${{ inputs.release_message }}" \
-            --run-contracts "true" \
-            --check-installers "true"
-
-    permissions:
-      contents: write
+          node scripts/pipeline/release/publish-hstack-binaries.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
+            --version "$RELEASE_VERSION" \
+            --base-version "$CANDIDATE_BASE_VERSION" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --phase "$PUBLISH_PHASE" \
+            --prepared-artifacts \
+            --skip-smoke \
+            --run-contracts true \
+            --check-installers true
 
   promote_existing:
     name: Recover rolling HStack projection
-    if: ${{ inputs.retry_version != '' }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -235,14 +607,14 @@ jobs:
       contents: write
     steps:
       - name: Checkout trusted workflow control bytes
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -259,7 +631,7 @@ jobs:
           args: --frozen-lockfile --ignore-engines
       - name: Create scoped release token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -281,12 +653,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/publish-hstack-binaries.mjs \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
-            --release-message "${{ inputs.release_message }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

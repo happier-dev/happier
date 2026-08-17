@@ -65,14 +65,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: promote-docs.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -80,17 +107,51 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  promote:
+  resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
-    environment: release-shared
+    outputs:
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
     steps:
-      - name: Resolve source ref
-        id: resolve
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Enforce trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
-          env_name="${{ inputs.environment }}"
-          src="${{ inputs.source_ref }}"
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-docs.yml@refs/heads/main") ;;
+            *) echo "Untrusted promote-docs workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
+      - name: Resolve source ref
+        id: resolve
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          ALLOW_CROSS_PROMOTE: ${{ inputs.allow_cross_promote }}
+        run: |
+          set -euo pipefail
+          env_name="$DEPLOY_ENVIRONMENT"
+          src="$SOURCE_REF"
           if [ "$src" = "auto" ]; then
             if [ "$env_name" = "preview" ]; then
               src="preview"
@@ -100,12 +161,19 @@ jobs:
           fi
 
           # Guardrails: allow using non-default source ref only when explicitly confirmed.
-          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "${{ inputs.allow_cross_promote }}" != "true" ]; then
+          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "$ALLOW_CROSS_PROMOTE" != "true" ]; then
             echo "Refusing to promote '$src' to production without allow_cross_promote=true." >&2
             exit 1
           fi
 
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
+          if [[ "$src" == *$'\n'* || "$src" == *$'\r'* ]] || ! git check-ref-format --branch "$src" >/dev/null 2>&1; then
+            if [[ ! "$src" =~ ^[a-f0-9]{40}$ ]]; then
+              echo "Invalid promotion source ref." >&2
+              exit 1
+            fi
+          fi
+
+          echo "source_ref=$src" >> "$GITHUB_OUTPUT"
 
       - name: Enforce trusted refs for manual dispatch
         run: |
@@ -121,25 +189,32 @@ jobs:
               ;;
           esac
 
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
+      - name: Bind exact authorized source SHA
+        id: candidate
+        env:
+          SOURCE_REF: ${{ steps.resolve.outputs.source_ref }}
+        run: |
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "$SOURCE_REF" \
+            --remote origin \
+            --github-output "$GITHUB_OUTPUT"
 
-      - name: Checkout source ref
-        uses: actions/checkout@v4
+  validate_candidate:
+    needs: [resolve_source]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ steps.resolve.outputs.ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.resolve_source.outputs.candidate_sha }}
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -154,46 +229,78 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        uses: ./.github/actions/install-yarn-dependencies
+        run: |
+          set -euo pipefail
+          bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+
+      - name: Build docs
+        if: inputs.run_build
+        run: yarn workspace docs build
+
+  promote:
+    needs: [release_actor_guard, resolve_source, validate_candidate]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    steps:
+      - name: Checkout trusted promotion control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          args: --frozen-lockfile --ignore-engines
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Resolve deploy branch SHA (before)
         id: deploy_before
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/docs"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
+          ref="deploy/${DEPLOY_ENVIRONMENT}/docs"
+          sha="$(gh api "repos/${GH_REPO}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Build docs
-        if: inputs.run_build
-        run: yarn workspace docs build
 
       - name: Promote source ref to deploy branch
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          CANDIDATE_SHA: ${{ needs.resolve_source.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs promote-deploy-branch \
-            --deploy-environment "${{ inputs.environment }}" \
+          node scripts/pipeline/github/promote-deploy-branch.mjs \
+            --deploy-environment "$DEPLOY_ENVIRONMENT" \
             --component docs \
-            --sha "$(git rev-parse HEAD)" \
-            --summary-file "${GITHUB_STEP_SUMMARY}"
+            --sha "$CANDIDATE_SHA" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve deploy branch SHA (after)
         id: deploy_after
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/docs"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
+          ref="deploy/${DEPLOY_ENVIRONMENT}/docs"
+          sha="$(gh api "repos/${GH_REPO}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
           echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       - name: Trigger deploy webhook(s) (force_deploy, no branch change)
@@ -204,17 +311,24 @@ jobs:
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
           HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs deploy \
-            --deploy-environment "${{ inputs.environment }}" \
+          node scripts/pipeline/deploy/trigger-webhooks.mjs \
+            --environment "$DEPLOY_ENVIRONMENT" \
             --component "docs" \
-            --repository "${{ github.repository }}" \
-            --ref-name "deploy/${{ inputs.environment }}/docs"
+            --repository "$REPOSITORY" \
+            --ref-name "deploy/${DEPLOY_ENVIRONMENT}/docs" \
+            --sha "$DEPLOY_SHA"
 
       - name: Deploy note
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.deploy_after.outputs.sha }}
         run: |
           set -euo pipefail
-          echo "Deployment is triggered automatically by pushes to deploy/${{ inputs.environment }}/docs." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment is triggered automatically by pushes to deploy/${DEPLOY_ENVIRONMENT}/docs." >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- deploy_branch_sha: \`${{ steps.deploy_after.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- deploy_branch_sha: \`${DEPLOY_SHA}\`" >> "$GITHUB_STEP_SUMMARY"

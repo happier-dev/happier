@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'github', 'promote-branch.mjs');
+const AUTHORIZED_SOURCE_SHA = '1111111111111111111111111111111111111111';
+const ADVANCED_SOURCE_SHA = '2222222222222222222222222222222222222222';
 
 function writeExecutable(filePath, content) {
   fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o700 });
@@ -25,6 +27,10 @@ function writeGhStub(binDir) {
       '',
       'const args = process.argv.slice(2);',
       "if (args[0] !== 'api') process.exit(0);",
+      '',
+      'const sourceShaSequence = String(process.env.GH_STUB_SOURCE_SHA_SEQUENCE ?? "SOURCE_SHA").split(",");',
+      'const sourceShaStatePath = process.env.GH_STUB_SOURCE_SHA_STATE_PATH;',
+      'let sourceShaReadCount = sourceShaStatePath && fs.existsSync(sourceShaStatePath) ? Number(fs.readFileSync(sourceShaStatePath, "utf8")) || 0 : 0;',
       '',
       "let method = 'GET';",
       'let endpoint = "";',
@@ -56,9 +62,15 @@ function writeGhStub(binDir) {
       '}',
       '',
       'if (method === "GET") {',
-      '  if (endpoint.includes("/git/ref/heads/dev")) { process.stdout.write("SOURCE_SHA\\n"); process.exit(0); }',
+      '  if (endpoint.includes("/git/ref/heads/dev")) {',
+      '    const sourceSha = sourceShaSequence[Math.min(sourceShaReadCount, sourceShaSequence.length - 1)];',
+      '    sourceShaReadCount += 1;',
+      '    if (sourceShaStatePath) fs.writeFileSync(sourceShaStatePath, String(sourceShaReadCount), "utf8");',
+      '    process.stdout.write(`${sourceSha}\\n`);',
+      '    process.exit(0);',
+      '  }',
       '  if (endpoint.includes("/git/ref/heads/main")) { process.stdout.write("TARGET_SHA\\n"); process.exit(0); }',
-      '  if (endpoint.includes("/compare/main...dev")) {',
+      '  if (endpoint.includes("/compare/")) {',
       '    process.stdout.write(JSON.stringify({ status: "ahead", ahead_by: 1, behind_by: 0, files: [] }));',
       '    process.exit(0);',
       '  }',
@@ -85,12 +97,14 @@ function writeGhStub(binDir) {
   return ghPath;
 }
 
-function runPromoteBranch({ patchOutcome }) {
+function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE_SHA] }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-promote-branch-script-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
 
   const logPath = path.join(dir, 'gh.log');
+  const sourceShaStatePath = path.join(dir, 'source-sha-read-count');
+  fs.writeFileSync(logPath, '', 'utf8');
   writeGhStub(binDir);
 
   const env = {
@@ -100,6 +114,8 @@ function runPromoteBranch({ patchOutcome }) {
     GH_TOKEN: 'test-token',
     GH_STUB_LOG: logPath,
     GH_STUB_PATCH_OUTCOME: patchOutcome ?? 'require_typed_force',
+    GH_STUB_SOURCE_SHA_SEQUENCE: sourceShaSequence.join(','),
+    GH_STUB_SOURCE_SHA_STATE_PATH: sourceShaStatePath,
   };
 
   const res = spawnSync(
@@ -108,6 +124,8 @@ function runPromoteBranch({ patchOutcome }) {
       scriptPath,
       '--source',
       'dev',
+      '--source-sha',
+      AUTHORIZED_SOURCE_SHA,
       '--target',
       'main',
       '--mode',
@@ -147,3 +165,13 @@ test('promote-branch does not mask PATCH failures by attempting create', () => {
   assert.ok(!calls.some((c) => c.includes('-X') && c.includes('POST')), 'expected no POST fallback create call');
 });
 
+test('promote-branch rejects a source advance after planning and before target mutation', () => {
+  const { res, calls } = runPromoteBranch({
+    sourceShaSequence: [AUTHORIZED_SOURCE_SHA, ADVANCED_SOURCE_SHA],
+  });
+
+  assert.notEqual(res.status, 0, 'expected source-drift rejection');
+  assert.match(res.stderr, /Source branch 'dev' no longer resolves to authorized SHA/);
+  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('PATCH')), 'must not mutate the target after source drift');
+  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('POST')), 'must not create the target after source drift');
+});

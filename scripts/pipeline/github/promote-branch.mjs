@@ -4,6 +4,8 @@ import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
+const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
+
 function fail(message) {
   console.error(message);
   process.exit(1);
@@ -152,6 +154,7 @@ function main() {
   const { values } = parseArgs({
     options: {
       source: { type: 'string' },
+      'source-sha': { type: 'string', default: '' },
       target: { type: 'string' },
       mode: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
@@ -163,6 +166,7 @@ function main() {
   });
 
   const source = String(values.source ?? '').trim();
+  const authorizedSourceSha = String(values['source-sha'] ?? '').trim();
   const target = String(values.target ?? '').trim();
   const mode = String(values.mode ?? '').trim();
   const dryRun = values['dry-run'] === true;
@@ -173,6 +177,12 @@ function main() {
   if (!source || !target) fail('--source and --target are required');
   if (source === target) fail(`Refusing to promote a branch onto itself (${target}).`);
   if (mode !== 'fast_forward' && mode !== 'reset') fail(`--mode must be 'fast_forward' or 'reset' (got: ${mode})`);
+  if (authorizedSourceSha && !FULL_GIT_SHA.test(authorizedSourceSha)) {
+    fail('--source-sha must be a full 40-character lowercase Git commit SHA.');
+  }
+  if (!dryRun && !authorizedSourceSha) {
+    fail('--source-sha is required unless --dry-run is set.');
+  }
 
   const expectedConfirm = mode === 'fast_forward' ? `promote ${target} from ${source}` : `reset ${target} from ${source}`;
   if (confirm !== expectedConfirm) {
@@ -200,10 +210,18 @@ function main() {
   const sourceRefApi = repo ? `repos/${repo}/git/ref/heads/${source}` : `repos/OWNER/REPO/git/ref/heads/${source}`;
   const targetRefApi = repo ? `repos/${repo}/git/ref/heads/${target}` : `repos/OWNER/REPO/git/ref/heads/${target}`;
 
-  const sourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
+  const resolvedSourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
+  const sourceSha = resolvedSourceSha || authorizedSourceSha;
+  if (!dryRun && sourceSha !== authorizedSourceSha) {
+    fail(`Source branch '${source}' no longer resolves to authorized SHA '${authorizedSourceSha}' (currently '${sourceSha || 'unavailable'}').`);
+  }
   const targetSha = run('gh', ['api', targetRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim();
 
-  const compareApi = repo ? `repos/${repo}/compare/${target}...${source}` : `repos/OWNER/REPO/compare/${target}...${source}`;
+  const compareBase = targetSha || target;
+  const compareHead = sourceSha || source;
+  const compareApi = repo
+    ? `repos/${repo}/compare/${compareBase}...${compareHead}`
+    : `repos/OWNER/REPO/compare/${compareBase}...${compareHead}`;
   const compareJson = run(
     'gh',
     [
@@ -229,6 +247,7 @@ function main() {
 - target: \`${target}\`
 - mode: \`${mode}\`
 - dry_run: \`${dryRun}\`
+- authorized source SHA: \`${authorizedSourceSha || '(not required for dry-run)'}\`
 - origin/${target}: \`${targetSha || '(unavailable)'}\`
 - ${source}: \`${sourceSha || '(unavailable)'}\`
 - commits to promote: \`${String(commitCount)}\`
@@ -256,11 +275,16 @@ function main() {
 
   if (!repo) fail('Missing repo for update operation.');
 
+  const currentSourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv }).trim();
+  if (currentSourceSha !== authorizedSourceSha) {
+    fail(`Source branch '${source}' no longer resolves to authorized SHA '${authorizedSourceSha}' (currently '${currentSourceSha || 'unavailable'}').`);
+  }
+
   const updateApi = `repos/${repo}/git/refs/heads/${target}`;
   const force = mode === 'reset';
 
   try {
-    run('gh', ['api', '-X', 'PATCH', updateApi, '-F', `sha=${sourceSha}`, '-F', `force=${force}`], { env: ghEnv });
+    run('gh', ['api', '-X', 'PATCH', updateApi, '-F', `sha=${authorizedSourceSha}`, '-F', `force=${force}`], { env: ghEnv });
   } catch (err) {
     if (!isGhNotFoundError(err)) {
       fail(`Failed to update refs/heads/${target}.\n${formatExecError(err)}`);
@@ -268,7 +292,7 @@ function main() {
 
     // If ref doesn't exist yet, create it.
     const createApi = `repos/${repo}/git/refs`;
-    run('gh', ['api', '-X', 'POST', createApi, '-f', `ref=refs/heads/${target}`, '-f', `sha=${sourceSha}`], {
+    run('gh', ['api', '-X', 'POST', createApi, '-f', `ref=refs/heads/${target}`, '-f', `sha=${authorizedSourceSha}`], {
       env: ghEnv,
     });
   }

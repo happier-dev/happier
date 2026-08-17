@@ -97,18 +97,42 @@ on:
         required: false
         default: true
         type: boolean
+      run_artifact_verify:
+        required: false
+        default: false
+        type: boolean
       installers_channel:
         required: false
         default: stable
+        type: string
+      installers_source:
+        required: false
+        default: published-channel
+        type: string
+      installers_ref:
+        required: false
+        default: ""
         type: string
       run_binary_smoke:
         required: false
         default: true
         type: boolean
+      checkout_sha:
+        required: false
+        default: ""
+        type: string
       run_cli_update_continuity:
         required: false
         default: false
         type: boolean
+      cli_update_to_source:
+        required: false
+        default: local-build
+        type: string
+      cli_update_to_ref:
+        required: false
+        default: "."
+        type: string
       run_daemon_continuity:
         required: false
         default: false
@@ -121,6 +145,14 @@ on:
         required: false
         default: false
         type: boolean
+      relay_upgrade_to_source:
+        required: false
+        default: local-build
+        type: string
+      relay_upgrade_to_ref:
+        required: false
+        default: "."
+        type: string
       run_self_host_systemd:
         required: false
         default: false
@@ -177,10 +209,14 @@ jobs:
             wrapper_name: happier-cliproxyapi-managed.exe
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -238,7 +274,7 @@ jobs:
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Detect UI E2E-relevant changes
         id: changes
@@ -261,7 +297,7 @@ jobs:
 
       - name: Setup Node (GitHub Actions)
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -269,7 +305,7 @@ jobs:
 
       - name: Setup Node (act)
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -309,7 +345,7 @@ jobs:
 
       - name: Upload UI E2E artifacts (Playwright)
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-e2e-playwright-artifacts
           path: |
@@ -329,7 +365,7 @@ jobs:
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Verify Lima host prerequisites
         run: |
@@ -337,7 +373,7 @@ jobs:
           sw_vers
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -364,7 +400,7 @@ jobs:
 
       - name: Upload WSREPL Lima artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-e2e-wsrepl-lima-artifacts
           path: |
@@ -380,10 +416,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -414,7 +450,7 @@ jobs:
 
       - name: Upload Mobile E2E artifacts (Maestro)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mobile-e2e-maestro-android-artifacts
           path: |
@@ -429,10 +465,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -462,7 +498,7 @@ jobs:
 
       - name: Upload Mobile E2E artifacts (Maestro)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: mobile-e2e-maestro-ios-artifacts
           path: |
@@ -476,11 +512,11 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -488,7 +524,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -521,11 +557,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -533,7 +569,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -543,7 +579,7 @@ jobs:
           corepack prepare yarn@1.22.22 --activate
 
       - name: Setup Bun 1.3.5
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -571,6 +607,7 @@ jobs:
           yarn workspace @happier-dev/bootstrap test
           yarn workspace @happier-dev/plugin-sdk test
           yarn workspace @happier-dev/plugin-ui test
+          yarn workspace @happier-dev/plugins-inspector test
           yarn --cwd packages/relay-server test
 
       - name: Run public plugin SDK consumer contracts
@@ -583,11 +620,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -595,7 +632,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -639,11 +676,11 @@ jobs:
           --health-retries=10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -651,7 +688,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -695,11 +732,11 @@ jobs:
       TMPDIR: /tmp
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -707,7 +744,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -772,10 +809,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -807,10 +844,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -842,20 +879,20 @@ jobs:
     timeout-minutes: 20
     env:
       INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
-      INSTALLERS_SOURCE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) && 'published-channel' || 'local-build' }}
-      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_SOURCE: ${{ (github.event_name == 'workflow_call' && inputs.installers_source) || (github.event_name == 'workflow_dispatch' && 'published-channel') || (((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel') || 'local-build' }}
+      INSTALLERS_REF: ${{ (github.event_name == 'workflow_call' && inputs.installers_ref != '' && inputs.installers_ref) || ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel) || (((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable') || '.' }}
       INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -891,20 +928,20 @@ jobs:
     timeout-minutes: 25
     env:
       INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
-      INSTALLERS_SOURCE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) && 'published-channel' || 'local-build' }}
-      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_SOURCE: ${{ (github.event_name == 'workflow_call' && inputs.installers_source) || (github.event_name == 'workflow_dispatch' && 'published-channel') || (((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel') || 'local-build' }}
+      INSTALLERS_REF: ${{ (github.event_name == 'workflow_call' && inputs.installers_ref != '' && inputs.installers_ref) || ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel) || (((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable') || '.' }}
       INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -940,20 +977,20 @@ jobs:
     timeout-minutes: 45
     env:
       INSTALLERS_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
-      INSTALLERS_SOURCE: ${{ ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) && 'published-channel' || 'local-build' }}
-      INSTALLERS_REF: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || '.' }}
+      INSTALLERS_SOURCE: ${{ (github.event_name == 'workflow_call' && inputs.installers_source) || (github.event_name == 'workflow_dispatch' && 'published-channel') || (((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'published-channel') || 'local-build' }}
+      INSTALLERS_REF: ${{ (github.event_name == 'workflow_call' && inputs.installers_ref != '' && inputs.installers_ref) || ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel) || (((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable') || '.' }}
       INSTALLERS_RELEASE_CHANNEL: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.installers_channel || ((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main')) && 'stable' || 'preview' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -983,6 +1020,71 @@ jobs:
             --ref "$env:INSTALLERS_REF" `
             --release-channel "$env:INSTALLERS_RELEASE_CHANNEL"
 
+  artifact-verify:
+    if: ${{ inputs.run_artifact_verify }}
+    name: Candidate Artifact Verify (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Build candidate CLI archive
+        env:
+          VALIDATION_VERSION: 0.0.0-candidate.${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs release-build-cli-binaries \
+            --channel preview \
+            --version "$VALIDATION_VERSION" \
+            --targets linux-x64
+
+      - name: Verify candidate artifact archive
+        run: |
+          node scripts/pipeline/run.mjs release-validate \
+            --suite artifact-verify \
+            --platform linux \
+            --source local-build \
+            --ref dist/release-assets/cli
+
   binary-smoke:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_binary_smoke }}
     name: Binary Smoke (isolated cwd)
@@ -990,17 +1092,30 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -1018,12 +1133,16 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run isolated binary smoke tests
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
         run: |
+          set -euo pipefail
+          CHECKOUT_SHA="${CHECKOUT_SHA:-$(git rev-parse HEAD)}"
           node scripts/pipeline/run.mjs release-validate \
             --suite binary-smoke \
             --platform linux \
-            --source local-build \
-            --ref "."
+            --source git-ref-build \
+            --ref "$CHECKOUT_SHA"
 
   cli-update-continuity:
     if: ${{ inputs.run_cli_update_continuity }}
@@ -1032,12 +1151,27 @@ jobs:
     timeout-minutes: 120
     env:
       CLI_UPDATE_FROM_CHANNEL: ${{ inputs.installers_channel }}
+      CLI_UPDATE_TO_SOURCE: ${{ inputs.cli_update_to_source }}
+      CLI_UPDATE_TO_REF: ${{ inputs.cli_update_to_ref }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1066,12 +1200,12 @@ jobs:
             --platform linux \
             --from-source published-channel \
             --from-ref "${CLI_UPDATE_FROM_CHANNEL}" \
-            --to-source local-build \
-            --to-ref "."
+            --to-source "${CLI_UPDATE_TO_SOURCE}" \
+            --to-ref "${CLI_UPDATE_TO_REF}"
 
       - name: Upload CLI update continuity artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cli-update-continuity-artifacts
           path: .project/logs/e2e
@@ -1084,10 +1218,23 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1119,7 +1266,7 @@ jobs:
 
       - name: Upload daemon continuity artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: daemon-continuity-artifacts
           path: .project/logs/e2e
@@ -1132,10 +1279,23 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1167,7 +1327,7 @@ jobs:
 
       - name: Upload session continuity artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: session-continuity-artifacts
           path: .project/logs/e2e
@@ -1180,17 +1340,30 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact requested checkout
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CHECKOUT_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+          fi
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -1208,12 +1381,19 @@ jobs:
           args: --frozen-lockfile --ignore-engines
 
       - name: Run unified Docker release-assets validation
+        env:
+          INSTALLERS_CHANNEL: ${{ inputs.installers_channel }}
+          RELAY_UPGRADE_TO_SOURCE: ${{ inputs.relay_upgrade_to_source }}
+          RELAY_UPGRADE_TO_REF: ${{ inputs.relay_upgrade_to_ref }}
         run: |
+          set -euo pipefail
           node scripts/pipeline/run.mjs release-validate \
             --suite docker-release-assets \
             --platform linux \
-            --source local-build \
-            --ref "."
+            --from-source published-channel \
+            --from-ref "${INSTALLERS_CHANNEL}" \
+            --to-source "${RELAY_UPGRADE_TO_SOURCE}" \
+            --to-ref "${RELAY_UPGRADE_TO_REF}"
 
   self-host-systemd-e2e:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}
@@ -1222,17 +1402,17 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -1261,17 +1441,17 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -1300,17 +1480,17 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -1341,17 +1521,17 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
 
@@ -1378,10 +1558,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1432,11 +1612,11 @@ jobs:
       TMPDIR: /tmp
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1444,7 +1624,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -1658,11 +1838,11 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1670,7 +1850,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -1703,7 +1883,7 @@ jobs:
 
       - name: Upload e2e artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: core-e2e-artifacts-fast-sqlite
           path: .project/logs/e2e
@@ -1715,11 +1895,11 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1727,7 +1907,7 @@ jobs:
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
@@ -1751,6 +1931,20 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Prepare immutable server-v0.2.1 artifact
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/happier-server-v0.2.1"
+          echo "HAPPIER_E2E_RELEASED_SERVER_V0_2_1_DIR=${artifact_dir}" >> "$GITHUB_ENV"
+          HAPPIER_E2E_RELEASED_SERVER_V0_2_1_DIR="${artifact_dir}" \
+            yarn workspace @happier-dev/tests prepare:compat:released-server-v0.2.1
+
+      - name: Install exact-compatibility Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run exact server-v0.2.1 compatibility gate
+        run: yarn workspace @happier-dev/tests test:compat:released-server-v0.2.1
+
       - name: Run core e2e suite (slow)
         env:
           CI: "1"
@@ -1760,12 +1954,118 @@ jobs:
 
       - name: Upload e2e artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: core-e2e-artifacts-slow-sqlite
           path: .project/logs/e2e
 
+  plugin-platform-packed:
+    if: ${{ github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call' }}
+    name: Plugin Platform (packed author)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      PACKED_PLUGIN_PLATFORM_OUTPUT_ROOT: ${{ runner.temp }}/plugin-platform-packed
+      PACKED_PLUGIN_PLATFORM_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Build natural packed Plugin Platform artifacts
+        run: |
+          set -euo pipefail
+          artifact_inputs_path="${RUNNER_TEMP}/plugin-platform-packed-artifacts.json"
+          yarn -s workspace @happier-dev/tests build:plugin-platform:natural \
+            --run-id "$PACKED_PLUGIN_PLATFORM_RUN_ID" \
+            --output-root "$PACKED_PLUGIN_PLATFORM_OUTPUT_ROOT" > "$artifact_inputs_path"
+          cat "$artifact_inputs_path"
+          node --input-type=module - "$artifact_inputs_path" <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+
+          const artifactInputs = JSON.parse(readFileSync(process.argv.at(-1), 'utf8'));
+          const inputs = [
+            ['PACKED_PLUGIN_PLATFORM_SDK_TARBALL', artifactInputs.sdkTarballPath],
+            ['PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL', artifactInputs.pluginUiTarballPath],
+            ['PACKED_PLUGIN_PLATFORM_CLI_TARBALL', artifactInputs.cliTarballPath],
+          ];
+          for (const [name, value] of inputs) {
+            if (typeof value !== 'string' || value.length === 0) {
+              throw new Error(`Missing packed Plugin Platform artifact input: ${name}`);
+            }
+          }
+          appendFileSync(
+            process.env.GITHUB_ENV,
+            inputs.map(([name, value]) => `${name}=${value}\n`).join(''),
+          );
+          NODE
+
+      - name: Run packed Plugin Platform author vertical
+        run: |
+          set -euo pipefail
+          yarn -s workspace @happier-dev/tests test:plugin-platform:packed-author -- \
+            --sdk-tarball "$PACKED_PLUGIN_PLATFORM_SDK_TARBALL" \
+            --plugin-ui-tarball "$PACKED_PLUGIN_PLATFORM_PLUGIN_UI_TARBALL" \
+            --cli-tarball "$PACKED_PLUGIN_PLATFORM_CLI_TARBALL"
+
+      - name: Upload packed Plugin Platform artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: plugin-platform-packed-artifacts
+          path: .project/logs/e2e
+          if-no-files-found: ignore
+
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: tests.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
     name: Release actor guard
     permissions:
@@ -1773,7 +2073,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -1790,10 +2094,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -1925,7 +2229,7 @@ jobs:
 
       - name: Upload provider artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: providers-artifacts
           path: .project/logs/e2e
@@ -1937,10 +2241,10 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
@@ -2004,7 +2308,7 @@ jobs:
 
       - name: Upload stress artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: stress-artifacts
           path: .project/logs/e2e

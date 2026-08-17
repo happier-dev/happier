@@ -11,6 +11,7 @@ import { loadSecrets } from './secrets/load-secrets.mjs';
 import { importDotenvIntoKeychainBundle } from './secrets/import-keychain-bundle.mjs';
 import { resolveKeychainBundleAccounts } from './secrets/keychain-bundle-accounts.mjs';
 import { assertCleanWorktree } from './git/ensure-clean-worktree.mjs';
+import { resolveAuthorizedReleaseSource } from './github/resolve-authorized-release-source.mjs';
 import { resolveRemoteReleasePlanningRefs } from './release/lib/release-planning-remote-refs.mjs';
 import { createAnsiStyle } from './cli/ansi-style.mjs';
 import { renderCommandHelp, renderPipelineHelp } from './cli/help.mjs';
@@ -37,8 +38,13 @@ import {
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
 } from './release/lib/public-release-rings.mjs';
+import { releaseTargets } from './release/component-registry.mjs';
 import { buildPublicReleaseContractV1 } from './release/public-release-contract.mjs';
 import { resolveReleaseEnvironmentChannel } from './release/resolve-release-environment-channel.mjs';
+import {
+  RELEASE_VALIDATION_PROFILE_IDS,
+  resolveReleaseValidationProfile,
+} from './release-validation/registry.mjs';
 
 function fail(message) {
   console.error(message);
@@ -46,6 +52,9 @@ function fail(message) {
 }
 
 const ROLLING_RELEASE_CHANNEL_CHOICES = formatPublicReleaseChannelChoices();
+const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
+const RELEASE_OPERATION_ID = /^rel_[A-Za-z0-9_-]{8,80}$/;
+const RELEASE_NOTES_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const TAURI_RELEASE_ENVIRONMENT_CHOICES = formatPublicReleaseChannelChoices({
   stableAlias: 'production',
   preferredOrder: ['dev', 'preview', 'stable'],
@@ -94,6 +103,14 @@ function isReleaseDeployEnvironment(v) {
   return v === 'dev' || v === 'production' || v === 'preview';
 }
 
+/**
+ * @param {string} action
+ * @returns {'dev' | 'preview'}
+ */
+function resolveReleasePromotionSourceBranch(action) {
+  return action === 'release preview to main' || action === 'reset main from preview' ? 'preview' : 'dev';
+}
+
 function normalizeTauriReleaseEnvironment(raw) {
   const channel = normalizePublicReleaseChannel(raw);
   if (!channel) return '';
@@ -113,7 +130,7 @@ function isDeployComponent(v) {
  * @returns {v is 'ui' | 'server' | 'website' | 'docs' | 'cli' | 'stack' | 'server_runner'}
  */
 function isReleaseTarget(v) {
-  return isDeployComponent(v) || v === 'cli' || v === 'stack' || v === 'server_runner';
+  return releaseTargets.includes(v);
 }
 
 /**
@@ -747,6 +764,16 @@ function runTauriBuildUpdaterArtifacts({ repoRoot, env, args, dryRun }) {
 /**
  * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
  */
+function runTauriBundleCandidate({ repoRoot, env, args, dryRun }) {
+  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'tauri', 'bundle-candidate.mjs');
+  const fullArgs = [scriptPath, ...args];
+  if (dryRun) console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
+  execFileSync(process.execPath, fullArgs, { cwd: repoRoot, env, stdio: 'inherit' });
+}
+
+/**
+ * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
+ */
 function runTauriNotarizeMacosArtifacts({ repoRoot, env, args, dryRun }) {
   const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'tauri', 'notarize-macos-artifacts.mjs');
   const fullArgs = [scriptPath, ...args];
@@ -774,6 +801,16 @@ function runTauriCollectUpdaterArtifacts({ repoRoot, env, args, dryRun }) {
     env,
     stdio: 'inherit',
   });
+}
+
+/**
+ * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
+ */
+function runTauriSignUpdaterArtifacts({ repoRoot, env, args, dryRun }) {
+  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'tauri', 'sign-updater-artifacts.mjs');
+  const fullArgs = [scriptPath, ...args];
+  if (dryRun) console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
+  execFileSync(process.execPath, fullArgs, { cwd: repoRoot, env, stdio: 'inherit' });
 }
 
 /**
@@ -914,7 +951,7 @@ function runReleaseWrappedScript({ repoRoot, env, scriptFile, args, dryRun, skip
 }
 
 /**
- * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean; skipExecOnDryRun?: boolean }} opts
+ * @param {{ repoRoot: string; env?: Record<string, string>; args: string[]; dryRun: boolean; skipExecOnDryRun?: boolean }} opts
  */
 function runReleaseValidate({ repoRoot, env, args, dryRun, skipExecOnDryRun = false }) {
   const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'release-validation', 'validate-release.mjs');
@@ -1017,6 +1054,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand !== 'release-contract' &&
         subcommand !== 'release-validate' &&
         subcommand !== 'release-verify-artifacts' &&
+        subcommand !== 'release-analyze' &&
+        subcommand !== 'release-local-candidates' &&
         subcommand !== 'release-compute-changed-components' &&
         subcommand !== 'release-compute-versioned-component-changes' &&
         subcommand !== 'release-resolve-bump-plan' &&
@@ -1033,8 +1072,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       subcommand !== 'tauri-prepare-assets' &&
       subcommand !== 'tauri-validate-updater-pubkey' &&
       subcommand !== 'tauri-build-updater-artifacts' &&
+      subcommand !== 'tauri-bundle-candidate' &&
       subcommand !== 'tauri-notarize-macos-artifacts' &&
       subcommand !== 'tauri-collect-updater-artifacts' &&
+      subcommand !== 'tauri-sign-updater-artifacts' &&
       subcommand !== 'testing-create-auth-credentials' &&
       subcommand !== 'secrets-import' &&
         subcommand !== 'docker-publish' &&
@@ -1943,6 +1984,19 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     } = splitWrappedReleaseArgs(rest);
     const keychainAccount = keychainAccountRaw.trim() || undefined;
 
+    // Validation dry-runs are deterministic source planning. Execute the
+    // target-owned planner directly and do not load release credentials merely
+    // to describe a profile or suite command.
+    if (dryRun) {
+      runReleaseValidate({
+        repoRoot,
+        args: [...passthrough, '--dry-run'],
+        dryRun: passthrough.length === 0,
+        skipExecOnDryRun: passthrough.length === 0,
+      });
+      return;
+    }
+
     const { env, sources } = loadPipelineEnv({ repoRoot });
     const { env: mergedEnv, usedKeychain } = loadSecrets({
       baseEnv: env,
@@ -1957,17 +2011,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     }
     if (usedKeychain) {
       console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
-    }
-
-    if (dryRun) {
-      runReleaseValidate({
-        repoRoot,
-        env: mergedEnv,
-        args: [...passthrough, '--dry-run'],
-        dryRun: true,
-        skipExecOnDryRun: true,
-      });
-      return;
     }
 
     runReleaseValidate({
@@ -1988,6 +2031,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         subcommand === 'release-prepare-binary-assets' ||
         subcommand === 'release-publish-manifests' ||
         subcommand === 'release-verify-artifacts' ||
+        subcommand === 'release-analyze' ||
+        subcommand === 'release-local-candidates' ||
         subcommand === 'release-compute-changed-components' ||
         subcommand === 'release-compute-versioned-component-changes' ||
         subcommand === 'release-resolve-bump-plan' ||
@@ -2021,6 +2066,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                     ? 'publish-manifests.mjs'
                     : subcommand === 'release-verify-artifacts'
                       ? 'verify-artifacts.mjs'
+                      : subcommand === 'release-analyze'
+                        ? 'analyze-release-change.mjs'
+                      : subcommand === 'release-local-candidates'
+                        ? 'execute-local-candidates.mjs'
                       : subcommand === 'release-compute-changed-components'
                         ? 'compute-changed-components.mjs'
                         : subcommand === 'release-compute-versioned-component-changes'
@@ -2033,6 +2082,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
         const scriptArgs =
           subcommand === 'release-compute-deploy-plan' ? ['--deploy-environment', deployEnvironment, ...passthrough] : passthrough;
+
+        if (subcommand === 'release-analyze' || (subcommand === 'release-local-candidates' && dryRun)) {
+          runReleaseWrappedScript({
+            repoRoot,
+            env: process.env,
+            scriptFile,
+            args: subcommand === 'release-local-candidates' ? [...scriptArgs, '--dry-run'] : scriptArgs,
+            dryRun: false,
+          });
+          return;
+        }
 
         if (dryRun) {
           runReleaseWrappedScript({
@@ -2599,6 +2659,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       options: {
         environment: { type: 'string' },
         'apk-path': { type: 'string' },
+        'retry-version': { type: 'string', default: '' },
         'target-sha': { type: 'string' },
         'release-message': { type: 'string', default: '' },
         'dry-run': { type: 'boolean', default: false },
@@ -2616,8 +2677,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     const environmentArg = formatMobileReleaseEnvironment(environment);
 
     const apkPath = String(values['apk-path'] ?? '').trim();
+    const retryVersion = String(values['retry-version'] ?? '').trim();
     const targetSha = String(values['target-sha'] ?? '').trim();
-    if (!apkPath) fail('--apk-path is required');
+    if (!apkPath && !retryVersion) fail('--apk-path is required unless --retry-version is supplied');
+    if (apkPath && retryVersion) fail('--apk-path and --retry-version cannot be used together');
     if (!targetSha) fail('--target-sha is required');
 
     const releaseMessage = String(values['release-message'] ?? '').trim();
@@ -2656,8 +2719,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       args: [
         '--environment',
         environmentArg,
-        '--apk-path',
-        apkPath,
+        ...(apkPath ? ['--apk-path', apkPath] : []),
+        ...(retryVersion ? ['--retry-version', retryVersion] : []),
         '--target-sha',
         targetSha,
         ...(releaseMessage ? ['--release-message', releaseMessage] : []),
@@ -3301,6 +3364,35 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       return;
     }
 
+    if (subcommand === 'tauri-bundle-candidate') {
+      const { values } = parseArgs({
+        args: rest,
+        options: {
+          mode: { type: 'string' },
+          'platform-key': { type: 'string' },
+          'source-sha': { type: 'string', default: '' },
+          'expected-source-sha': { type: 'string', default: '' },
+          environment: { type: 'string', default: '' },
+          'expected-environment': { type: 'string', default: '' },
+          'ui-version': { type: 'string', default: '' },
+          'expected-ui-version': { type: 'string', default: '' },
+          'build-version': { type: 'string', default: '' },
+          'expected-build-version': { type: 'string', default: '' },
+          'tauri-target': { type: 'string', default: '' },
+          'ui-dir': { type: 'string', default: 'apps/ui' },
+          'out-dir': { type: 'string', default: '' },
+          'candidate-dir': { type: 'string', default: '' },
+        },
+        allowPositionals: false,
+      });
+      const args = [];
+      for (const [name, value] of Object.entries(values)) {
+        if (value !== undefined && value !== '') args.push(`--${name}`, String(value));
+      }
+      runTauriBundleCandidate({ repoRoot, env: { ...process.env }, args, dryRun: false });
+      return;
+    }
+
     if (subcommand === 'tauri-build-updater-artifacts') {
       const { values } = parseArgs({
         args: rest,
@@ -3309,6 +3401,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           'build-version': { type: 'string', default: '' },
           'tauri-target': { type: 'string', default: '' },
           'ui-dir': { type: 'string', default: 'apps/ui' },
+          'no-bundle': { type: 'boolean', default: false },
+          'bundle-only': { type: 'boolean', default: false },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
           'keychain-service': { type: 'string', default: 'happier/pipeline' },
@@ -3327,6 +3421,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       const buildVersion = String(values['build-version'] ?? '').trim();
       const tauriTarget = String(values['tauri-target'] ?? '').trim();
       const uiDir = String(values['ui-dir'] ?? '').trim() || 'apps/ui';
+      const noBundle = values['no-bundle'] === true;
+      const bundleOnly = values['bundle-only'] === true;
       const dryRun = values['dry-run'] === true;
 
       const { env, sources } = loadPipelineEnv({ repoRoot });
@@ -3365,6 +3461,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(buildVersion ? ['--build-version', buildVersion] : []),
           ...(tauriTarget ? ['--tauri-target', tauriTarget] : []),
           ...(uiDir ? ['--ui-dir', uiDir] : []),
+          ...(noBundle ? ['--no-bundle'] : []),
+          ...(bundleOnly ? ['--bundle-only'] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
       });
@@ -3427,6 +3525,14 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         ],
       });
 
+      return;
+    }
+
+    if (subcommand === 'tauri-sign-updater-artifacts') {
+      const { values } = parseArgs({ args: rest, options: { 'ui-dir': { type: 'string', default: 'apps/ui' }, 'tauri-target': { type: 'string', default: '' } }, allowPositionals: false });
+      const uiDir = String(values['ui-dir'] ?? '').trim() || 'apps/ui';
+      const tauriTarget = String(values['tauri-target'] ?? '').trim();
+      runTauriSignUpdaterArtifacts({ repoRoot, env: { ...process.env }, dryRun: false, args: ['--ui-dir', uiDir, ...(tauriTarget ? ['--tauri-target', tauriTarget] : [])] });
       return;
     }
 
@@ -3979,6 +4085,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         args: rest,
         options: {
           source: { type: 'string' },
+          'source-sha': { type: 'string', default: '' },
           target: { type: 'string' },
           mode: { type: 'string' },
           confirm: { type: 'string', default: '' },
@@ -3994,6 +4101,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     });
 
     const source = String(values.source ?? '').trim();
+    const sourceSha = String(values['source-sha'] ?? '').trim();
     const target = String(values.target ?? '').trim();
       const mode = String(values.mode ?? '').trim();
       const confirm = String(values.confirm ?? '').trim();
@@ -4005,6 +4113,12 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
       if (!source || !target || !mode) {
         fail('--source, --target, and --mode are required');
+      }
+      if (sourceSha && !FULL_GIT_SHA.test(sourceSha)) {
+        fail('--source-sha must be a full 40-character lowercase Git commit SHA.');
+      }
+      if (!dryRun && !sourceSha) {
+        fail('--source-sha is required unless --dry-run is set.');
       }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });
@@ -4042,6 +4156,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       args: [
         '--source',
         source,
+        ...(sourceSha ? ['--source-sha', sourceSha] : []),
         '--target',
         target,
         '--mode',
@@ -4148,13 +4263,21 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               repository: { type: 'string' },
               'deploy-environment': { type: 'string', default: 'preview' },
               'deploy-targets': { type: 'string', default: 'ui,server,website,docs' },
+              'release-profile': { type: 'string', default: '' },
               'force-deploy': { type: 'string', default: 'false' },
               bump: { type: 'string', default: 'none' },
               'ui-expo-action': { type: 'string', default: 'none' },
               'desktop-mode': { type: 'string', default: 'none' },
-              'release-message': { type: 'string', default: '' },
+              'source-sha': { type: 'string', default: '' },
+              'workflow-control-sha': { type: 'string', default: '' },
+              'operation-id': { type: 'string', default: '' },
+              'attempt-id': { type: 'string', default: 'attempt_1' },
+              'release-notes-id': { type: 'string', default: '' },
+              'resume-run-id': { type: 'string', default: '' },
+              'qualified-v4-activation-approval': { type: 'string', default: 'false' },
               'allow-dirty': { type: 'string', default: 'false' },
               'dry-run': { type: 'boolean', default: false },
+              json: { type: 'boolean', default: false },
             },
             allowPositionals: false,
           });
@@ -4191,6 +4314,50 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             );
           }
 
+          const dryRun = values['dry-run'] === true;
+          const jsonOutput = values.json === true;
+          const authorizedPromotionSourceSha = String(values['source-sha'] ?? '').trim();
+          const workflowControlSha = String(values['workflow-control-sha'] ?? '').trim();
+          const operationId = String(values['operation-id'] ?? '').trim();
+          const attemptId = String(values['attempt-id'] ?? '').trim();
+          const releaseNotesId = String(values['release-notes-id'] ?? '').trim();
+          const resumeRunId = String(values['resume-run-id'] ?? '');
+          const qualifiedV4ActivationApproval = parseBoolString(
+            values['qualified-v4-activation-approval'],
+            '--qualified-v4-activation-approval',
+          );
+          const promotionSourceBranch = resolveReleasePromotionSourceBranch(action);
+          if (jsonOutput && !dryRun) {
+            fail('--json is supported only with --dry-run.');
+          }
+          if (jsonOutput && !operationId) {
+            fail('--operation-id is required with --dry-run --json.');
+          }
+          if (operationId && !RELEASE_OPERATION_ID.test(operationId)) {
+            fail('--operation-id must match rel_ followed by 8-80 ASCII letters, digits, underscores, or hyphens.');
+          }
+          if (!/^attempt_[1-9][0-9]*$/u.test(attemptId)) {
+            fail('--attempt-id must match attempt_<positive integer>.');
+          }
+          if (authorizedPromotionSourceSha && !FULL_GIT_SHA.test(authorizedPromotionSourceSha)) {
+            fail('--source-sha must be a full 40-character lowercase Git commit SHA.');
+          }
+          if (workflowControlSha && !FULL_GIT_SHA.test(workflowControlSha)) {
+            fail('--workflow-control-sha must be a full 40-character lowercase Git commit SHA.');
+          }
+          if (resumeRunId && !/^[1-9][0-9]*$/u.test(resumeRunId)) {
+            fail('--resume-run-id must be a positive GitHub Actions run ID.');
+          }
+          const requestedReleaseProfile = String(values['release-profile'] ?? '').trim();
+          const releaseProfileId = requestedReleaseProfile || (deployEnvironment === 'production' ? 'stable' : 'integrated');
+          const releaseProfile = resolveReleaseValidationProfile(releaseProfileId);
+          if (!releaseProfile) {
+            fail(`--release-profile must be one of ${JSON.stringify(RELEASE_VALIDATION_PROFILE_IDS)} (got: ${releaseProfileId})`);
+          }
+          if (!dryRun && (!releaseProfile.normalRelease || !releaseProfile.checksProfile)) {
+            fail(`--release-profile ${releaseProfile.id} is manual certification and cannot be used for normal dispatch`);
+          }
+
           const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
           if (deployTargets.length === 0) {
             fail('--deploy-targets must not be empty');
@@ -4198,16 +4365,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           for (const t of deployTargets) {
             if (!isReleaseTarget(t)) {
               fail(
-                `--deploy-targets contains unsupported target '${t}' (supported: ui,server,website,docs,cli,stack,server_runner)`,
+                `--deploy-targets contains unsupported target '${t}' (supported: ${releaseTargets.join(',')})`,
               );
             }
           }
-
-          const dryRun = values['dry-run'] === true;
-          const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
-          if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
-          assertNoStagedChanges({ cwd: repoRoot, allowDirty, dryRun });
-
           const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
           const bumpPreset = String(values.bump ?? '').trim() || 'none';
 
@@ -4217,6 +4378,17 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           if (!['none', 'patch', 'minor', 'major'].includes(bumpPreset)) {
             fail(`--bump must be one of: none, patch, minor, major (got: ${bumpPreset})`);
           }
+          if (bumpPreset !== 'none') {
+            fail(
+              'Final exact-SHA release promotion requires --bump none. Release candidates must be materialized: commit CHANGELOG and version changes, resolve the resulting exact source SHA, then dispatch with --bump none.',
+            );
+          }
+          if ((deployEnvironment !== 'dev' || jsonOutput) && !releaseNotesId) {
+            fail('--release-notes-id is required for normal preview/production release dispatch.');
+          }
+          if (releaseNotesId && !RELEASE_NOTES_ID.test(releaseNotesId)) {
+            fail('--release-notes-id must contain only lowercase letters, digits, dots, underscores, or hyphens.');
+          }
           if (!['none', 'ota', 'native', 'native_submit'].includes(uiExpoAction)) {
             fail(`--ui-expo-action must be one of: none, ota, native, native_submit (got: ${uiExpoAction})`);
           }
@@ -4224,10 +4396,50 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             fail(`--desktop-mode must be one of: none, build_only, build_and_publish (got: ${desktopMode})`);
           }
 
+          const allowDirty = parseBoolString(values['allow-dirty'], '--allow-dirty');
+          if (!dryRun) assertCleanWorktree({ cwd: repoRoot, allowDirty });
+          assertNoStagedChanges({ cwd: repoRoot, allowDirty, dryRun });
+
+          const resolvePromotionSource = () =>
+            resolveAuthorizedReleaseSource({
+              repoRoot,
+              remoteUrl: 'origin',
+              // A resumed attempt deliberately keeps the previously approved candidate
+              // while newer trusted workflow-control code may live on dev. The origin
+              // release status rebinds this exact SHA inside the hosted resolver.
+              sourceRef: resumeRunId && authorizedPromotionSourceSha
+                ? authorizedPromotionSourceSha
+                : `refs/heads/${promotionSourceBranch}`,
+              authorizedSha: authorizedPromotionSourceSha,
+            });
+
+          if (jsonOutput) {
+            const promotionSource = await resolvePromotionSource();
+            process.stdout.write(
+              `${JSON.stringify({
+                kind: 'happier.release-dispatch-plan.v3',
+                schemaVersion: 3,
+                sourceBranch: promotionSourceBranch,
+                authorizedPromotionSourceSha: promotionSource.sha,
+                effectiveDeployTargets: deployTargets,
+                validationProfile: releaseProfile.id,
+                operationId,
+                releaseNotesId,
+                ...(resumeRunId ? { resumeRunId } : {}),
+                approvals: { qualifiedV4Activation: qualifiedV4ActivationApproval },
+              })}\n`,
+            );
+            return;
+          }
+
           if (!dryRun) {
             if (deployEnvironment === 'dev') {
               fail('Privileged dev publication is hosted by nightly-dev.yml; the local release command does not publish dev directly.');
             }
+            if (!authorizedPromotionSourceSha) {
+              fail('--source-sha is required when dispatching a hosted release.');
+            }
+            const promotionSource = await resolvePromotionSource();
             const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
               cwd: repoRoot,
               env: process.env,
@@ -4242,8 +4454,8 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'workflow', 'run', 'release.yml',
               '--repo', repository,
               '--ref', 'dev',
-              '-f', 'checks_profile=full',
               '-f', 'dry_run=false',
+              '-f', `validation_profile=${releaseProfile.id}`,
               '-f', `environment=${deployEnvironment}`,
               '-f', `deploy_targets=${deployTargets.join(',')}`,
               '-f', `force_deploy=${forceDeploy}`,
@@ -4251,7 +4463,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `desktop_mode=${desktopMode}`,
               '-f', `bump=${bumpPreset}`,
               '-f', `confirm=${action}`,
-              '-f', `release_message=${String(values['release-message'] ?? '').trim()}`,
+              '-f', `authorized_promotion_source_sha=${promotionSource.sha}`,
+              '-f', `release_notes_id=${releaseNotesId}`,
+              '-f', `qualified_v4_activation_approval=${qualifiedV4ActivationApproval}`,
+              ...(workflowControlSha ? ['-f', `workflow_control_sha=${workflowControlSha}`] : []),
+              ...(operationId ? ['-f', `hmaint_operation_id=${operationId}`] : []),
+              ...(operationId ? ['-f', `hmaint_attempt_id=${attemptId}`] : []),
+              ...(resumeRunId ? ['-f', `resume_run_id=${resumeRunId}`] : []),
             ], {
               cwd: repoRoot,
               env: process.env,
@@ -4263,7 +4481,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
             return;
           }
 
-          const releaseMessage = String(values['release-message'] ?? '').trim();
           console.log(`[pipeline] release: environment=${deployEnvironment} confirm=${action}`);
 
           const releaseRing = resolveReleaseEnvironmentChannel(deployEnvironment);
@@ -4297,15 +4514,15 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               fail(`Local release expects to run from branch 'dev' or '*\\/upstream-dev' (current: ${currentBranch}).`);
             }
 
-            const devSha = execFileSync('git', ['rev-parse', 'HEAD'], {
-              cwd: repoRoot,
-              env: process.env,
-              encoding: 'utf8',
-            stdio: ['ignore', 'pipe', 'pipe'],
-            timeout: 10_000,
-          }).trim();
+          const devSha = remotePlanningRefs.branches.dev;
           const mainSha = remotePlanningRefs.branches.main;
           const previewSha = remotePlanningRefs.branches.preview;
+          const remotePromotionSourceSha = remotePlanningRefs.branches[promotionSourceBranch];
+          if (authorizedPromotionSourceSha && authorizedPromotionSourceSha !== remotePromotionSourceSha) {
+            fail(
+              `Source branch '${promotionSourceBranch}' no longer resolves to authorized SHA '${authorizedPromotionSourceSha}' (currently '${remotePromotionSourceSha}').`,
+            );
+          }
 
           const planHeadSha =
             action === 'release preview to main' || action === 'reset main from preview' ? previewSha : devSha;
@@ -4471,13 +4688,16 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               console.log('- workflow: release.yml');
             }
             console.log(`- environment: ${deployEnvironment}`);
+            console.log(`- promotion_source_branch: ${promotionSourceBranch}`);
+            console.log(`- authorized_promotion_source_sha: ${remotePromotionSourceSha}`);
             console.log(`- deploy_targets: ${deployTargets.join(',')}`);
+            console.log(`- release_profile: ${releaseProfile.id}`);
+            console.log(`- checks_profile: ${releaseProfile.checksProfile ?? 'manual'}`);
             console.log(`- force_deploy: ${forceDeploy}`);
             console.log(`- ui_expo_action: ${uiExpoAction}`);
             console.log(`- desktop_mode: ${desktopMode}`);
             console.log(`- bump: ${bumpPreset}`);
             console.log(`- confirm: ${action}`);
-            console.log(`- release_message: ${String(values['release-message'] ?? '').trim()}`);
             return;
           }
 

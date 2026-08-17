@@ -12,8 +12,8 @@ on:
         required: true
         default: dev
         type: string
-      release_message:
-        description: "Release message — Optional note for rolling release notes"
+      resume_run_id:
+        description: "Resume — prior nightly run ID whose verified immutable candidates may be reused"
         required: false
         default: ""
         type: string
@@ -28,89 +28,426 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  resolve_resume:
+    name: Resolve verified prior nightly candidates
+    uses: ./.github/workflows/resolve-release-resume.yml
+    with:
+      origin_run_id: ${{ inputs.resume_run_id }}
+      expected_workflow: .github/workflows/nightly-dev.yml
+      expected_channel: dev
+
+  snapshot_source_issues:
+    name: Snapshot source-stage issues for this nightly
+    needs: [resolve_resume]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      eligible: ${{ steps.snapshot.outputs.eligible }}
+      issues_json: ${{ steps.snapshot.outputs.issues_json }}
+      issue_count: ${{ steps.snapshot.outputs.issue_count }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Snapshot open source-stage issues
+        id: snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RESUME_RUN_ID" ] || { [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SOURCE_REF" != "dev" ]; }; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "issues_json=[]" >> "$GITHUB_OUTPUT"
+            echo "issue_count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot \
+            --repo "$GITHUB_REPOSITORY" \
+            --from-stage "stage:source" \
+            --github-output "$GITHUB_OUTPUT"
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+  prepare_release_candidate:
+    name: Prepare exact nightly candidate
+    needs: [resolve_resume, snapshot_source_issues]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      release_message: ${{ steps.identity.outputs.release_message }}
+    steps:
+      - name: Checkout requested nightly source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.resolve_resume.outputs.source_sha || (github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev') }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Bind exact nightly source SHA
+        id: identity
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          test "$(printf '%s' "$source_sha" | wc -c | tr -d ' ')" = "40"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "release_message=Automated nightly dev release." >> "$GITHUB_OUTPUT"
+
   cli:
     name: CLI binaries (dev)
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
       channel: dev
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.cli_version }}
+      publish_rolling: false
       allow_stable: false
-      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   hstack:
     name: HStack binaries (dev)
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-hstack-binaries.yml
     secrets: inherit
     with:
       channel: dev
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.stack_version }}
+      publish_rolling: false
       allow_stable: false
-      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   server_runtime:
     name: Server runtime (dev)
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
       channel: dev
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.server_version }}
+      publish_rolling: false
       allow_stable: false
-      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   ui_web:
     name: UI web bundle (dev)
+    needs: [resolve_resume, prepare_release_candidate]
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
       channel: dev
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      resume_version: ${{ needs.resolve_resume.outputs.ui_web_version }}
+      publish_rolling: false
       allow_stable: false
-      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
+  resolve_validation_risk:
+    name: Resolve changed-seam validation risk
+    needs: [prepare_release_candidate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      risk_cli_upgrade: ${{ steps.risk.outputs.risk_cli_upgrade }}
+      risk_session_continuity: ${{ steps.risk.outputs.risk_session_continuity }}
+    steps:
+      - name: Checkout trusted release control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Checkout exact nightly candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: release-source
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Resolve risk since the last fully promoted nightly
+        id: risk
+        working-directory: release-source
+        env:
+          CANDIDATE_SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force --no-tags origin 'refs/tags/ui-web-dev:refs/tags/ui-web-dev' 2>/dev/null || true
+          if base="$(git rev-parse 'ui-web-dev^{commit}' 2>/dev/null)"; then
+            :
+          else
+            base="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
+          fi
+          node ../scripts/pipeline/release/analyze-release-change.mjs \
+            --base "$base" \
+            --head "$CANDIDATE_SOURCE_SHA" \
+            --profile integrated \
+            --has-cli-candidate true \
+            --has-server-candidate true \
+            --has-published-relay-predecessor false \
+            --repository-root "$PWD" \
+            --github-output "$GITHUB_OUTPUT"
+
+  release_verify:
+    name: Verify exact immutable nightly candidates
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, resolve_validation_risk]
+    uses: ./.github/workflows/release-verify.yml
+    secrets: inherit
+    with:
+      channel: dev
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_build_run_id: ${{ github.run_id }}
+      publication_run_id: ${{ github.run_id }}
+      candidate_cli_version: ${{ needs.cli.outputs.version }}
+      candidate_stack_version: ${{ needs.hstack.outputs.version }}
+      candidate_server_version: ${{ needs.server_runtime.outputs.version }}
+      candidate_ui_web_version: ${{ needs.ui_web.outputs.version }}
+      verify_cli_release: ${{ needs.resolve_resume.outputs.cli_version == '' }}
+      verify_stack_release: ${{ needs.resolve_resume.outputs.stack_version == '' }}
+      verify_server_release: ${{ needs.resolve_resume.outputs.server_version == '' }}
+      verify_ui_web_release: ${{ needs.resolve_resume.outputs.ui_web_version == '' }}
+      validation_profile: integrated
+      risk_cli_upgrade: ${{ needs.resolve_validation_risk.outputs.risk_cli_upgrade == 'true' }}
+      risk_session_continuity: ${{ needs.resolve_validation_risk.outputs.risk_session_continuity == 'true' }}
+      risk_relay_upgrade: false
+
+  verify_resume_candidates:
+    name: Verify successful immutable siblings for resume
+    if: ${{ always() && needs.prepare_release_candidate.result == 'success' && needs.release_verify.result != 'success' }}
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify]
+    uses: ./.github/workflows/verify-release-resume-candidates.yml
+    with:
+      channel: dev
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_cli_version: ${{ needs.cli.result == 'success' && needs.cli.outputs.version || '' }}
+      candidate_stack_version: ${{ needs.hstack.result == 'success' && needs.hstack.outputs.version || '' }}
+      candidate_server_version: ${{ needs.server_runtime.result == 'success' && needs.server_runtime.outputs.version || '' }}
+      candidate_ui_web_version: ${{ needs.ui_web.result == 'success' && needs.ui_web.outputs.version || '' }}
+
+  promote_server:
+    name: Promote verified server candidate
+    needs: [prepare_release_candidate, server_runtime, release_verify]
+    uses: ./.github/workflows/publish-server-runtime.yml
+    secrets: inherit
+    with:
+      channel: dev
+      retry_version: ${{ needs.server_runtime.outputs.version }}
+      allow_stable: false
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
+  promote_hstack:
+    name: Promote verified HStack candidate
+    needs: [prepare_release_candidate, hstack, promote_server]
+    uses: ./.github/workflows/publish-hstack-binaries.yml
+    secrets: inherit
+    with:
+      channel: dev
+      retry_version: ${{ needs.hstack.outputs.version }}
+      allow_stable: false
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
+  promote_cli:
+    name: Promote verified CLI candidate
+    needs: [prepare_release_candidate, cli, promote_hstack]
+    uses: ./.github/workflows/publish-cli-binaries.yml
+    secrets: inherit
+    with:
+      channel: dev
+      retry_version: ${{ needs.cli.outputs.version }}
+      allow_stable: false
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
+  promote_ui_web:
+    name: Promote verified UI web candidate
+    needs: [prepare_release_candidate, ui_web, promote_cli]
+    uses: ./.github/workflows/publish-ui-web.yml
+    secrets: inherit
+    with:
+      channel: dev
+      retry_version: ${{ needs.ui_web.outputs.version }}
+      allow_stable: false
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   ui_mobile:
     name: UI mobile (dev)
+    needs: [prepare_release_candidate, release_verify]
     uses: ./.github/workflows/publish-ui-mobile-dev.yml
     secrets: inherit
     with:
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_ota: true
       publish_android_apk: true
       submit_ios_testflight: true
       eas_builder: eas_local
-      release_message: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_message || format('Nightly dev build (run {0})', github.run_id) }}
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   ui_desktop:
     name: UI desktop (Tauri) (dev)
+    needs: [prepare_release_candidate, release_verify]
     uses: ./.github/workflows/build-tauri.yml
     secrets: inherit
     with:
       environment: dev
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       publish_release: true
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
   docker:
     name: Docker images (dev)
-    needs: [cli, server_runtime, ui_web]
+    needs: [prepare_release_candidate, cli, server_runtime, promote_ui_web]
     uses: ./.github/workflows/publish-docker.yml
     secrets: inherit
     with:
       channel: dev
-      source_ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || 'dev' }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      server_version: ${{ needs.server_runtime.outputs.version }}
+      cli_version: ${{ needs.cli.outputs.version }}
       push_latest: true
       registries: dockerhub,ghcr
       build_relay: true
       build_dev_box: true
 
-  release_verify:
-    name: Release Verification (dev)
-    needs: [cli, hstack, server_runtime, ui_web, ui_mobile, ui_desktop, docker]
+  verify_promoted:
+    name: Verify promoted nightly references
+    needs: [prepare_release_candidate, ui_mobile, ui_desktop, docker]
     uses: ./.github/workflows/release-verify.yml
     secrets: inherit
     with:
       channel: dev
-      run_installers_smoke: true
-      run_binary_smoke: true
-      run_cli_update_continuity: true
-      run_daemon_continuity: true
-      run_session_continuity: true
+      candidate_source_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      candidate_build_run_id: ${{ github.run_id }}
+      publication_run_id: ${{ github.run_id }}
+      verify_cli_release: true
+      verify_stack_release: true
+      verify_server_release: true
+      verify_ui_web_release: true
+      run_installers_smoke: false
+      run_binary_smoke: false
+      run_cli_update_continuity: false
+      run_daemon_continuity: false
+      run_session_continuity: false
+      run_self_host_systemd: false
+      run_self_host_launchd: false
+      run_self_host_schtasks: false
+      run_self_host_daemon: false
+
+  advance_source_issues_to_dev:
+    name: Advance shipped issues from source to dev
+    if: ${{ needs.verify_promoted.result == 'success' && needs.snapshot_source_issues.outputs.eligible == 'true' && needs.snapshot_source_issues.outputs.issue_count != '0' }}
+    needs: [snapshot_source_issues, verify_promoted]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Reconcile the snapshotted issues
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_ISSUES_JSON: ${{ needs.snapshot_source_issues.outputs.issues_json }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+            --repo "$GITHUB_REPOSITORY" \
+            --issues-json "$SOURCE_ISSUES_JSON" \
+            --from-stage "stage:source" \
+            --to-stage "stage:dev"
+
+  release_status:
+    name: Project terminal nightly release status
+    if: ${{ always() }}
+    needs: [prepare_release_candidate, cli, hstack, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_ui_web, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Project nightly release status facts
+        env:
+          RELEASE_RUN: ${{ github.run_id }}
+          RELEASE_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RELEASE_RUN_NAME: NIGHTLY — Dev Releases
+          SOURCE_SHA: ${{ needs.prepare_release_candidate.outputs.source_sha || 'unavailable' }}
+          CANDIDATE_RESULT: ${{ needs.prepare_release_candidate.result }}
+          IMMUTABLE_VERIFICATION_RESULT: ${{ needs.release_verify.result }}
+          CLI_CANDIDATE_VERSION: ${{ needs.cli.outputs.version }}
+          STACK_CANDIDATE_VERSION: ${{ needs.hstack.outputs.version }}
+          SERVER_CANDIDATE_VERSION: ${{ needs.server_runtime.outputs.version }}
+          UI_WEB_CANDIDATE_VERSION: ${{ needs.ui_web.outputs.version }}
+          CLI_CANDIDATE_RESULT: ${{ needs.cli.result }}
+          STACK_CANDIDATE_RESULT: ${{ needs.hstack.result }}
+          SERVER_CANDIDATE_RESULT: ${{ needs.server_runtime.result }}
+          UI_WEB_CANDIDATE_RESULT: ${{ needs.ui_web.result }}
+          CLI_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.cli_verified }}
+          HSTACK_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.stack_verified }}
+          SERVER_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.server_verified }}
+          UI_WEB_RESUME_VERIFIED: ${{ needs.verify_resume_candidates.outputs.ui_web_verified }}
+          CLI_RESULT: ${{ needs.promote_cli.result }}
+          STACK_RESULT: ${{ needs.promote_hstack.result }}
+          SERVER_RESULT: ${{ needs.promote_server.result }}
+          UI_WEB_RESULT: ${{ needs.promote_ui_web.result }}
+          MOBILE_RESULT: ${{ needs.ui_mobile.result }}
+          DESKTOP_RESULT: ${{ needs.ui_desktop.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+          POST_PROMOTION_RESULT: ${{ needs.verify_promoted.result }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/project-release-status.mjs" \
+            --mode nightly \
+            --out "$RUNNER_TEMP/release-status.json" \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload nightly release status artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: happier-release-status
+          path: ${{ runner.temp }}/release-status.json
+          if-no-files-found: error
+          overwrite: true

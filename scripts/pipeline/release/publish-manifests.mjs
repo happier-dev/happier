@@ -42,7 +42,19 @@ async function main() {
   const notesUrl = String(kv.get('--notes-url') ?? '').trim() || null;
   const minSupportedVersion = String(kv.get('--min-supported-version') ?? '').trim() || null;
   const commitSha = String(kv.get('--commit-sha') ?? process.env.GITHUB_SHA ?? '').trim() || null;
-  const workflowRunId = String(kv.get('--workflow-run-id') ?? process.env.GITHUB_RUN_ID ?? '').trim() || null;
+  const legacyWorkflowRunId = String(kv.get('--workflow-run-id') ?? '').trim() || null;
+  const buildWorkflowRunId = String(
+    kv.get('--build-workflow-run-id')
+      ?? legacyWorkflowRunId
+      ?? process.env.GITHUB_RUN_ID
+      ?? '',
+  ).trim() || null;
+  const publicationWorkflowRunId = String(
+    kv.get('--publication-workflow-run-id')
+      ?? legacyWorkflowRunId
+      ?? process.env.GITHUB_RUN_ID
+      ?? '',
+  ).trim() || null;
 
   const entries = await readdir(artifactsDir);
   const parsedArtifacts = entries
@@ -87,7 +99,8 @@ async function main() {
       notesUrl,
       minSupportedVersion,
       commitSha,
-      workflowRunId,
+      buildWorkflowRunId,
+      publicationWorkflowRunId,
     });
     records.push(record);
 

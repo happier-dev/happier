@@ -32,16 +32,41 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        description: "Resume — verified immutable version to return without rebuilding or promoting (requires authorized_sha)"
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         description: "Caller-bound source SHA"
         required: false
         default: ""
         type: string
+      publish_rolling:
+        description: "Publication — move the rolling channel after publishing the immutable release"
+        required: true
+        default: true
+        type: boolean
       candidate_only:
         description: "Build and sign one candidate-native matrix without publishing GitHub Releases"
         required: true
         default: false
         type: boolean
+      candidate_run_id:
+        description: "Promote candidate — exact prior workflow run ID (requires candidate_version and candidate_source_sha)"
+        required: false
+        default: ""
+        type: string
+      candidate_version:
+        description: "Promote candidate — exact embedded CLI version"
+        required: false
+        default: ""
+        type: string
+      candidate_source_sha:
+        description: "Promote candidate — exact 40-character source SHA"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -63,14 +88,34 @@ on:
         required: false
         default: ""
         type: string
+      resume_version:
+        required: false
+        default: ""
+        type: string
       authorized_sha:
         required: false
         default: ""
         type: string
-      candidate_only:
+      publish_rolling:
         required: false
-        default: false
+        default: true
         type: boolean
+      candidate_run_id:
+        required: false
+        default: ""
+        type: string
+      candidate_version:
+        required: false
+        default: ""
+        type: string
+      candidate_source_sha:
+        required: false
+        default: ""
+        type: string
+    outputs:
+      version:
+        description: Exact immutable CLI version published by this invocation
+        value: ${{ jobs.publish.outputs.version || jobs.release_actor_guard.outputs.resume_version }}
 
 permissions:
   contents: read
@@ -91,14 +136,70 @@ jobs:
           CHANNEL: ${{ inputs.channel }}
           CANDIDATE_ONLY: ${{ inputs.candidate_only }}
           RETRY_VERSION: ${{ inputs.retry_version }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          TOP_LEVEL_WORKFLOW_REF: ${{ github.workflow_ref }}
           CALLER_REPOSITORY: ${{ github.repository }}
           WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
           WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
+          candidate_identity_count=0
+          [ -n "$CANDIDATE_RUN_ID" ] && candidate_identity_count=$((candidate_identity_count + 1))
+          [ -n "$CANDIDATE_VERSION" ] && candidate_identity_count=$((candidate_identity_count + 1))
+          [ -n "$CANDIDATE_SOURCE_SHA" ] && candidate_identity_count=$((candidate_identity_count + 1))
+          if [ -n "$RESUME_VERSION" ] && { [ -n "$RETRY_VERSION" ] || [ "$CANDIDATE_ONLY" = "true" ] || [ "$candidate_identity_count" -ne 0 ]; }; then
+            echo "Resume mode cannot combine with retry, candidate-only, or candidate-run promotion." >&2
+            exit 1
+          fi
+          if [ "$candidate_identity_count" -ne 0 ] && [ "$candidate_identity_count" -ne 3 ]; then
+            echo "Candidate promotion requires run ID, version, and source SHA together." >&2
+            exit 1
+          fi
+          if [ "$candidate_identity_count" -eq 3 ]; then
+            if [ "$CANDIDATE_ONLY" = "true" ]; then
+              echo "Candidate-only mode cannot also promote a prior candidate." >&2
+              exit 1
+            fi
+            if [ -n "$RETRY_VERSION" ]; then
+              echo "Candidate promotion cannot re-project an existing release." >&2
+              exit 1
+            fi
+            if ! [[ "$CANDIDATE_RUN_ID" =~ ^[0-9]+$ ]]; then
+              echo "Candidate run ID must contain only decimal digits." >&2
+              exit 1
+            fi
+            if ! [[ "$CANDIDATE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Candidate source SHA must be exactly 40 lowercase hexadecimal characters." >&2
+              exit 1
+            fi
+            if ! [[ "$CANDIDATE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+              echo "Candidate version must be a canonical release version." >&2
+              exit 1
+            fi
+          fi
           if [ "$CANDIDATE_ONLY" = "true" ] && [ -n "$RETRY_VERSION" ]; then
             echo "Candidate-only mode cannot promote an existing release." >&2
             exit 1
+          fi
+          if [ "$CANDIDATE_ONLY" = "true" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "Candidate-only mode requires a direct workflow dispatch." >&2
+            exit 1
+          fi
+          if [ "$CANDIDATE_ONLY" = "true" ] && [ "$TOP_LEVEL_WORKFLOW_REF" != "$WORKFLOW_REF" ]; then
+            echo "Candidate-only mode cannot run through a reusable workflow caller." >&2
+            exit 1
+          fi
+          if [ "$CANDIDATE_ONLY" = "true" ]; then
+            case "$CHANNEL:$WORKFLOW_REF" in
+              "dev:$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/dev"|\
+              "preview:$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/preview"|\
+              "stable:$WORKFLOW_REPOSITORY/.github/workflows/publish-cli-binaries.yml@refs/heads/main") ;;
+              *) echo "Candidate-only channel must match the workflow branch." >&2; exit 1 ;;
+            esac
           fi
           case "$CHANNEL" in
             stable|preview|dev) ;;
@@ -118,6 +219,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    outputs:
+      resume_version: ${{ steps.resume.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -126,6 +229,28 @@ jobs:
           ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
+      - name: Setup Node for immutable candidate verification
+        if: ${{ inputs.resume_version != '' }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Verify resumed immutable CLI candidate
+        id: resume
+        if: ${{ inputs.resume_version != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RESUME_VERSION: ${{ inputs.resume_version }}
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-release-candidate-identity.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$AUTHORIZED_SHA" \
+            --candidate-product cli \
+            --candidate-version "$RESUME_VERSION"
+          echo "version=$RESUME_VERSION" >> "$GITHUB_OUTPUT"
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -134,17 +259,19 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   prepare:
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     name: Freeze source and release version
     needs: [release_actor_guard]
     runs-on: ubuntu-24.04
-    environment: release-shared
     permissions:
+      actions: read
       contents: read
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       version: ${{ steps.version.outputs.version }}
+      base_version: ${{ steps.candidate_base.outputs.base_version }}
       embedded_policy_env: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+      candidate_artifact_id: ${{ steps.candidate_provenance.outputs.artifact_id }}
     steps:
       - name: Enforce stable publishing gate
         if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
@@ -169,30 +296,44 @@ jobs:
 
       - name: Resolve channel metadata
         id: channel_meta
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
-            --channel "${{ inputs.channel }}" \
-            --source-ref "${{ inputs.source_ref }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --source-ref "$SOURCE_REF" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: read
+      - name: Verify exact candidate run provenance
+        id: candidate_provenance
+        if: inputs.candidate_run_id != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          CANDIDATE_ARTIFACT_NAME: cli-candidate-native-${{ inputs.channel }}-${{ inputs.candidate_version }}-${{ inputs.candidate_source_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/verify-github-candidate-run.mjs \
+            --repository "$TARGET_REPOSITORY" \
+            --run-id "$CANDIDATE_RUN_ID" \
+            --expected-workflow-path ".github/workflows/publish-cli-binaries.yml" \
+            --channel "$RELEASE_CHANNEL" \
+            --expected-head-sha "$CANDIDATE_SOURCE_SHA" \
+            --artifact-name "$CANDIDATE_ARTIFACT_NAME" \
+            --github-output "$GITHUB_OUTPUT"
 
-      - name: Checkout exact source
+      - name: Checkout exact source as inert data
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ job.workflow_repository }}
-          ref: ${{ steps.channel_meta.outputs.source_ref }}
+          ref: ${{ inputs.candidate_source_sha != '' && inputs.candidate_source_sha || steps.channel_meta.outputs.source_ref }}
+          path: .candidate-source
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
           persist-credentials: false
 
       - name: Freeze source SHA
@@ -200,7 +341,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$(git -C .candidate-source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce candidate source equals workflow head
+        if: inputs.candidate_only == true
+        env:
+          GITHUB_WORKFLOW_HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .candidate-source rev-parse HEAD)" = "$GITHUB_WORKFLOW_HEAD_SHA"
 
       - name: Enforce caller-authorized source SHA
         if: ${{ inputs.authorized_sha != '' }}
@@ -208,34 +357,39 @@ jobs:
           AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
+          test "$(git -C .candidate-source rev-parse HEAD)" = "$AUTHORIZED_SHA"
 
-      - name: Admit Qualified V4 CLI payload publication
-        env:
-          RELEASE_CHANNEL: ${{ inputs.channel }}
+      - name: Read candidate base version as data
+        id: candidate_base
         run: |
           set -euo pipefail
-          case "$RELEASE_CHANNEL" in
-            stable) deploy_environment="production" ;;
-            preview|dev) deploy_environment="preview" ;;
-            *) echo "Unsupported CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
-          esac
-          deploy_branch="deploy/${deploy_environment}/server"
-          baseline_ref="refs/qualified-v4-payload-baseline"
-          set +e
-          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
-          baseline_status=$?
-          set -e
-          case "$baseline_status" in
-            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
-            2) ;;
-            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
-          esac
-          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
-            --admission-kind payload-publication \
-            --baseline-ref "$baseline_ref" \
-            --candidate-ref HEAD \
-            --summary-file "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { normalizeRollingBaseVersion } from "./scripts/pipeline/release/lib/rolling-version-allocation.mjs";
+            const value = JSON.parse(fs.readFileSync(".candidate-source/apps/cli/package.json", "utf8")).version;
+            if (typeof value !== "string" || normalizeRollingBaseVersion(value) !== value) {
+              throw new Error("Candidate CLI package version must be exact canonical base semver");
+            }
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `base_version=${value}\n`);
+          '
+
+      - name: Package exact candidate source as inert transport data
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git -C .candidate-source archive \
+            --format=tar.gz \
+            --output "${RUNNER_TEMP}/cli-source-${SOURCE_SHA}.tar.gz" \
+            HEAD
+
+      - name: Upload exact candidate source transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-source-${{ steps.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-source-${{ steps.source.outputs.source_sha }}.tar.gz
+          if-no-files-found: error
+          retention-days: 2
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -261,34 +415,31 @@ jobs:
       - name: Allocate one release version for the native matrix
         id: version
         env:
-          CANDIDATE_ONLY: ${{ inputs.candidate_only }}
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          PROMOTE_CANDIDATE_VERSION: ${{ inputs.candidate_version }}
+          CANDIDATE_BASE_VERSION: ${{ steps.candidate_base.outputs.base_version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [ "$CANDIDATE_ONLY" = "true" ]; then
-            candidate_version="$(node -p "require('./apps/cli/package.json').version")"
-            test -n "$candidate_version"
-            echo "version=${candidate_version}" >> "$GITHUB_OUTPUT"
+          if [ -n "$PROMOTE_CANDIDATE_VERSION" ]; then
+            echo "version=${PROMOTE_CANDIDATE_VERSION}" >> "$GITHUB_OUTPUT"
           else
-            node scripts/pipeline/run.mjs publish-cli-binaries \
-              --channel "${{ inputs.channel }}" \
-              --allow-stable "${{ inputs.allow_stable }}" \
+            node scripts/pipeline/release/publish-cli-binaries.mjs \
+              --channel "$RELEASE_CHANNEL" \
+              --allow-stable "$ALLOW_STABLE" \
+              --base-version "$CANDIDATE_BASE_VERSION" \
               --resolve-version-only \
               --github-output "$GITHUB_OUTPUT"
           fi
 
   build_native:
-    if: ${{ inputs.retry_version == '' }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_run_id == '' }}
     name: Build and verify CLI (${{ matrix.platform_key }})
     needs: [prepare]
     runs-on: ${{ matrix.runner }}
-    environment: release-shared
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
+    permissions: {}
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
     strategy:
@@ -326,13 +477,23 @@ jobs:
             go_target: windows-amd64
             wrapper_name: happier-cliproxyapi-managed.exe
     steps:
-      - name: Checkout exact source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Download exact candidate source transport
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ needs.prepare.outputs.source_sha }}
-          fetch-depth: 1
-          persist-credentials: false
+          name: cli-source-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-source
+
+      - name: Materialize candidate source without repository authority
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/cli-source/cli-source-${SOURCE_SHA}.tar.gz"
+          test -f "$archive"
+          tar -xzf "$archive" -C "$GITHUB_WORKSPACE"
+          test -f "$GITHUB_WORKSPACE/apps/cli/package.json"
+          test -f "$GITHUB_WORKSPACE/scripts/pipeline/run.mjs"
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -398,30 +559,221 @@ jobs:
         shell: bash
         env:
           HAPPIER_VERSION: ${{ needs.prepare.outputs.version }}
+          GO_TARGET: ${{ matrix.go_target }}
         run: |
           set -euo pipefail
           yarn workspace @happier-dev/plugins-cliproxyapi managed-runtime:build \
-            --target "${{ matrix.go_target }}" \
+            --target "$GO_TARGET" \
             --output "${WRAPPER_PATH}"
           node -e 'const fs=require("fs");if(!fs.statSync(process.argv[1]).isFile())process.exit(1)' "${WRAPPER_PATH}"
 
       - name: Record exact Go module graph and embedded build provenance
         shell: bash
         working-directory: packages/plugins/cliproxyapi/managed-runtime
+        env:
+          PLATFORM_KEY: ${{ matrix.platform_key }}
         run: |
           set -euo pipefail
           PROVENANCE_DIR="${GITHUB_WORKSPACE}/dist/provenance"
           mkdir -p "${PROVENANCE_DIR}"
-          go mod graph | LC_ALL=C sort > "${PROVENANCE_DIR}/${{ matrix.platform_key }}.module-graph.txt"
+          go mod graph | LC_ALL=C sort > "${PROVENANCE_DIR}/${PLATFORM_KEY}.module-graph.txt"
           go list -m -f '{{.Path}} {{.Version}}' all | LC_ALL=C sort > \
-            "${PROVENANCE_DIR}/${{ matrix.platform_key }}.module-list.txt"
-          go version -m "${WRAPPER_PATH}" | tail -n +2 > "${PROVENANCE_DIR}/${{ matrix.platform_key }}.binary-build-info.txt"
+            "${PROVENANCE_DIR}/${PLATFORM_KEY}.module-list.txt"
+          go version -m "${WRAPPER_PATH}" | tail -n +2 > "${PROVENANCE_DIR}/${PLATFORM_KEY}.binary-build-info.txt"
           grep -F $'\tdep\tgithub.com/router-for-me/CLIProxyAPI/v7\tv7.2.95' \
-            "${PROVENANCE_DIR}/${{ matrix.platform_key }}.binary-build-info.txt"
+            "${PROVENANCE_DIR}/${PLATFORM_KEY}.binary-build-info.txt"
+
+      - name: Build exact native CLI archive from the wrapper
+        shell: bash
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CLI_TARGET: ${{ matrix.cli_target }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs release-build-cli-binaries \
+            --channel "$RELEASE_CHANNEL" \
+            --version "$RELEASE_VERSION" \
+            --targets "$CLI_TARGET" \
+            --cliproxyapi-managed-runtime-executable "${WRAPPER_PATH}"
+
+      - name: Run retained conformance harness against the packaged wrapper
+        shell: bash
+        working-directory: packages/plugins/cliproxyapi/managed-runtime
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CLI_TARGET: ${{ matrix.cli_target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          WRAPPER_NAME: ${{ matrix.wrapper_name }}
+          GO_TARGET: ${{ matrix.go_target }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="${GITHUB_WORKSPACE}/dist/release-assets/cli/happier-v${RELEASE_VERSION}-${CLI_TARGET}.tar.gz"
+          EXTRACT_DIR="${RUNNER_TEMP}/packaged-${PLATFORM_KEY}"
+          rm -rf "${EXTRACT_DIR}"
+          node "${GITHUB_WORKSPACE}/scripts/pipeline/release/node-archive.mjs" \
+            --extract-archive-path "${ARCHIVE}" \
+            --extract-dir "${EXTRACT_DIR}"
+          PACKAGED_PAYLOAD_PATH="${EXTRACT_DIR}/happier-v${RELEASE_VERSION}-${CLI_TARGET}"
+          test -d "${PACKAGED_PAYLOAD_PATH}"
+          PACKAGED_WRAPPER_PATH="$(find "${EXTRACT_DIR}" -type f -name "$WRAPPER_NAME" -print)"
+          PACKAGED_LICENSE_PATH="$(find "${EXTRACT_DIR}" -type f -name 'CLIProxyAPI-LICENSE' -print)"
+          PACKAGED_NOTICES_PATH="$(find "${EXTRACT_DIR}" -type f -name 'CLIProxyAPI-THIRD-PARTY-NOTICES' -print)"
+          test "$(printf '%s\n' "${PACKAGED_WRAPPER_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
+          test "$(printf '%s\n' "${PACKAGED_LICENSE_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
+          test "$(printf '%s\n' "${PACKAGED_NOTICES_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
+          cmp \
+            "licenses/CLIProxyAPI-LICENSE" \
+            "${PACKAGED_LICENSE_PATH}"
+          GOOS_VALUE="${GO_TARGET%-*}"
+          GOARCH_VALUE="${GO_TARGET#*-}"
+          go run ./tools/notices \
+            --binary "${PACKAGED_WRAPPER_PATH}" \
+            --goos "${GOOS_VALUE}" \
+            --goarch "${GOARCH_VALUE}" \
+            --output "${PACKAGED_NOTICES_PATH}" \
+            --check
+          go version -m "${PACKAGED_WRAPPER_PATH}" | tail -n +2 > \
+            "${GITHUB_WORKSPACE}/dist/provenance/${PLATFORM_KEY}.packaged-binary-build-info.txt"
+          cmp \
+            "${GITHUB_WORKSPACE}/dist/provenance/${PLATFORM_KEY}.binary-build-info.txt" \
+            "${GITHUB_WORKSPACE}/dist/provenance/${PLATFORM_KEY}.packaged-binary-build-info.txt"
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            PACKAGED_WRAPPER_PATH="$(cygpath -w "${PACKAGED_WRAPPER_PATH}")"
+          else
+            test -x "${PACKAGED_WRAPPER_PATH}"
+          fi
+          HAPPIER_CLIPROXYAPI_EXECUTABLE="${PACKAGED_WRAPPER_PATH}" \
+            HAPPIER_CLIPROXYAPI_WRAPPER_BUILD_VERSION="$RELEASE_VERSION" \
+            go test ./conformance -run '^TestPackagedWrapper$' -count=1 -v
+
+      - name: Upload exact unsigned native archive and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cli-native-${{ matrix.platform_key }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: |
+            dist/release-assets/cli/happier-v${{ needs.prepare.outputs.version }}-${{ matrix.cli_target }}.tar.gz
+            dist/provenance/${{ matrix.platform_key }}.module-graph.txt
+            dist/provenance/${{ matrix.platform_key }}.module-list.txt
+            dist/provenance/${{ matrix.platform_key }}.binary-build-info.txt
+            dist/provenance/${{ matrix.platform_key }}.packaged-binary-build-info.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  attest_native:
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_run_id == '' }}
+    name: Attest CLI candidate leaf (${{ matrix.platform_key }})
+    needs: [prepare, build_native]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: linux-x64
+            cli_target: linux-x64
+          - platform_key: linux-arm64
+            cli_target: linux-arm64
+          - platform_key: darwin-x64
+            cli_target: darwin-x64
+          - platform_key: darwin-arm64
+            cli_target: darwin-arm64
+          - platform_key: windows-x64
+            cli_target: windows-x64
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download exact unsigned native leaf as data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-native-${{ matrix.platform_key }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-attestation-${{ matrix.platform_key }}
+
+      - name: Select exact archive for attestation
+        env:
+          CANDIDATE_DATA_DIR: ${{ runner.temp }}/cli-attestation-${{ matrix.platform_key }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CLI_TARGET: ${{ matrix.cli_target }}
+        run: |
+          set -euo pipefail
+          archive="happier-v${RELEASE_VERSION}-${CLI_TARGET}.tar.gz"
+          matches=()
+          while IFS= read -r match; do matches+=("$match"); done < <(
+            find "$CANDIDATE_DATA_DIR" -type f -name "$archive" -print
+          )
+          test "${#matches[@]}" = "1"
+          mkdir -p dist/attestation-leaf
+          cp "${matches[0]}" "dist/attestation-leaf/$archive"
+          test "$(find dist/attestation-leaf -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "1"
+
+      - name: Attest exact unsigned native archive from trusted control
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-path: dist/attestation-leaf/happier-v${{ needs.prepare.outputs.version }}-${{ matrix.cli_target }}.tar.gz
+
+  finalize_darwin:
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_run_id == '' }}
+    name: Sign and notarize CLI (${{ matrix.platform_key }})
+    needs: [prepare, build_native, attest_native]
+    runs-on: ${{ matrix.runner }}
+    environment: release-shared
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: darwin-x64
+            runner: macos-15-intel
+            cli_target: darwin-x64
+          - platform_key: darwin-arm64
+            runner: macos-15
+            cli_target: darwin-arm64
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install trusted workflow control dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-scripts
+
+      - name: Build trusted release archive runtime
+        run: yarn workspace @happier-dev/release-runtime build
 
       - name: Require Apple signing and notarization credentials
-        if: matrix.platform_os == 'macos'
-        shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -437,164 +789,106 @@ jobs:
             fi
           done
 
-      - name: Import Apple codesigning certificate
-        if: matrix.platform_os == 'macos'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          keychain_path="${RUNNER_TEMP}/build.keychain-db"
-          keychain_password="$(uuidgen)"
-          cert_path="${RUNNER_TEMP}/apple-cert.p12"
-          echo "${APPLE_CERTIFICATE}" | base64 --decode > "${cert_path}"
-          chmod 600 "${cert_path}"
-          security create-keychain -p "${keychain_password}" "${keychain_path}"
-          security set-keychain-settings -lut 21600 "${keychain_path}"
-          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
-          existing_keychains=()
-          while IFS= read -r line; do
-            existing_keychains+=("${line}")
-          done < <(security list-keychains -d user | tr -d '"')
-          security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
-          security import "${cert_path}" -k "${keychain_path}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
-
-      - name: Resolve Apple signing identity
-        if: matrix.platform_os == 'macos'
+      - name: Setup Apple code signing identity
         id: apple_id
-        shell: bash
-        run: |
-          set -euo pipefail
-          identity="$(security find-identity -v -p codesigning 2>&1 | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
-          if [ -z "${identity:-}" ]; then
-            echo "Unable to find Developer ID Application identity after importing certificate." >&2
-            exit 1
-          fi
-          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/setup-apple-codesigning
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
-      - name: Build exact native CLI archive from the wrapper
-        if: matrix.platform_os != 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs release-build-cli-binaries \
-            --channel "${{ inputs.channel }}" \
-            --version "${{ needs.prepare.outputs.version }}" \
-            --targets "${{ matrix.cli_target }}" \
-            --cliproxyapi-managed-runtime-executable "${WRAPPER_PATH}"
+      - name: Download exact unsigned Darwin leaf
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cli-native-${{ matrix.platform_key }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-unsigned-${{ matrix.platform_key }}
 
-      - name: Build, sign, and notarize exact native CLI payload from the wrapper
-        if: matrix.platform_os == 'macos'
-        shell: bash
+      - name: Sign, notarize, and verify exact native CLI archive
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          CANDIDATE_DATA_DIR: ${{ runner.temp }}/cli-unsigned-${{ matrix.platform_key }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CLI_TARGET: ${{ matrix.cli_target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs release-build-cli-binaries \
-            --channel "${{ inputs.channel }}" \
-            --version "${{ needs.prepare.outputs.version }}" \
-            --targets "${{ matrix.cli_target }}" \
-            --cliproxyapi-managed-runtime-executable "${WRAPPER_PATH}" \
-            --macos-signing-identity "${{ steps.apple_id.outputs.identity }}" \
-            --macos-notarization-output "dist/notary/${{ matrix.platform_key }}.cli.json"
-
-      - name: Run retained conformance harness against the packaged wrapper
-        shell: bash
-        working-directory: packages/plugins/cliproxyapi/managed-runtime
-        run: |
-          set -euo pipefail
-          ARCHIVE="${GITHUB_WORKSPACE}/dist/release-assets/cli/happier-v${{ needs.prepare.outputs.version }}-${{ matrix.cli_target }}.tar.gz"
-          EXTRACT_DIR="${RUNNER_TEMP}/packaged-${{ matrix.platform_key }}"
-          rm -rf "${EXTRACT_DIR}"
-          node "${GITHUB_WORKSPACE}/scripts/pipeline/release/node-archive.mjs" \
-            --extract-archive-path "${ARCHIVE}" \
-            --extract-dir "${EXTRACT_DIR}"
-          PACKAGED_PAYLOAD_PATH="${EXTRACT_DIR}/happier-v${{ needs.prepare.outputs.version }}-${{ matrix.cli_target }}"
-          test -d "${PACKAGED_PAYLOAD_PATH}"
-          PACKAGED_WRAPPER_PATH="$(find "${EXTRACT_DIR}" -type f -name '${{ matrix.wrapper_name }}' -print)"
-          PACKAGED_LICENSE_PATH="$(find "${EXTRACT_DIR}" -type f -name 'CLIProxyAPI-LICENSE' -print)"
-          PACKAGED_NOTICES_PATH="$(find "${EXTRACT_DIR}" -type f -name 'CLIProxyAPI-THIRD-PARTY-NOTICES' -print)"
-          test "$(printf '%s\n' "${PACKAGED_WRAPPER_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
-          test "$(printf '%s\n' "${PACKAGED_LICENSE_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
-          test "$(printf '%s\n' "${PACKAGED_NOTICES_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
-          cmp \
-            "licenses/CLIProxyAPI-LICENSE" \
-            "${PACKAGED_LICENSE_PATH}"
-          if [ "${RUNNER_OS}" = "macOS" ]; then
-            node "${GITHUB_WORKSPACE}/scripts/pipeline/release/notarize-standalone-binary.mjs" \
-              --verify-evidence \
-              --payload "${PACKAGED_PAYLOAD_PATH}" \
-              --evidence "${GITHUB_WORKSPACE}/dist/notary/${{ matrix.platform_key }}.cli.json"
-          fi
-          GO_TARGET="${{ matrix.go_target }}"
-          GOOS_VALUE="${GO_TARGET%-*}"
-          GOARCH_VALUE="${GO_TARGET#*-}"
-          go run ./tools/notices \
-            --binary "${PACKAGED_WRAPPER_PATH}" \
-            --goos "${GOOS_VALUE}" \
-            --goarch "${GOARCH_VALUE}" \
-            --output "${PACKAGED_NOTICES_PATH}" \
-            --check
-          go version -m "${PACKAGED_WRAPPER_PATH}" | tail -n +2 > \
-            "${GITHUB_WORKSPACE}/dist/provenance/${{ matrix.platform_key }}.packaged-binary-build-info.txt"
-          cmp \
-            "${GITHUB_WORKSPACE}/dist/provenance/${{ matrix.platform_key }}.binary-build-info.txt" \
-            "${GITHUB_WORKSPACE}/dist/provenance/${{ matrix.platform_key }}.packaged-binary-build-info.txt"
-          if [ "${RUNNER_OS}" = "Windows" ]; then
-            PACKAGED_WRAPPER_PATH="$(cygpath -w "${PACKAGED_WRAPPER_PATH}")"
-          else
-            test -x "${PACKAGED_WRAPPER_PATH}"
-          fi
-          HAPPIER_CLIPROXYAPI_EXECUTABLE="${PACKAGED_WRAPPER_PATH}" \
-            HAPPIER_CLIPROXYAPI_WRAPPER_BUILD_VERSION="${{ needs.prepare.outputs.version }}" \
-            go test ./conformance -run '^TestPackagedWrapper$' -count=1 -v
-
-      - name: Attest exact archive from its native builder
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
-        with:
-          subject-path: dist/release-assets/cli/happier-v${{ needs.prepare.outputs.version }}-${{ matrix.cli_target }}.tar.gz
+          archive_name="happier-v${RELEASE_VERSION}-${CLI_TARGET}.tar.gz"
+          matches=()
+          while IFS= read -r match; do matches+=("$match"); done < <(
+            find "$CANDIDATE_DATA_DIR" -type f -name "$archive_name" -print
+          )
+          test "${#matches[@]}" = "1"
+          mkdir -p "${GITHUB_WORKSPACE}/dist/release-assets/cli" "${GITHUB_WORKSPACE}/dist/notary"
+          ARCHIVE="${GITHUB_WORKSPACE}/dist/release-assets/cli/${archive_name}"
+          cp "${matches[0]}" "$ARCHIVE"
+          PAYLOAD="happier-v${RELEASE_VERSION}-${CLI_TARGET}"
+          EVIDENCE="${GITHUB_WORKSPACE}/dist/notary/${PLATFORM_KEY}.cli.json"
+          node scripts/pipeline/release/notarize-standalone-binary.mjs \
+            --archive "$ARCHIVE" \
+            --expected-payload "$PAYLOAD" \
+            --identity "$APPLE_SIGNING_IDENTITY" \
+            --out "$EVIDENCE" \
+            --refresh-cli-runtime-asset-manifest
+          VERIFY_DIR="${RUNNER_TEMP}/cli-verify-${PLATFORM_KEY}"
+          node scripts/pipeline/release/node-archive.mjs \
+            --extract-archive-path "$ARCHIVE" \
+            --extract-dir "$VERIFY_DIR"
+          node scripts/pipeline/release/notarize-standalone-binary.mjs \
+            --verify-evidence \
+            --payload "${VERIFY_DIR}/${PAYLOAD}" \
+            --evidence "$EVIDENCE"
+          CLI_BIN="${VERIFY_DIR}/${PAYLOAD}/happier"
+          test -x "$CLI_BIN"
+          "$CLI_BIN" --version
 
       - name: Clean Apple signing material
-        if: always() && matrix.platform_os == 'macos'
-        shell: bash
+        if: always()
+        env:
+          APPLE_KEYCHAIN_PATH: ${{ steps.apple_id.outputs.keychain-path }}
+          APPLE_CERTIFICATE_PATH: ${{ steps.apple_id.outputs.certificate-path }}
         run: |
           set -euo pipefail
-          security delete-keychain "${RUNNER_TEMP}/build.keychain-db" >/dev/null 2>&1 || true
-          rm -f "${RUNNER_TEMP}/apple-cert.p12"
+          security delete-keychain "$APPLE_KEYCHAIN_PATH" >/dev/null 2>&1 || true
+          rm -f "$APPLE_CERTIFICATE_PATH"
 
-      - name: Upload exact native archive and notarization evidence
+      - name: Assemble exact signed Darwin leaf handoff
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CLI_TARGET: ${{ matrix.cli_target }}
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+        run: |
+          set -euo pipefail
+          rm -rf dist/signed-leaf
+          mkdir -p dist/signed-leaf
+          cp "dist/release-assets/cli/happier-v${RELEASE_VERSION}-${CLI_TARGET}.tar.gz" dist/signed-leaf/
+          cp "dist/notary/${PLATFORM_KEY}.cli.json" dist/signed-leaf/
+          cp "dist/notary/${PLATFORM_KEY}.cli.json.notary-log.json" dist/signed-leaf/
+          test "$(find dist/signed-leaf -maxdepth 1 -type f | wc -l | tr -d ' ')" = "3"
+
+      - name: Upload exact signed Darwin leaf and evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: cli-native-${{ matrix.platform_key }}
-          path: |
-            dist/release-assets/cli/happier-v${{ needs.prepare.outputs.version }}-${{ matrix.cli_target }}.tar.gz
-            dist/notary/${{ matrix.platform_key }}.cli.json
-            dist/notary/${{ matrix.platform_key }}.cli.json.notary-log.json
-            dist/provenance/${{ matrix.platform_key }}.module-graph.txt
-            dist/provenance/${{ matrix.platform_key }}.module-list.txt
-            dist/provenance/${{ matrix.platform_key }}.binary-build-info.txt
-            dist/provenance/${{ matrix.platform_key }}.packaged-binary-build-info.txt
+          name: cli-signed-${{ matrix.platform_key }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/signed-leaf
           if-no-files-found: error
           retention-days: 7
 
   finalize_candidate:
-    if: ${{ inputs.retry_version == '' && inputs.candidate_only == true }}
+    if: ${{ inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_only == true }}
     name: Finalize signed CLI candidate matrix
-    needs: [prepare, build_native]
+    needs: [prepare, build_native, finalize_darwin]
     runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
       contents: read
     steps:
-      - name: Checkout exact source
+      - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ job.workflow_repository }}
-          ref: ${{ needs.prepare.outputs.source_sha }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -622,75 +916,158 @@ jobs:
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
         uses: ./.github/actions/install-yarn-dependencies
         with:
-          args: --frozen-lockfile --ignore-engines
+          args: --frozen-lockfile --ignore-engines --ignore-scripts
 
-      - name: Download exact native leaves
+      - name: Download exact unsigned native leaves
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: cli-native-*
-          path: dist/native-matrix
+          pattern: cli-native-*-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-unsigned-matrix
           merge-multiple: true
 
-      - name: Assemble bounded candidate-native matrix
+      - name: Download exact signed Darwin leaves
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: cli-signed-*-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-signed-darwin
+          merge-multiple: true
+
+      - name: Assemble bounded candidate-native matrix from exact leaf handoffs
         shell: bash
+        env:
+          UNSIGNED_DATA_DIR: ${{ runner.temp }}/cli-unsigned-matrix
+          SIGNED_DATA_DIR: ${{ runner.temp }}/cli-signed-darwin
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          rm -rf dist/candidate-native-matrix
-          mkdir -p dist/candidate-native-matrix
-          find dist/native-matrix -type f -name '*.tar.gz' \
-            -exec cp '{}' dist/candidate-native-matrix/ ';'
-          test "$(find dist/candidate-native-matrix -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+          ARTIFACTS_DIR="${GITHUB_WORKSPACE}/dist/release-assets/cli"
+          rm -rf "$ARTIFACTS_DIR"
+          mkdir -p "$ARTIFACTS_DIR"
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
+            archive="happier-v${RELEASE_VERSION}-${target}.tar.gz"
+            matches=()
+            while IFS= read -r match; do matches+=("$match"); done < <(
+              find "$UNSIGNED_DATA_DIR" -type f -name "$archive" -print
+            )
+            test "${#matches[@]}" = "1"
+            cp "${matches[0]}" "$ARTIFACTS_DIR/$archive"
+          done
           for evidence in darwin-x64.cli.json darwin-arm64.cli.json; do
             matches=()
-            while IFS= read -r match; do
-              matches+=("$match")
-            done < <(find dist/native-matrix -type f -name "$evidence" -print)
+            while IFS= read -r match; do matches+=("$match"); done < <(
+              find "$SIGNED_DATA_DIR" -type f -name "$evidence" -print
+            )
             test "${#matches[@]}" = "1"
-            cp "${matches[0]}" "dist/candidate-native-matrix/$evidence"
+            cp "${matches[0]}" "$ARTIFACTS_DIR/$evidence"
           done
-          test "$(find dist/candidate-native-matrix -maxdepth 1 -type f -name '*.cli.json' | wc -l | tr -d ' ')" = "2"
+          for target in darwin-x64 darwin-arm64; do
+            archive="happier-v${RELEASE_VERSION}-${target}.tar.gz"
+            matches=()
+            while IFS= read -r match; do matches+=("$match"); done < <(
+              find "$SIGNED_DATA_DIR" -type f -name "$archive" -print
+            )
+            test "${#matches[@]}" = "1"
+            cp "${matches[0]}" "$ARTIFACTS_DIR/$archive"
+          done
+          test "$(find "$ARTIFACTS_DIR" -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+          test "$(find "$ARTIFACTS_DIR" -maxdepth 1 -type f -name '*.cli.json' | wc -l | tr -d ' ')" = "2"
+          test "$(find "$ARTIFACTS_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "7"
 
       - name: Finalize and verify signed candidate-native matrix
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/publishing/prepare-binary-assets.mjs \
             --finalize-prepared-only \
             --product cli \
-            --channel "${{ inputs.channel }}" \
-            --version "${{ needs.prepare.outputs.version }}" \
-            --artifacts-dir dist/candidate-native-matrix
+            --channel "$RELEASE_CHANNEL" \
+            --version "$RELEASE_VERSION" \
+            --artifacts-dir "${GITHUB_WORKSPACE}/dist/release-assets/cli"
           node scripts/pipeline/release/verify-artifacts.mjs \
-            --artifacts-dir dist/candidate-native-matrix \
+            --artifacts-dir "${GITHUB_WORKSPACE}/dist/release-assets/cli" \
             --public-key apps/website/public/happier-release.pub \
+            --require-all-artifacts-checksummed \
+            --require-signature \
             --skip-smoke
-          test "$(find dist/candidate-native-matrix -maxdepth 1 -type f | wc -l | tr -d ' ')" = "9"
+          test "$(find "${GITHUB_WORKSPACE}/dist/release-assets/cli" -maxdepth 1 -type f | wc -l | tr -d ' ')" = "9"
 
       - name: Upload one signed candidate-native matrix
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: cli-candidate-native-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
-          path: dist/candidate-native-matrix
+          name: cli-candidate-native-${{ inputs.channel }}-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: dist/release-assets/cli
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    if: ${{ inputs.retry_version == '' && inputs.candidate_only != true }}
-    name: Publish complete CLI matrix
-    needs: [prepare, build_native]
+  admit_publication:
+    if: ${{ always() && inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_only != true && needs.prepare.result == 'success' && ((inputs.candidate_run_id == '' && needs.build_native.result == 'success' && needs.finalize_darwin.result == 'success') || (inputs.candidate_run_id != '' && needs.build_native.result == 'skipped' && needs.finalize_darwin.result == 'skipped')) }}
+    name: Re-admit exact CLI source without publication secrets
+    needs: [prepare, build_native, finalize_darwin]
     runs-on: ubuntu-24.04
-    environment: release-shared
     permissions:
-      contents: write
+      contents: read
     steps:
-      - name: Checkout exact source
+      - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ job.workflow_repository }}
-          ref: ${{ needs.prepare.outputs.source_sha }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Re-admit Qualified V4 CLI payload publication
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_CHANNEL" in
+            stable) deploy_environment="production" ;;
+            preview|dev) deploy_environment="preview" ;;
+            *) echo "Unsupported CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
+          esac
+          deploy_branch="deploy/${deploy_environment}/server"
+          baseline_ref="refs/qualified-v4-payload-baseline"
+          candidate_ref="refs/qualified-v4-payload-candidate"
+          git fetch --no-tags origin "$SOURCE_SHA"
+          git update-ref "$candidate_ref" FETCH_HEAD
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
+          baseline_status=$?
+          set -e
+          case "$baseline_status" in
+            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
+            2) ;;
+            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
+          esac
+          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
+            --admission-kind payload-publication \
+            --baseline-ref "$baseline_ref" \
+            --candidate-ref "$candidate_ref" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: ${{ always() && inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_only != true && needs.admit_publication.result == 'success' }}
+    name: Publish complete CLI matrix
+    needs: [prepare, build_native, finalize_darwin, admit_publication]
+    runs-on: ubuntu-24.04
+    environment: release-shared
+    permissions:
+      actions: read
+      contents: write
+    outputs:
+      version: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Setup Node
@@ -722,23 +1099,107 @@ jobs:
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
         uses: ./.github/actions/install-yarn-dependencies
         with:
-          args: --frozen-lockfile --ignore-engines
+          args: --frozen-lockfile --ignore-engines --ignore-scripts
 
-      - name: Download native matrix
+      - name: Download exact unsigned native matrix
+        if: inputs.candidate_run_id == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: cli-native-*
-          path: dist/native-matrix
+          pattern: cli-native-*-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-unsigned-matrix
           merge-multiple: true
 
-      - name: Assemble prepared archive directory
+      - name: Download exact signed Darwin leaves
+        if: inputs.candidate_run_id == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: cli-signed-*-${{ needs.prepare.outputs.version }}-${{ needs.prepare.outputs.source_sha }}
+          path: ${{ runner.temp }}/cli-signed-darwin
+          merge-multiple: true
+
+      - name: Assemble prepared archive directory from exact leaf handoffs
+        if: inputs.candidate_run_id == ''
+        shell: bash
+        env:
+          UNSIGNED_DATA_DIR: ${{ runner.temp }}/cli-unsigned-matrix
+          SIGNED_DATA_DIR: ${{ runner.temp }}/cli-signed-darwin
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          ARTIFACTS_DIR="${GITHUB_WORKSPACE}/dist/release-assets/cli"
+          rm -rf "$ARTIFACTS_DIR"
+          mkdir -p "$ARTIFACTS_DIR"
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
+            archive="happier-v${RELEASE_VERSION}-${target}.tar.gz"
+            matches=()
+            while IFS= read -r match; do matches+=("$match"); done < <(
+              find "$UNSIGNED_DATA_DIR" -type f -name "$archive" -print
+            )
+            test "${#matches[@]}" = "1"
+            cp "${matches[0]}" "$ARTIFACTS_DIR/$archive"
+          done
+          for evidence in darwin-x64.cli.json darwin-arm64.cli.json; do
+            matches=()
+            while IFS= read -r match; do matches+=("$match"); done < <(
+              find "$SIGNED_DATA_DIR" -type f -name "$evidence" -print
+            )
+            test "${#matches[@]}" = "1"
+            cp "${matches[0]}" "$ARTIFACTS_DIR/$evidence"
+          done
+          for target in darwin-x64 darwin-arm64; do
+            archive="happier-v${RELEASE_VERSION}-${target}.tar.gz"
+            matches=()
+            while IFS= read -r match; do matches+=("$match"); done < <(
+              find "$SIGNED_DATA_DIR" -type f -name "$archive" -print
+            )
+            test "${#matches[@]}" = "1"
+            cp "${matches[0]}" "$ARTIFACTS_DIR/$archive"
+          done
+          test "$(find "$ARTIFACTS_DIR" -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+          test "$(find "$ARTIFACTS_DIR" -maxdepth 1 -type f -name '*.cli.json' | wc -l | tr -d ' ')" = "2"
+          test "$(find "$ARTIFACTS_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "7"
+
+      - name: Download exact signed candidate-native matrix
+        if: inputs.candidate_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.candidate_artifact_id }}
+          path: ${{ runner.temp }}/cli-promoted-candidate
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.candidate_run_id }}
+
+      - name: Verify exact signed candidate-native matrix
+        if: inputs.candidate_run_id != ''
+        shell: bash
+        env:
+          CANDIDATE_DATA_DIR: ${{ runner.temp }}/cli-promoted-candidate
+        run: |
+          set -euo pipefail
+          test "$(find "$CANDIDATE_DATA_DIR" -mindepth 1 -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+          test "$(find "$CANDIDATE_DATA_DIR" -mindepth 1 -maxdepth 1 -type f -name '*.cli.json' | wc -l | tr -d ' ')" = "2"
+          test "$(find "$CANDIDATE_DATA_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "9"
+          test "$(find "$CANDIDATE_DATA_DIR" -mindepth 1 -maxdepth 1 ! -type f | wc -l | tr -d ' ')" = "0"
+          node scripts/pipeline/release/verify-artifacts.mjs \
+            --artifacts-dir "$CANDIDATE_DATA_DIR" \
+            --public-key apps/website/public/happier-release.pub \
+            --require-all-artifacts-checksummed \
+            --require-signature \
+            --skip-archive-admission \
+            --skip-smoke
+
+      - name: Assemble exact promoted candidate envelope
+        if: inputs.candidate_run_id != ''
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf dist/release-assets/cli
-          mkdir -p dist/release-assets/cli
-          find dist/native-matrix -type f -name '*.tar.gz' -exec cp '{}' dist/release-assets/cli/ ';'
-          test "$(find dist/release-assets/cli -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" = "5"
+          ARTIFACTS_DIR="${GITHUB_WORKSPACE}/dist/release-assets/cli"
+          CANDIDATE_DATA_DIR="${RUNNER_TEMP}/cli-promoted-candidate"
+          rm -rf "$ARTIFACTS_DIR"
+          mkdir -p "$ARTIFACTS_DIR"
+          cp -a "$CANDIDATE_DATA_DIR/." "$ARTIFACTS_DIR/"
+          test "$(find "$ARTIFACTS_DIR" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = "9"
 
       - name: Create GitHub App token
         id: app_token
@@ -750,54 +1211,69 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
-      - name: Re-admit Qualified V4 CLI payload publication
-        env:
-          RELEASE_CHANNEL: ${{ inputs.channel }}
-        run: |
-          set -euo pipefail
-          case "$RELEASE_CHANNEL" in
-            stable) deploy_environment="production" ;;
-            preview|dev) deploy_environment="preview" ;;
-            *) echo "Unsupported CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
-          esac
-          deploy_branch="deploy/${deploy_environment}/server"
-          baseline_ref="refs/qualified-v4-payload-baseline"
-          set +e
-          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
-          baseline_status=$?
-          set -e
-          case "$baseline_status" in
-            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
-            2) ;;
-            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
-          esac
-          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
-            --admission-kind payload-publication \
-            --baseline-ref "$baseline_ref" \
-            --candidate-ref HEAD \
-            --summary-file "$GITHUB_STEP_SUMMARY"
-
       - name: Sign manifests and publish prepared CLI matrix
+        if: inputs.candidate_run_id == ''
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+          HAPPIER_CANDIDATE_BUILD_RUN_ID: ${{ github.run_id }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CANDIDATE_BASE_VERSION: ${{ needs.prepare.outputs.base_version }}
+          AUTHORIZED_SHA: ${{ needs.prepare.outputs.source_sha }}
+          PUBLISH_PHASE: ${{ inputs.publish_rolling == false && 'publish-immutable' || 'publish' }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs publish-cli-binaries \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
-            --release-message "${{ inputs.release_message }}" \
-            --version "${{ needs.prepare.outputs.version }}" \
+          node scripts/pipeline/release/publish-cli-binaries.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
+            --version "$RELEASE_VERSION" \
+            --base-version "$CANDIDATE_BASE_VERSION" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --phase "$PUBLISH_PHASE" \
             --prepared-artifacts \
+            --skip-smoke \
+            --run-contracts "true" \
+            --check-installers "true"
+
+      - name: Publish authenticated exact candidate matrix
+        if: inputs.candidate_run_id != ''
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
+          HAPPIER_CANDIDATE_BUILD_RUN_ID: ${{ inputs.candidate_run_id }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+          CANDIDATE_BASE_VERSION: ${{ needs.prepare.outputs.base_version }}
+          AUTHORIZED_SHA: ${{ needs.prepare.outputs.source_sha }}
+          PUBLISH_PHASE: ${{ inputs.publish_rolling == false && 'publish-immutable' || 'publish' }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/publish-cli-binaries.mjs \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
+            --version "$RELEASE_VERSION" \
+            --base-version "$CANDIDATE_BASE_VERSION" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --phase "$PUBLISH_PHASE" \
+            --finalized-artifacts \
+            --skip-smoke \
             --run-contracts "true" \
             --check-installers "true"
 
   promote_existing:
     name: Recover rolling CLI projection
-    if: ${{ inputs.retry_version != '' && inputs.candidate_only != true }}
+    if: ${{ inputs.retry_version != '' && inputs.resume_version == '' && inputs.candidate_only != true }}
     needs: [release_actor_guard]
     runs-on: ubuntu-24.04
     environment: release-shared
@@ -880,12 +1356,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          ALLOW_STABLE: ${{ inputs.allow_stable }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
         run: |
           set -euo pipefail
           node scripts/pipeline/release/publish-cli-binaries.mjs \
-            --channel "${{ inputs.channel }}" \
-            --allow-stable "${{ inputs.allow_stable }}" \
-            --release-message "${{ inputs.release_message }}" \
+            --channel "$RELEASE_CHANNEL" \
+            --allow-stable "$ALLOW_STABLE" \
+            --release-message "$RELEASE_MESSAGE" \
             --phase promote-rolling \
             --version "$RETRY_VERSION" \
             --authorized-sha "$AUTHORIZED_SHA" \

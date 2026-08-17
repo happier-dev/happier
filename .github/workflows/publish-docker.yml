@@ -17,6 +17,21 @@ on:
         required: true
         default: auto
         type: string
+      authorized_sha:
+        description: "Caller-authorized exact source SHA"
+        required: false
+        default: ""
+        type: string
+      server_version:
+        description: "Exact verified server artifact version used by relay images"
+        required: false
+        default: ""
+        type: string
+      cli_version:
+        description: "Exact verified CLI artifact version used by dev-box images"
+        required: false
+        default: ""
+        type: string
       push_latest:
         description: "Also push the floating channel tag (dev, preview, or latest)"
         required: true
@@ -46,6 +61,18 @@ on:
         required: false
         default: auto
         type: string
+      authorized_sha:
+        required: false
+        default: ""
+        type: string
+      server_version:
+        required: false
+        default: ""
+        type: string
+      cli_version:
+        required: false
+        default: ""
+        type: string
       push_latest:
         required: false
         default: true
@@ -65,17 +92,63 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: publish-docker-${{ github.repository }}-${{ inputs.channel }}
+  cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trust called workflow repository and ref
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject cross-repository or untrusted workflow control
+        env:
+          BUILD_RELAY: ${{ inputs.build_relay }}
+          BUILD_DEV_BOX: ${{ inputs.build_dev_box }}
+          SERVER_VERSION: ${{ inputs.server_version }}
+          CLI_VERSION: ${{ inputs.cli_version }}
+          CHANNEL: ${{ inputs.channel }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            stable|preview|dev) ;;
+            *) echo "Noncanonical Docker publisher channel: $CHANNEL" >&2; exit 1 ;;
+          esac
+          if [ "$BUILD_RELAY" = "true" ] && [ -z "$SERVER_VERSION" ]; then
+            echo "An exact server artifact version is required when build_relay is enabled." >&2
+            exit 1
+          fi
+          if [ "$BUILD_DEV_BOX" = "true" ] && [ -z "$CLI_VERSION" ]; then
+            echo "An exact CLI artifact version is required when build_dev_box is enabled." >&2
+            exit 1
+          fi
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-docker.yml@refs/heads/main") ;;
+            *) echo "Untrusted Docker publisher control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
     name: Release actor guard
+    needs: [trusted_ref_guard]
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -83,35 +156,150 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  publish:
-    name: Build and push images
+  prepare_candidate:
+    name: Prepare exact Docker source candidate
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
-    environment: release-shared
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      artifact_source_ref: ${{ steps.source.outputs.artifact_source_ref }}
     steps:
-      - name: Checkout workflow repo
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
       - name: Resolve channel metadata
         id: channel_meta
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         shell: bash
         run: |
           set -euo pipefail
           node scripts/pipeline/release/resolve-public-release-channel-meta.mjs \
-            --channel "${{ inputs.channel }}" \
-            --source-ref "${{ inputs.source_ref }}" \
+            --channel "$CHANNEL" \
+            --source-ref "$SOURCE_REF" \
             --github-output "$GITHUB_OUTPUT"
+
+      - name: Guard stable channel
+        if: ${{ inputs.channel == 'stable' && steps.channel_meta.outputs.source_ref != 'main' }}
+        env:
+          RESOLVED_SOURCE_REF: ${{ steps.channel_meta.outputs.source_ref }}
+        run: |
+          echo "Stable Docker publishing must build from main (resolved ref: '$RESOLVED_SOURCE_REF')." >&2
+          exit 1
+
+      - name: Checkout exact candidate source as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.channel_meta.outputs.source_ref }}
+          path: .candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze and verify candidate source SHA
+        id: source
+        working-directory: .candidate-source
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+          RESOLVED_SOURCE_REF: ${{ steps.channel_meta.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          if [ -n "$AUTHORIZED_SHA" ]; then test "$source_sha" = "$AUTHORIZED_SHA"; fi
+          artifact_source_ref="$RESOLVED_SOURCE_REF"
+          if [ -n "$AUTHORIZED_SHA" ]; then artifact_source_ref="$AUTHORIZED_SHA"; fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "artifact_source_ref=$artifact_source_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Pack exact candidate source as data
+        working-directory: .candidate-source
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output="$RUNNER_TEMP/docker-source.tar.gz" HEAD
+
+      - name: Upload exact candidate source
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: docker-source-candidate-${{ steps.source.outputs.source_sha }}
+          path: ${{ runner.temp }}/docker-source.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Build and push exact candidate images
+    needs: [prepare_candidate]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install trusted publisher dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "release-runtime"
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+          npm_config_registry: https://registry.npmjs.org
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Download exact candidate source
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: docker-source-candidate-${{ needs.prepare_candidate.outputs.source_sha }}
+          path: ${{ runner.temp }}/docker-source-candidate
+
+      - name: Materialize candidate source as inert build data
+        run: |
+          set -euo pipefail
+          test ! -e .candidate-source
+          mkdir .candidate-source
+          tar -xzf "$RUNNER_TEMP/docker-source-candidate/docker-source.tar.gz" -C .candidate-source
+          test -f .candidate-source/Dockerfile
+          test -f .candidate-source/docker/dev-box/Dockerfile
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
@@ -119,42 +307,33 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
 
-      - name: Guard stable channel
-        if: ${{ inputs.channel == 'stable' && steps.channel_meta.outputs.source_ref != 'main' }}
-        run: |
-          echo "Stable Docker publishing must build from main (resolved ref: '${{ steps.channel_meta.outputs.source_ref }}')." >&2
-          exit 1
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.channel_meta.outputs.source_ref }}
-          token: ${{ steps.app_token.outputs.token }}
-          persist-credentials: false
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           # Prefer a long-lived PAT when org/package settings prevent GitHub Actions tokens from publishing to GHCR.
-          # Fall back to the workflow's GITHUB_TOKEN (packages:write is requested at the workflow level).
+          # Fall back to the publisher job's GITHUB_TOKEN (packages:write is scoped to this job).
           username: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
 
-      - name: Build & push images (pipeline)
+      - name: Build & push images (trusted pipeline)
+        working-directory: .candidate-source
         env:
+          CHANNEL: ${{ inputs.channel }}
+          SOURCE_SHA: ${{ needs.prepare_candidate.outputs.source_sha }}
+          ARTIFACT_SOURCE_REF: ${{ needs.prepare_candidate.outputs.artifact_source_ref }}
+          REGISTRIES: ${{ inputs.registries }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+          BUILD_RELAY: ${{ inputs.build_relay }}
+          BUILD_DEV_BOX: ${{ inputs.build_dev_box }}
+          HAPPIER_DOCKER_SERVER_VERSION: ${{ inputs.server_version }}
+          HAPPIER_DOCKER_CLI_VERSION: ${{ inputs.cli_version }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           GHCR_NAMESPACE: ghcr.io/happier-dev
@@ -164,32 +343,33 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs docker-publish \
-            --channel "${{ inputs.channel }}" \
-            --source-ref "${{ steps.channel_meta.outputs.source_ref }}" \
-            --registries "${{ inputs.registries }}" \
-            --push-latest "${{ inputs.push_latest }}" \
-            --build-relay "${{ inputs.build_relay }}" \
-            --build-dev-box "${{ inputs.build_dev_box }}"
+          node "$GITHUB_WORKSPACE/scripts/pipeline/docker/publish-images.mjs" \
+            --channel "$CHANNEL" \
+            --source-ref "$ARTIFACT_SOURCE_REF" \
+            --sha "$SOURCE_SHA" \
+            --registries "$REGISTRIES" \
+            --push-latest "$PUSH_LATEST" \
+            --build-relay "$BUILD_RELAY" \
+            --build-dev-box "$BUILD_DEV_BOX"
 
       - name: Update Docker Hub README (relay-server)
         if: ${{ inputs.build_relay && inputs.channel != 'dev' }}
         continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
+        uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: happierdev/relay-server
-          readme-filepath: docker/dockerhub/relay-server.md
+          readme-filepath: .candidate-source/docker/dockerhub/relay-server.md
           short-description: Self-host the Happier Server (Docker image)
 
       - name: Update Docker Hub README (dev-box)
         if: ${{ inputs.build_dev_box && inputs.channel != 'dev' }}
         continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
+        uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: happierdev/dev-box
-          readme-filepath: docker/dockerhub/dev-box.md
+          readme-filepath: .candidate-source/docker/dockerhub/dev-box.md
           short-description: Happier dev box (CLI + daemon in Docker)

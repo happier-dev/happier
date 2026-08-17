@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,17 +68,23 @@ for (const environment of ['preview', 'dev', 'production']) {
 
     assert.match(out, /scripts\/pipeline\/tauri\/prepare-publish-assets\.mjs/);
     assert.match(out, new RegExp(`\\[pipeline\\] tauri publish assets: env=${environment}`));
-    if (environment === 'production') {
-      assert.match(out, /copy dir: dist\/tauri\/updates -> dist\/tauri\/publish\/ui-desktop-stable/);
-    }
   });
 }
 
-test('production stable publish assets use rolling filenames while versioned release assets keep versions', async () => {
+test('production desktop publish assets are a flat signed immutable envelope', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-tauri-prepare-assets-'));
   try {
     const artifactsDir = join(root, 'updates');
     const publishDir = join(root, 'publish');
+    const binDir = join(root, 'bin');
+    const keyPath = join(root, 'release.key');
+    await mkdir(binDir);
+    await writeFile(keyPath, 'test release key\n');
+    await writeFile(
+      join(binDir, 'minisign'),
+      '#!/bin/sh\nset -eu\nout=""\nwhile [ "$#" -gt 0 ]; do\n  if [ "$1" = "-x" ]; then out="$2"; shift 2; continue; fi\n  shift\ndone\nprintf "test signature\\n" > "$out"\n',
+    );
+    await chmod(join(binDir, 'minisign'), 0o755);
     await writePlatformArtifact(
       artifactsDir,
       'linux-x86_64',
@@ -117,29 +123,33 @@ test('production stable publish assets use rolling filenames while versioned rel
       ],
       {
         cwd: repoRoot,
-        env: { ...process.env },
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          MINISIGN_SECRET_KEY: keyPath,
+          MINISIGN_PASSPHRASE: '',
+        },
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 30_000,
       },
     );
 
-    const stableNames = (await listFilesRecursive(join(publishDir, 'ui-desktop-stable'))).map((file) =>
-      file.slice(join(publishDir, 'ui-desktop-stable').length + 1),
-    );
-    const versionedNames = (await listFilesRecursive(join(publishDir, 'ui-desktop-v'))).map((file) =>
-      file.slice(join(publishDir, 'ui-desktop-v').length + 1),
-    );
+    const versionedDir = join(publishDir, 'ui-desktop-v');
+    const versionedNames = (await readdir(versionedDir)).sort();
 
-    assert.ok(stableNames.includes('latest.json'));
-    assert.ok(stableNames.includes('linux-x86_64/happier-ui-desktop-linux-x86_64.AppImage'));
-    assert.ok(stableNames.includes('linux-x86_64/happier-ui-desktop-linux-x86_64.AppImage.sig'));
-    assert.ok(stableNames.includes('windows-x86_64/happier-ui-desktop-windows-x86_64.exe'));
-    assert.ok(stableNames.every((name) => !name.includes('-v1.2.3')));
-
-    assert.ok(versionedNames.includes('linux-x86_64/happier-ui-desktop-linux-x86_64-v1.2.3.AppImage'));
-    assert.ok(versionedNames.includes('linux-x86_64/happier-ui-desktop-linux-x86_64-v1.2.3.AppImage.sig'));
-    assert.ok(versionedNames.includes('windows-x86_64/happier-ui-desktop-windows-x86_64-v1.2.3.exe'));
+    assert.ok(versionedNames.includes('latest.json'));
+    assert.ok(versionedNames.includes('happier-ui-desktop-linux-x86_64-v1.2.3.AppImage'));
+    assert.ok(versionedNames.includes('happier-ui-desktop-linux-x86_64-v1.2.3.AppImage.sig'));
+    assert.ok(versionedNames.includes('happier-ui-desktop-windows-x86_64-v1.2.3.exe'));
+    assert.ok(versionedNames.includes('checksums-happier-ui-desktop-v1.2.3.txt'));
+    assert.ok(versionedNames.includes('checksums-happier-ui-desktop-v1.2.3.txt.minisig'));
+    assert.ok(versionedNames.every((name) => !name.includes('/')));
+    assert.match(
+      await readFile(join(versionedDir, 'checksums-happier-ui-desktop-v1.2.3.txt'), 'utf8'),
+      /happier-ui-desktop-linux-x86_64-v1\.2\.3\.AppImage/,
+    );
+    await assert.rejects(readdir(join(publishDir, 'ui-desktop-stable')), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

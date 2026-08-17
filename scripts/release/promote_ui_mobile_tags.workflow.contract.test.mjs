@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -59,6 +60,27 @@ test('promote-ui runs a dedicated public APK release build for preview and produ
   assert.match(raw, /platform:\s*android/);
   assert.match(raw, /profile:\s*\$\{\{\s*inputs\.environment == 'production' && 'production-apk' \|\| 'preview-apk'\s*\}\}/);
   assert.match(raw, /publish_apk_release:\s*"true"/);
+});
+
+test('promote-ui passes the exact candidate release-note projection to desktop and APK publishers', async () => {
+  const workflow = YAML.parse(await loadWorkflow('promote-ui.yml'));
+  const raw = JSON.stringify(workflow);
+  const promote = workflow.jobs?.promote;
+  const projectionStep = workflow.jobs?.validate_candidate?.steps?.find(
+    (step) => step.name === 'Project approved release notes from exact candidate',
+  );
+  assert.equal(promote?.outputs?.release_notes_github_markdown, '${{ needs.validate_candidate.outputs.release_notes_github_markdown }}');
+  assert.equal(promote?.outputs?.release_notes_expo_message, '${{ needs.validate_candidate.outputs.release_notes_expo_message }}');
+  assert.match(raw, /Project approved release notes from exact candidate/);
+  assert.match(projectionStep?.run ?? '', /\$\{key\}<<\$\{delimiter\}\\n\$\{value\}\\n\$\{delimiter\}\\n/);
+  assert.equal(
+    workflow.jobs?.mobile_apk_release?.with?.release_message,
+    '${{ needs.promote.outputs.release_notes_github_markdown }}',
+  );
+  assert.equal(
+    workflow.jobs?.desktop?.with?.release_message,
+    '${{ needs.promote.outputs.release_notes_github_markdown }}',
+  );
 });
 
 test('production mobile APK publishing keeps an immutable version tag alongside the rolling stable tag', async () => {

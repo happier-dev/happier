@@ -11,12 +11,12 @@ on:
           - preview
           - production
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Vestigial; Cloudflare is republished on every promotion, so there is nothing to force"
         required: true
         default: false
         type: boolean
       run_build:
-        description: "Checks — Run apps/website build before promoting"
+        description: "Checks — Retained for compatibility; the build always runs because deploy_cloudflare publishes its output"
         required: true
         default: true
         type: boolean
@@ -47,12 +47,12 @@ on:
         required: true
         type: string
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Vestigial; Cloudflare is republished on every promotion, so there is nothing to force"
         required: false
         default: false
         type: boolean
       run_build:
-        description: "Checks — Run apps/website build before promoting"
+        description: "Checks — Retained for compatibility; the build always runs because deploy_cloudflare publishes its output"
         required: false
         default: true
         type: boolean
@@ -80,14 +80,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: promote-website.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -95,212 +122,325 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  promote:
+  resolve_source:
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
-    environment: release-shared
+    permissions:
+      contents: read
+    outputs:
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      candidate_sha: ${{ steps.candidate.outputs.authorized_sha }}
+      source_kind: ${{ steps.candidate.outputs.source_kind }}
     steps:
-      - name: Resolve source ref
-        id: resolve
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Enforce trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           set -euo pipefail
-          env_name="${{ inputs.environment }}"
-          src="${{ inputs.source_ref }}"
-          if [ "$src" = "auto" ]; then
-            if [ "$env_name" = "preview" ]; then
-              src="preview"
-            else
-              src="main"
-            fi
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/promote-website.yml@refs/heads/main") ;;
+            *) echo "Untrusted promote-website workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+      - name: Resolve and validate source ref
+        id: resolve
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          ALLOW_CROSS_PROMOTE: ${{ inputs.allow_cross_promote }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          src="$SOURCE_REF"
+          if [ "$src" = auto ]; then
+            if [ "$DEPLOY_ENVIRONMENT" = preview ]; then src=preview; else src=main; fi
           fi
-
-          # Guardrails: allow using non-default source ref only when explicitly confirmed.
-          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "${{ inputs.allow_cross_promote }}" != "true" ]; then
-            echo "Refusing to promote '$src' to production without allow_cross_promote=true." >&2
-            exit 1
+          if [ "$DEPLOY_ENVIRONMENT" = production ] && [ "$src" != main ] && [ "$ALLOW_CROSS_PROMOTE" != true ]; then
+            echo "Refusing cross-promotion without explicit approval." >&2; exit 1
           fi
-
-          # Bumps require a real branch target we can push back to.
-          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "preview" ] && [ "$src" != "dev" ]; then
-            echo "Refusing to bump versions when source_ref is not a branch (main/preview/dev). Set bump=none or use a branch." >&2
-            exit 1
+          if [ "$BUMP" != none ] && [ "$src" != main ] && [ "$src" != preview ] && [ "$src" != dev ]; then
+            echo "Version bumps require a source branch." >&2; exit 1
           fi
-
-          echo "ref=$src" >> "$GITHUB_OUTPUT"
-
+          if [[ "$src" == *$'\n'* || "$src" == *$'\r'* ]] || ! git check-ref-format --branch "$src" >/dev/null 2>&1; then
+            if [[ ! "$src" =~ ^[a-f0-9]{40}$ ]]; then echo "Invalid promotion source ref." >&2; exit 1; fi
+          fi
+          echo "source_ref=$src" >> "$GITHUB_OUTPUT"
       - name: Enforce trusted refs for manual dispatch
         run: |
-          set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
-            exit 0
-          fi
-          case "${GITHUB_REF_NAME}" in
-            dev|preview|main) ;;
-            *)
-              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev, preview, or main." >&2
-              exit 1
-              ;;
-          esac
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then exit 0; fi
+          case "$GITHUB_REF_NAME" in dev|preview|main) ;; *) exit 1 ;; esac
+      - name: Bind exact authorized source SHA
+        id: candidate
+        env:
+          SOURCE_REF: ${{ steps.resolve.outputs.source_ref }}
+        run: node scripts/pipeline/github/resolve-authorized-release-source.mjs --source-ref "$SOURCE_REF" --remote origin --github-output "$GITHUB_OUTPUT"
 
+  apply_bump:
+    needs: [release_actor_guard, resolve_source]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: write
+    outputs:
+      release_sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - name: Checkout trusted workflow control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout exact candidate as inert data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.resolve_source.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Sync installer assets with trusted control
+        id: sync
+        run: |
+          node scripts/pipeline/release/sync-installers.mjs \
+            --source-dir "$GITHUB_WORKSPACE/candidate/scripts/release/installers" \
+            --target-dir "$GITHUB_WORKSPACE/candidate/apps/website/public"
+          if git -C candidate diff --quiet -- apps/website/public; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Enforce immutable candidate preparation
+        if: steps.sync.outputs.changed == 'true' && needs.resolve_source.outputs.source_kind != 'branch'
+        run: |
+          echo "The exact release candidate is missing generated website installer assets." >&2
+          echo "Prepare those assets before binding the candidate; website deployment may not create a derived release commit." >&2
+          exit 1
+      - name: Apply website version bump with trusted control
+        id: bump
+        working-directory: candidate
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          out="$(node "$GITHUB_WORKSPACE/scripts/pipeline/release/bump-version.mjs" --component website --bump "$BUMP")"
+          if [ "$out" = SKIP ]; then echo "skipped=true" >> "$GITHUB_OUTPUT"; else echo "skipped=false" >> "$GITHUB_OUTPUT"; echo "version=$out" >> "$GITHUB_OUTPUT"; fi
       - name: Create GitHub App token
         id: app_token
-        uses: actions/create-github-app-token@v1
+        if: steps.bump.outputs.skipped != 'true' || steps.sync.outputs.changed == 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+      - name: Commit website release updates with trusted control
+        if: steps.bump.outputs.skipped != 'true' || steps.sync.outputs.changed == 'true'
+        working-directory: candidate
+        env:
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+          SOURCE_REF: ${{ needs.resolve_source.outputs.source_ref }}
+          VERSION: ${{ steps.bump.outputs.version }}
+          BUMP_SKIPPED: ${{ steps.bump.outputs.skipped }}
+          INSTALLERS_CHANGED: ${{ steps.sync.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [ "$BUMP_SKIPPED" != true ]; then
+            message="chore(release): bump website to v$VERSION"
+            if [ "$INSTALLERS_CHANGED" = true ]; then message="$message and sync installers"; fi
+          else
+            message="chore(release): sync website installers from release sources"
+          fi
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
+          node "$GITHUB_WORKSPACE/scripts/pipeline/github/commit-and-push.mjs" \
+            --paths "apps/website/package.json,apps/website/public" --allow-missing false \
+            --message "$message" --push-ref "$SOURCE_REF" --push-mode auto
+      - name: Capture exact release SHA
+        id: release
+        working-directory: candidate
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout source ref
-        uses: actions/checkout@v4
+  validate_candidate:
+    needs: [apply_bump]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ steps.resolve.outputs.ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ needs.apply_bump.outputs.release_sha }}
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
-
+          persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-
-      - name: Enable Corepack (Yarn)
+      - name: Enable Corepack
         run: |
-          set -euo pipefail
           corepack enable
           corepack prepare yarn@1.22.22 --activate
-
-      - name: Install dependencies
+      - name: Install candidate dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
-      - name: Sync installer assets into website public
-        id: sync_installers
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs release-sync-installers
-          if git diff --quiet -- \
-            apps/website/public/install \
-            apps/website/public/install.sh \
-            apps/website/public/install-preview \
-            apps/website/public/install-preview.sh \
-            apps/website/public/install-dev \
-            apps/website/public/install-dev.sh \
-            apps/website/public/install.ps1 \
-            apps/website/public/install-preview.ps1 \
-            apps/website/public/install-dev.ps1 \
-            apps/website/public/happier-release.pub; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Bump website version (source ref)
-        id: bump_website
-        run: |
-          set -euo pipefail
-          out="$(node scripts/pipeline/run.mjs release-bump-version --component website --bump "${{ inputs.bump }}")"
-          if [ "$out" = "SKIP" ]; then
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-          echo "version=$out" >> "$GITHUB_OUTPUT"
-
+        run: bash scripts/ci/yarn-install-with-retry.sh --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+      # The build is unconditional: deploy_cloudflare publishes exactly these
+      # bytes, so `run_build: false` must not be able to produce a promotion
+      # with nothing to upload. The build itself is the gate — it runs
+      # tsc --noEmit, prerender, assert:crawlable, assert:locale-links and
+      # assert:perf before anything leaves this secret-free job.
       - name: Build website
-        if: inputs.run_build
-        run: |
-          set -euo pipefail
-          yarn workspace @happier-dev/website build
+        env:
+          # PostHog project keys are public by design — posthog-js ships this
+          # value to every browser — so it is a var, not a secret, and this job
+          # stays secret-free. vite.config.ts hard-fails when it is undefined
+          # rather than quietly shipping an unmeasured build; set it to the
+          # empty string to publish an intentionally blind one.
+          VITE_POSTHOG_KEY: ${{ vars.VITE_POSTHOG_KEY }}
+        run: yarn workspace @happier-dev/website build
+      - name: Upload built site across the trust boundary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: website-dist-${{ needs.apply_bump.outputs.release_sha }}
+          path: apps/website/dist
+          retention-days: 7
+          if-no-files-found: error
+          # dist/.well-known/security.txt and dist/.vite/manifest.json are
+          # dotfiles the site depends on; the default upload would drop them.
+          include-hidden-files: true
 
-      - name: Commit website release updates (source ref)
-        id: commit_changes
-        if: steps.bump_website.outputs.skipped != 'true' || steps.sync_installers.outputs.changed == 'true'
-        run: |
-          set -euo pipefail
-          if [ "${{ steps.bump_website.outputs.skipped }}" != "true" ]; then
-            message="chore(release): bump website to v${{ steps.bump_website.outputs.version }}"
-            if [ "${{ steps.sync_installers.outputs.changed }}" = "true" ]; then
-              message="${message} and sync installers"
-            fi
-          else
-            message="chore(release): sync website installers from release sources"
-          fi
-
-          src="${{ steps.resolve.outputs.ref }}"
-          paths="apps/website/package.json,apps/website/public/install,apps/website/public/install.sh,apps/website/public/install-preview,apps/website/public/install-preview.sh,apps/website/public/install-dev,apps/website/public/install-dev.sh,apps/website/public/install.ps1,apps/website/public/install-preview.ps1,apps/website/public/install-dev.ps1,apps/website/public/happier-release.pub"
-          out="$(node scripts/pipeline/run.mjs github-commit-and-push \
-            --paths "${paths}" \
-            --allow-missing false \
-            --message "${message}" \
-            --push-ref "${src}" \
-            --push-mode auto)"
-
-          if echo "${out}" | grep -q "DID_COMMIT=true"; then
-            echo "did_commit=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "did_commit=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Resolve deploy branch SHA (before)
-        id: deploy_before
+  promote:
+    needs: [release_actor_guard, apply_bump, validate_candidate]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    steps:
+      - name: Checkout trusted promotion control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Resolve deploy branch SHA before promotion
+        id: before
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/website"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Promote source ref to deploy branch
+          ref="deploy/$DEPLOY_ENVIRONMENT/website"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Promote exact release SHA
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs promote-deploy-branch \
-            --deploy-environment "${{ inputs.environment }}" \
-            --component website \
-            --sha "$(git rev-parse HEAD)" \
-            --summary-file "${GITHUB_STEP_SUMMARY}"
-
-      - name: Resolve deploy branch SHA (after)
-        id: deploy_after
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        run: node scripts/pipeline/github/promote-deploy-branch.mjs --deploy-environment "$DEPLOY_ENVIRONMENT" --component website --sha "$RELEASE_SHA" --summary-file "$GITHUB_STEP_SUMMARY"
+      - name: Resolve deploy branch SHA after promotion
+        id: after
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          set -euo pipefail
-          ref="deploy/${{ inputs.environment }}/website"
-          sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/${ref}" --jq .object.sha 2>/dev/null || true)"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-
-      - name: Trigger deploy webhook(s) (force_deploy, no branch change)
-        if: inputs.force_deploy && steps.deploy_before.outputs.sha == steps.deploy_after.outputs.sha
-        env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
-          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
-          HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs deploy \
-            --deploy-environment "${{ inputs.environment }}" \
-            --component "website" \
-            --repository "${{ github.repository }}" \
-            --ref-name "deploy/${{ inputs.environment }}/website"
-
+          ref="deploy/$DEPLOY_ENVIRONMENT/website"; sha="$(gh api "repos/$GH_REPO/git/ref/heads/$ref" --jq .object.sha 2>/dev/null || true)"; echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Deploy note
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_SHA: ${{ steps.after.outputs.sha }}
+        run: |
+          echo "deploy/$DEPLOY_ENVIRONMENT/website records what is live; Cloudflare is published by the deploy_cloudflare job." >> "$GITHUB_STEP_SUMMARY"
+          echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishes the exact bytes validate_candidate built. Kept out of `promote`
+  # because that job owns release-shared (GitHub App) secrets and a job may
+  # only bind one environment; Cloudflare credentials live in website-deploy.
+  #
+  # Cloudflare's Git integration is deliberately NOT connected to this repo.
+  # It would rebuild the whole monorepo in Cloudflare's build container and
+  # would bypass release_actor_guard and trusted_ref_guard entirely.
+  deploy_cloudflare:
+    needs: [release_actor_guard, apply_bump, validate_candidate, promote]
+    runs-on: ubuntu-latest
+    environment: website-deploy
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout trusted deploy control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+      - name: Download the exact built site
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: website-dist-${{ needs.apply_bump.outputs.release_sha }}
+          path: apps/website/dist
+      - name: Verify the artifact is a real prerendered site
         run: |
           set -euo pipefail
-          echo "Deployment is triggered automatically by pushes to deploy/${{ inputs.environment }}/website." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- deploy_branch_sha: \`${{ steps.deploy_after.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          test -f apps/website/dist/index.html
+          test -f apps/website/dist/404.html
+          test -f apps/website/dist/_headers
+          test -f apps/website/dist/_redirects
+          test -f apps/website/dist/robots.txt
+          test -f apps/website/dist/sitemap.xml
+      - name: Publish to Cloudflare
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        working-directory: apps/website
+        run: |
+          set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" = production ]; then
+            npx --yes wrangler@4 deploy --message "promote $RELEASE_SHA"
+          else
+            npx --yes wrangler@4 versions upload --preview-alias preview --message "promote $RELEASE_SHA"
+          fi
+      - name: Cloudflare note
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
+        run: |
+          echo "Published apps/website/dist to Cloudflare ($DEPLOY_ENVIRONMENT) from $RELEASE_SHA." >> "$GITHUB_STEP_SUMMARY"

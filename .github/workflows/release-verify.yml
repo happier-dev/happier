@@ -12,8 +12,93 @@ on:
           - dev
           - preview
           - production
+      validation_profile:
+        description: "Validation — Bounded public release profile"
+        required: false
+        default: integrated
+        type: choice
+        options:
+          - integrated
+          - stable
+      risk_cli_upgrade:
+        description: "Risk — changed daemon/update lifecycle requires CLI upgrade continuity"
+        required: false
+        default: false
+        type: boolean
+      risk_session_continuity:
+        description: "Risk — changed session/runtime lifecycle requires continuity validation"
+        required: false
+        default: false
+        type: boolean
+      risk_relay_upgrade:
+        description: "Risk — changed relay persistence/startup requires container upgrade validation"
+        required: false
+        default: false
+        type: boolean
+      candidate_source_sha:
+        description: "Candidate — Exact promoted source SHA"
+        required: true
+        type: string
+      candidate_build_run_id:
+        description: "Candidate — Workflow run that built the candidate"
+        required: true
+        type: string
+      cli_candidate_build_run_id:
+        description: "Candidate — Prior CLI-only build run (defaults to the candidate build run)"
+        required: false
+        default: ""
+        type: string
+      publication_run_id:
+        description: "Publication — Workflow run that published/deployed the candidate"
+        required: true
+        type: string
+      candidate_cli_version:
+        description: "Candidate — Exact immutable CLI version"
+        required: false
+        default: ""
+        type: string
+      candidate_stack_version:
+        description: "Candidate — Exact immutable HStack version"
+        required: false
+        default: ""
+        type: string
+      candidate_server_version:
+        description: "Candidate — Exact immutable server version"
+        required: false
+        default: ""
+        type: string
+      candidate_ui_web_version:
+        description: "Candidate — Exact immutable UI web version"
+        required: false
+        default: ""
+        type: string
+      verify_cli_release:
+        description: "Candidate — Verify CLI rolling release manifest provenance"
+        required: true
+        default: true
+        type: boolean
+      verify_stack_release:
+        description: "Candidate — Verify HStack rolling release manifest provenance"
+        required: true
+        default: true
+        type: boolean
+      verify_server_release:
+        description: "Candidate — Verify server rolling release manifest provenance"
+        required: true
+        default: true
+        type: boolean
+      verify_ui_web_release:
+        description: "Candidate — Verify UI web rolling release source identity"
+        required: true
+        default: true
+        type: boolean
       run_installers_smoke:
         description: "Verify — Installers smoke (linux/macos/windows)"
+        required: true
+        default: true
+        type: boolean
+      run_artifact_verify:
+        description: "Verify — Candidate-built CLI archive checksums, admission, and smoke"
         required: true
         default: true
         type: boolean
@@ -37,32 +122,122 @@ on:
         required: true
         default: true
         type: boolean
+      run_release_assets_docker:
+        description: "Verify — Relay upgrade (published channel -> exact candidate, SQLite + Postgres)"
+        required: true
+        default: true
+        type: boolean
       run_self_host_systemd:
         description: "Verify — Real self-host systemd E2E (linux)"
         required: true
-        default: false
+        default: true
         type: boolean
       run_self_host_launchd:
         description: "Verify — Real self-host launchd E2E (macOS)"
         required: true
-        default: false
+        default: true
         type: boolean
       run_self_host_schtasks:
         description: "Verify — Real self-host schtasks E2E (Windows)"
         required: true
-        default: false
+        default: true
         type: boolean
       run_self_host_daemon:
         description: "Verify — Real self-host + CLI daemon E2E (linux+mac)"
         required: true
-        default: false
+        default: true
         type: boolean
   workflow_call:
     inputs:
       channel:
         required: true
         type: string
+      validation_profile:
+        required: false
+        default: ""
+        type: string
+      risk_cli_upgrade:
+        required: false
+        default: false
+        type: boolean
+      risk_session_continuity:
+        required: false
+        default: false
+        type: boolean
+      risk_relay_upgrade:
+        required: false
+        default: false
+        type: boolean
+      candidate_source_sha:
+        required: true
+        type: string
+      candidate_build_run_id:
+        required: true
+        type: string
+      cli_candidate_build_run_id:
+        required: false
+        default: ""
+        type: string
+      publication_run_id:
+        required: true
+        type: string
+      candidate_cli_version:
+        required: false
+        default: ""
+        type: string
+      candidate_stack_version:
+        required: false
+        default: ""
+        type: string
+      candidate_server_version:
+        required: false
+        default: ""
+        type: string
+      candidate_ui_web_version:
+        required: false
+        default: ""
+        type: string
+      verify_deploy_ui:
+        required: false
+        default: false
+        type: boolean
+      verify_deploy_server:
+        required: false
+        default: false
+        type: boolean
+      server_api_version_url:
+        required: false
+        default: ""
+        type: string
+      verify_deploy_website:
+        required: false
+        default: false
+        type: boolean
+      verify_deploy_docs:
+        required: false
+        default: false
+        type: boolean
+      verify_cli_release:
+        required: false
+        default: false
+        type: boolean
+      verify_stack_release:
+        required: false
+        default: false
+        type: boolean
+      verify_server_release:
+        required: false
+        default: false
+        type: boolean
+      verify_ui_web_release:
+        required: false
+        default: false
+        type: boolean
       run_installers_smoke:
+        required: false
+        default: true
+        type: boolean
+      run_artifact_verify:
         required: false
         default: true
         type: boolean
@@ -82,21 +257,25 @@ on:
         required: false
         default: true
         type: boolean
+      run_release_assets_docker:
+        required: false
+        default: true
+        type: boolean
       run_self_host_systemd:
         required: false
-        default: false
+        default: true
         type: boolean
       run_self_host_launchd:
         required: false
-        default: false
+        default: true
         type: boolean
       run_self_host_schtasks:
         required: false
-        default: false
+        default: true
         type: boolean
       run_self_host_daemon:
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -108,8 +287,209 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify_candidate_identity:
+    name: Verify exact deployed and artifact candidate identities
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.x
+
+      - name: Install minisign from trusted control bytes
+        if: ${{ inputs.candidate_cli_version != '' || inputs.candidate_stack_version != '' || inputs.candidate_server_version != '' || inputs.candidate_ui_web_version != '' }}
+        uses: ./.release-control/.github/actions/bootstrap-minisign
+
+      - name: Verify release candidate identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          CANDIDATE_BUILD_RUN_ID: ${{ inputs.candidate_build_run_id }}
+          CLI_CANDIDATE_BUILD_RUN_ID: ${{ inputs.cli_candidate_build_run_id }}
+          PUBLICATION_RUN_ID: ${{ inputs.publication_run_id }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
+          CANDIDATE_STACK_VERSION: ${{ inputs.candidate_stack_version }}
+          CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
+          CANDIDATE_UI_WEB_VERSION: ${{ inputs.candidate_ui_web_version }}
+          VERIFY_DEPLOY_UI: ${{ inputs.verify_deploy_ui }}
+          VERIFY_DEPLOY_SERVER: ${{ inputs.verify_deploy_server }}
+          VERIFY_DEPLOY_WEBSITE: ${{ inputs.verify_deploy_website }}
+          VERIFY_DEPLOY_DOCS: ${{ inputs.verify_deploy_docs }}
+          VERIFY_CLI_RELEASE: ${{ inputs.verify_cli_release }}
+          VERIFY_STACK_RELEASE: ${{ inputs.verify_stack_release }}
+          VERIFY_SERVER_RELEASE: ${{ inputs.verify_server_release }}
+          VERIFY_UI_WEB_RELEASE: ${{ inputs.verify_ui_web_release }}
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
+            --repository "$REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --candidate-cli-version "$CANDIDATE_CLI_VERSION" \
+            --candidate-stack-version "$CANDIDATE_STACK_VERSION" \
+            --candidate-server-version "$CANDIDATE_SERVER_VERSION" \
+            --candidate-ui-web-version "$CANDIDATE_UI_WEB_VERSION" \
+            --candidate-build-run-id "$CANDIDATE_BUILD_RUN_ID" \
+            --cli-candidate-build-run-id "$CLI_CANDIDATE_BUILD_RUN_ID" \
+            --publication-run-id "$PUBLICATION_RUN_ID" \
+            --current-run-id "$CURRENT_RUN_ID" \
+            --derive-targets true \
+            --verify-deploy-ui "$VERIFY_DEPLOY_UI" \
+            --verify-deploy-server "$VERIFY_DEPLOY_SERVER" \
+            --verify-deploy-website "$VERIFY_DEPLOY_WEBSITE" \
+            --verify-deploy-docs "$VERIFY_DEPLOY_DOCS" \
+            --verify-cli-release "$VERIFY_CLI_RELEASE" \
+            --verify-stack-release "$VERIFY_STACK_RELEASE" \
+            --verify-server-release "$VERIFY_SERVER_RELEASE" \
+            --verify-ui-web-release "$VERIFY_UI_WEB_RELEASE"
+
+      - name: Verify CLI immutable candidate bytes
+        id: verify_cli
+        if: ${{ always() && inputs.candidate_cli_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: cli
+          version: ${{ inputs.candidate_cli_version }}
+
+      - name: Verify HStack immutable candidate bytes
+        id: verify_stack
+        if: ${{ always() && inputs.candidate_stack_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: hstack
+          version: ${{ inputs.candidate_stack_version }}
+
+      - name: Verify server immutable candidate bytes
+        id: verify_server
+        if: ${{ always() && inputs.candidate_server_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: server
+          version: ${{ inputs.candidate_server_version }}
+
+      - name: Verify UI-web immutable candidate bytes
+        id: verify_ui_web
+        if: ${{ always() && inputs.candidate_ui_web_version != '' }}
+        uses: ./.release-control/.github/actions/verify-immutable-release-candidate
+        with:
+          repository: ${{ github.repository }}
+          channel: ${{ inputs.channel }}
+          candidate_source_sha: ${{ inputs.candidate_source_sha }}
+          product: ui-web
+          version: ${{ inputs.candidate_ui_web_version }}
+
+      - name: Verify loaded server API revision
+        if: ${{ inputs.verify_deploy_server }}
+        env:
+          SERVER_API_VERSION_URL: ${{ inputs.server_api_version_url }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$SERVER_API_VERSION_URL"
+          node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/verify-loaded-release-revision.mjs" \
+            --url "$SERVER_API_VERSION_URL" \
+            --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+
+  resolve_validation_profile:
+    name: Resolve bounded validation profile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run_installers_smoke: ${{ steps.profile.outputs.run_installers_smoke }}
+      run_artifact_verify: ${{ steps.profile.outputs.run_artifact_verify }}
+      run_binary_smoke: ${{ steps.profile.outputs.run_binary_smoke }}
+      run_cli_update_continuity: ${{ steps.profile.outputs.run_cli_update_continuity }}
+      run_daemon_continuity: ${{ steps.profile.outputs.run_daemon_continuity }}
+      run_session_continuity: ${{ steps.profile.outputs.run_session_continuity }}
+      run_release_assets_docker: ${{ steps.profile.outputs.run_release_assets_docker }}
+      run_self_host_systemd: ${{ steps.profile.outputs.run_self_host_systemd }}
+      run_self_host_launchd: ${{ steps.profile.outputs.run_self_host_launchd }}
+      run_self_host_schtasks: ${{ steps.profile.outputs.run_self_host_schtasks }}
+      run_self_host_daemon: ${{ steps.profile.outputs.run_self_host_daemon }}
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .release-control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+
+      - name: Resolve public profile or retained legacy flags
+        id: profile
+        env:
+          VALIDATION_PROFILE: ${{ inputs.validation_profile }}
+          LEGACY_RUN_INSTALLERS_SMOKE: ${{ inputs.run_installers_smoke }}
+          LEGACY_RUN_ARTIFACT_VERIFY: ${{ inputs.run_artifact_verify }}
+          LEGACY_RUN_BINARY_SMOKE: ${{ inputs.run_binary_smoke }}
+          LEGACY_RUN_CLI_UPDATE_CONTINUITY: ${{ inputs.run_cli_update_continuity }}
+          LEGACY_RUN_DAEMON_CONTINUITY: ${{ inputs.run_daemon_continuity }}
+          LEGACY_RUN_SESSION_CONTINUITY: ${{ inputs.run_session_continuity }}
+          LEGACY_RUN_RELEASE_ASSETS_DOCKER: ${{ inputs.run_release_assets_docker }}
+          LEGACY_RUN_SELF_HOST_SYSTEMD: ${{ inputs.run_self_host_systemd }}
+          LEGACY_RUN_SELF_HOST_LAUNCHD: ${{ inputs.run_self_host_launchd }}
+          LEGACY_RUN_SELF_HOST_SCHTASKS: ${{ inputs.run_self_host_schtasks }}
+          LEGACY_RUN_SELF_HOST_DAEMON: ${{ inputs.run_self_host_daemon }}
+          CANDIDATE_CLI_VERSION: ${{ inputs.candidate_cli_version }}
+          CANDIDATE_SERVER_VERSION: ${{ inputs.candidate_server_version }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RISK_CLI_UPGRADE: ${{ inputs.risk_cli_upgrade }}
+          RISK_SESSION_CONTINUITY: ${{ inputs.risk_session_continuity }}
+          RISK_RELAY_UPGRADE: ${{ inputs.risk_relay_upgrade }}
+        run: |
+          set -euo pipefail
+          node .release-control/scripts/pipeline/release-validation/resolve-validation-plan.mjs \
+            --profile "$VALIDATION_PROFILE" \
+            --has-cli-candidate "$([ -n "$CANDIDATE_CLI_VERSION" ] && echo true || echo false)" \
+            --has-server-candidate "$([ -n "$CANDIDATE_SERVER_VERSION" ] && echo true || echo false)" \
+            --has-published-relay-predecessor "$([ "$RELEASE_CHANNEL" = preview ] || [ "$RELEASE_CHANNEL" = production ] && echo true || echo false)" \
+            --risk-cli-upgrade "$RISK_CLI_UPGRADE" \
+            --risk-session-continuity "$RISK_SESSION_CONTINUITY" \
+            --risk-relay-upgrade "$RISK_RELAY_UPGRADE" \
+            --legacy-run-installers-smoke "$LEGACY_RUN_INSTALLERS_SMOKE" \
+            --legacy-run-artifact-verify "$LEGACY_RUN_ARTIFACT_VERIFY" \
+            --legacy-run-binary-smoke "$LEGACY_RUN_BINARY_SMOKE" \
+            --legacy-run-cli-update-continuity "$LEGACY_RUN_CLI_UPDATE_CONTINUITY" \
+            --legacy-run-daemon-continuity "$LEGACY_RUN_DAEMON_CONTINUITY" \
+            --legacy-run-session-continuity "$LEGACY_RUN_SESSION_CONTINUITY" \
+            --legacy-run-release-assets-docker "$LEGACY_RUN_RELEASE_ASSETS_DOCKER" \
+            --legacy-run-self-host-systemd "$LEGACY_RUN_SELF_HOST_SYSTEMD" \
+            --legacy-run-self-host-launchd "$LEGACY_RUN_SELF_HOST_LAUNCHD" \
+            --legacy-run-self-host-schtasks "$LEGACY_RUN_SELF_HOST_SCHTASKS" \
+            --legacy-run-self-host-daemon "$LEGACY_RUN_SELF_HOST_DAEMON" \
+            --github-output "$GITHUB_OUTPUT"
+
   verify:
     name: Verify (tests.yml)
+    needs: [verify_candidate_identity, resolve_validation_profile]
     uses: ./.github/workflows/tests.yml
     with:
       run_ui: false
@@ -122,13 +502,22 @@ jobs:
       run_server_db_contract: false
       run_providers: false
       run_release_contracts: false
-      run_installers_smoke: ${{ inputs.run_installers_smoke }}
+      run_installers_smoke: ${{ needs.resolve_validation_profile.outputs.run_installers_smoke }}
+      run_artifact_verify: ${{ needs.resolve_validation_profile.outputs.run_artifact_verify }}
       installers_channel: ${{ inputs.channel == 'production' && 'stable' || inputs.channel == 'dev' && 'dev' || 'preview' }}
-      run_binary_smoke: ${{ inputs.run_binary_smoke }}
-      run_cli_update_continuity: ${{ inputs.run_cli_update_continuity }}
-      run_daemon_continuity: ${{ inputs.run_daemon_continuity }}
-      run_session_continuity: ${{ inputs.run_session_continuity }}
-      run_self_host_systemd: ${{ inputs.run_self_host_systemd }}
-      run_self_host_launchd: ${{ inputs.run_self_host_launchd }}
-      run_self_host_schtasks: ${{ inputs.run_self_host_schtasks }}
-      run_self_host_daemon: ${{ inputs.run_self_host_daemon }}
+      installers_source: ${{ inputs.candidate_cli_version != '' && 'published-tag' || 'published-channel' }}
+      installers_ref: ${{ inputs.candidate_cli_version != '' && format('cli-v{0}', inputs.candidate_cli_version) || '' }}
+      run_binary_smoke: ${{ needs.resolve_validation_profile.outputs.run_binary_smoke }}
+      checkout_sha: ${{ inputs.candidate_source_sha }}
+      run_cli_update_continuity: ${{ needs.resolve_validation_profile.outputs.run_cli_update_continuity }}
+      cli_update_to_source: ${{ inputs.candidate_cli_version != '' && 'published-tag' || 'local-build' }}
+      cli_update_to_ref: ${{ inputs.candidate_cli_version != '' && format('cli-v{0}', inputs.candidate_cli_version) || '.' }}
+      run_daemon_continuity: ${{ needs.resolve_validation_profile.outputs.run_daemon_continuity }}
+      run_session_continuity: ${{ needs.resolve_validation_profile.outputs.run_session_continuity }}
+      run_release_assets_docker: ${{ needs.resolve_validation_profile.outputs.run_release_assets_docker }}
+      relay_upgrade_to_source: ${{ inputs.candidate_server_version != '' && 'published-tag' || 'local-build' }}
+      relay_upgrade_to_ref: ${{ inputs.candidate_server_version != '' && format('server-v{0}', inputs.candidate_server_version) || '.' }}
+      run_self_host_systemd: ${{ needs.resolve_validation_profile.outputs.run_self_host_systemd }}
+      run_self_host_launchd: ${{ needs.resolve_validation_profile.outputs.run_self_host_launchd }}
+      run_self_host_schtasks: ${{ needs.resolve_validation_profile.outputs.run_self_host_schtasks }}
+      run_self_host_daemon: ${{ needs.resolve_validation_profile.outputs.run_self_host_daemon }}

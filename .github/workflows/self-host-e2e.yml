@@ -27,7 +27,7 @@ jobs:
       run_typecheck: false
       run_cli_daemon_e2e: false
       run_e2e_core: false
-      run_e2e_core_slow: false
+      run_e2e_core_slow: true
       run_providers: false
       providers_preset: all
       providers_tier: smoke

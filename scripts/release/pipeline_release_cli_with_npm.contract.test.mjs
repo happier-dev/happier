@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +27,8 @@ test('pipeline CLI release dry-run reports hosted inputs and bump facts without 
         'true',
         '--repository',
         'happier-dev/happier',
+        '--release-notes-id',
+        'test-release',
         '--dry-run',
       ],
       {
@@ -61,12 +63,12 @@ test('pipeline CLI release dry-run reports hosted inputs and bump facts without 
   }
 });
 
-test('pipeline CLI release reports cli-common-only bump facts without predicting hosted jobs', async () => {
+test('pipeline CLI release dry-run rejects a pre-materialization bump before forming hosted inputs', async () => {
   const stub = createReleaseCliDryRunEnv(process.env, {
     diffPaths: ['packages/cli-common/src/providers/resolution.ts'],
   });
   try {
-    const out = execFileSync(
+    const result = spawnSync(
       process.execPath,
       [
         resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
@@ -98,11 +100,9 @@ test('pipeline CLI release reports cli-common-only bump facts without predicting
       },
     );
 
-    assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
-    assert.match(out, /- bump_app=none bump_server=none bump_website=none bump_cli=patch bump_stack=patch/);
-    assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
-    assert.match(out, /- deploy_targets: cli,stack/);
-    assert.doesNotMatch(out, /runPublish|runDeploy|dockerBuild/);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /materialized.*CHANGELOG.*version.*--bump none/i);
+    assert.doesNotMatch(result.stdout, /release plan|hosted dispatch inputs/i);
   } finally {
     stub.cleanup();
   }

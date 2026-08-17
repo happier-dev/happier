@@ -9,6 +9,8 @@ import {
   normalizePublicReleaseChannel,
 } from '../release/lib/public-release-rings.mjs';
 import {
+  RELEASE_VALIDATION_PROFILE_IDS,
+  resolveReleaseValidationProfile,
   resolveReleaseValidationSourceKind,
   resolveReleaseValidationSuite,
 } from './registry.mjs';
@@ -111,6 +113,7 @@ function resolveSource(kind, ref) {
  *     product?: string;
  *     version?: string;
  *     releaseChannel?: string;
+ *     payloadPublicationAdmission?: string;
  *   };
  * }} context
  */
@@ -122,6 +125,13 @@ function resolveExecution({ suite, repoRoot, platform, source, update, execution
         source,
         update,
         releaseChannel: executionOptions.releaseChannel,
+        payloadPublicationAdmission: executionOptions.payloadPublicationAdmission
+          ? {
+              status: executionOptions.payloadPublicationAdmission,
+              exactPayloadReversionAllowed:
+                executionOptions.payloadPublicationAdmission === 'pre-activation',
+            }
+          : undefined,
       });
     case 'artifact-verify':
       return resolveArtifactVerifyExecution({ repoRoot, source, options: executionOptions });
@@ -144,6 +154,7 @@ async function main() {
   const { values } = parseArgs({
     options: {
       suite: { type: 'string' },
+      profile: { type: 'string', default: '' },
       platform: { type: 'string', default: '' },
       source: { type: 'string', default: '' },
       ref: { type: 'string', default: '' },
@@ -154,6 +165,7 @@ async function main() {
       product: { type: 'string', default: '' },
       version: { type: 'string', default: '' },
       'release-channel': { type: 'string', default: '' },
+      'payload-publication-admission': { type: 'string', default: '' },
       checksums: { type: 'string', default: '' },
       'public-key': { type: 'string', default: '' },
       'skip-smoke': { type: 'boolean', default: false },
@@ -163,6 +175,45 @@ async function main() {
   });
 
   const suiteId = String(values.suite ?? '').trim();
+  const profileId = String(values.profile ?? '').trim();
+  if (profileId) {
+    if (suiteId) {
+      fail('use either --profile or --suite, not both');
+    }
+    const hasSuiteSpecificInput = [
+      values.platform,
+      values.source,
+      values.ref,
+      values['from-source'],
+      values['from-ref'],
+      values['to-source'],
+      values['to-ref'],
+      values.product,
+      values.version,
+      values['release-channel'],
+      values['payload-publication-admission'],
+      values.checksums,
+      values['public-key'],
+    ].some((value) => String(value ?? '').trim().length > 0) || values['skip-smoke'] === true;
+    if (hasSuiteSpecificInput) {
+      fail('--profile does not accept suite-specific inputs; dispatch each listed suite with its required source inputs');
+    }
+    const profile = resolveReleaseValidationProfile(profileId);
+    if (!profile) {
+      fail(`--profile must be one of ${JSON.stringify(RELEASE_VALIDATION_PROFILE_IDS)} (got: ${profileId})`);
+    }
+    if (values['dry-run'] !== true) {
+      fail('--profile currently supports --dry-run only; dispatch each automatic suite with its required source inputs');
+    }
+    process.stdout.write(`${JSON.stringify({
+      ok: true,
+      dryRun: true,
+      profile: profile.id,
+      dispatch: 'suite-specific',
+      automaticSuiteIds: profile.automaticSuiteIds,
+    })}\n`);
+    return;
+  }
   const suite = resolveReleaseValidationSuite(suiteId);
   if (!suite) {
     fail(`--suite must be one of ${JSON.stringify([
@@ -171,7 +222,6 @@ async function main() {
       'artifact-verify',
       'docker-release-assets',
       'cli-update',
-      'server-upgrade',
       'daemon-continuity',
       'session-continuity',
     ])} (got: ${suiteId || '<empty>'})`);
@@ -194,6 +244,8 @@ async function main() {
   const artifactProduct = String(values.product ?? '').trim();
   const artifactVersion = String(values.version ?? '').trim();
   const artifactReleaseChannel = String(values['release-channel'] ?? '').trim();
+  const payloadPublicationAdmission =
+    String(values['payload-publication-admission'] ?? '').trim();
   const hasArtifactTarget = artifactProduct.length > 0 || artifactVersion.length > 0 || artifactReleaseChannel.length > 0;
 
   if (hasDirectSource && hasUpdateSource) {
@@ -204,6 +256,14 @@ async function main() {
   }
   if (artifactReleaseChannel.length > 0 && suite.id !== 'artifact-verify' && suite.id !== 'installers-smoke') {
     fail('--release-channel is supported only for --suite artifact-verify or --suite installers-smoke');
+  }
+  if (
+    payloadPublicationAdmission.length > 0
+    && (suite.id !== 'installers-smoke' || !hasUpdateSource)
+  ) {
+    fail(
+      '--payload-publication-admission is supported only for an installers-smoke from/to update validation',
+    );
   }
 
   /** @type {{ kind: string; ref: string } | null} */
@@ -262,6 +322,7 @@ async function main() {
     product: artifactProduct || undefined,
     version: artifactVersion || undefined,
     releaseChannel: artifactReleaseChannel || undefined,
+    payloadPublicationAdmission: payloadPublicationAdmission || undefined,
   };
   const execution = resolveExecution({ suite, repoRoot, platform, source, update, executionOptions });
 
@@ -289,6 +350,13 @@ async function main() {
       source,
       update,
       releaseChannel: executionOptions.releaseChannel,
+      payloadPublicationAdmission: executionOptions.payloadPublicationAdmission
+        ? {
+            status: executionOptions.payloadPublicationAdmission,
+            exactPayloadReversionAllowed:
+              executionOptions.payloadPublicationAdmission === 'pre-activation',
+          }
+        : undefined,
     });
     return;
   }

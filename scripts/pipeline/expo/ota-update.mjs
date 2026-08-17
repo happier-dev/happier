@@ -1,6 +1,8 @@
 // @ts-check
 
 import path from 'node:path';
+import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { maybeUploadSentryExpoSourceMaps } from './sentry-upload-sourcemaps.mjs';
@@ -26,6 +28,8 @@ const OTA_IDENTITY_ENV_KEYS = Object.freeze([
   'EXPO_APP_SCHEME',
 ]);
 const EAS_CAPTURE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const PREPARED_UPDATE_METADATA = 'happier-ota-prepared.json';
+const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
 
 function fail(message) {
   console.error(message);
@@ -136,6 +140,73 @@ function pickNonEmptyString(raw) {
   return value ? value : '';
 }
 
+function readFullGitSha(raw, name) {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (!FULL_GIT_SHA.test(value)) fail(`${name} must be a full 40-character Git commit SHA.`);
+  return value;
+}
+
+function sha256File(filePath) {
+  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function listPreparedUpdateFiles(rootDir) {
+  const files = [];
+  const visit = (relativeDir) => {
+    const absoluteDir = path.join(rootDir, relativeDir);
+    for (const name of fs.readdirSync(absoluteDir).sort((a, b) => a.localeCompare(b))) {
+      const relativePath = path.posix.join(relativeDir.split(path.sep).join('/'), name);
+      if (relativePath === PREPARED_UPDATE_METADATA) continue;
+      const absolutePath = path.join(rootDir, ...relativePath.split('/'));
+      const stat = fs.lstatSync(absolutePath);
+      if (stat.isSymbolicLink()) fail(`Prepared OTA artifact must not contain symlinks: ${relativePath}`);
+      if (stat.isDirectory()) {
+        visit(relativePath);
+        continue;
+      }
+      if (!stat.isFile()) fail(`Prepared OTA artifact contains a non-file entry: ${relativePath}`);
+      files.push({ path: relativePath, size: stat.size, sha256: sha256File(absolutePath) });
+    }
+  };
+  visit('');
+  if (files.length === 0) fail('Prepared OTA artifact contains no exported update files.');
+  return files;
+}
+
+function writePreparedUpdateMetadata({ inputDir, sourceSha, environment, platform, runtimeVersion, updateLane, easCliVersion }) {
+  const metadata = {
+    version: 1,
+    sourceSha,
+    environment,
+    platform,
+    runtimeVersion,
+    updateLane,
+    easCliVersion,
+    files: listPreparedUpdateFiles(inputDir),
+  };
+  fs.writeFileSync(path.join(inputDir, PREPARED_UPDATE_METADATA), `${JSON.stringify(metadata, null, 2)}\n`, 'utf8');
+  return metadata;
+}
+
+function validatePreparedUpdateMetadata({ inputDir, expectedSourceSha, environment, platform, runtimeVersion, updateLane, easCliVersion }) {
+  const metadataPath = path.join(inputDir, PREPARED_UPDATE_METADATA);
+  const stat = fs.lstatSync(metadataPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) fail(`Prepared OTA metadata must be a regular file: ${metadataPath}`);
+  const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+  if (metadata?.version !== 1) fail('Unsupported prepared OTA metadata version.');
+  if (metadata.sourceSha !== expectedSourceSha) fail('Prepared OTA source SHA does not match the authorized candidate.');
+  if (metadata.environment !== environment) fail('Prepared OTA environment does not match the requested promotion environment.');
+  if (metadata.platform !== platform) fail('Prepared OTA platform does not match the requested promotion platform.');
+  if (metadata.runtimeVersion !== runtimeVersion) fail('Prepared OTA runtime version does not match the requested promotion runtime.');
+  if (metadata.updateLane !== updateLane) fail('Prepared OTA update channel does not match trusted release policy.');
+  if (metadata.easCliVersion !== easCliVersion) fail('Prepared OTA EAS CLI version does not match trusted release policy.');
+  const actualFiles = listPreparedUpdateFiles(inputDir);
+  if (JSON.stringify(metadata.files) !== JSON.stringify(actualFiles)) {
+    fail('Prepared OTA artifact bytes do not match their trusted metadata manifest.');
+  }
+  return metadata;
+}
+
 /**
  * @param {import('./mobile-release-environments.mjs').MobileReleaseEnvironment} environment
  * @param {'ios' | 'android'} platform
@@ -232,6 +303,10 @@ function main() {
       environment: { type: 'string' },
       message: { type: 'string', default: '' },
       'runtime-version': { type: 'string', default: '' },
+      phase: { type: 'string', default: 'all' },
+      'input-dir': { type: 'string', default: 'dist' },
+      'source-sha': { type: 'string', default: '' },
+      'expected-source-sha': { type: 'string', default: '' },
       platform: { type: 'string', default: 'all' },
       interactive: { type: 'string', default: 'auto' },
       'eas-cli-version': { type: 'string', default: '' },
@@ -248,6 +323,10 @@ function main() {
 
   const dryRun = values['dry-run'] === true;
   const opts = { dryRun };
+  const phase = String(values.phase ?? '').trim() || 'all';
+  if (phase !== 'all' && phase !== 'prepare' && phase !== 'publish') {
+    fail(`--phase must be 'all', 'prepare', or 'publish' (got: ${phase})`);
+  }
 
   let interactiveOverride = 'auto';
   try {
@@ -258,7 +337,7 @@ function main() {
 
   const interactivity = resolveExpoInteractivity({ interactiveOverride });
   const expoToken = String(process.env.EXPO_TOKEN ?? '').trim();
-  if (interactivity.nonInteractive && !expoToken) {
+  if (phase !== 'prepare' && interactivity.nonInteractive && !expoToken) {
     fail('EXPO_TOKEN is required for non-interactive Expo OTA updates.');
   }
 
@@ -274,6 +353,7 @@ function main() {
   console.log(`[pipeline] expo ota: environment=${formatMobileReleaseEnvironment(normalizedEnvironment)} platform=${platform}`);
 
   const uiDir = path.join(repoRoot, 'apps', 'ui');
+  const inputDir = path.resolve(repoRoot, String(values['input-dir'] ?? '').trim() || 'dist');
   const appEnvironment = normalizedEnvironment;
   const updateLane = resolveMobileAppEnvironmentConfig(normalizedEnvironment).updatesChannel;
   const nodeEnvironment = resolveMobileBuildNodeEnvironment(normalizedEnvironment);
@@ -323,24 +403,58 @@ function main() {
   if (runtimeVersion) {
     easCommandEnv.HAPPIER_EXPO_RUNTIME_VERSION = runtimeVersion;
   }
-  run(opts, 'yarn', ['tsx', 'sources/scripts/parseChangelog.ts'], {
-    cwd: uiDir,
-    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
-  });
-  run(opts, 'yarn', ['tsx', 'sources/scripts/parseReleaseNotes.ts'], {
-    cwd: uiDir,
-    env: { ...process.env, APP_ENV: process.env.APP_ENV ?? appEnvironment, NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment },
-  });
-  run(opts, 'yarn', ['typecheck'], {
-    cwd: uiDir,
-    env: applyExpoNodeHeapEnv({
-      ...process.env,
-      APP_ENV: process.env.APP_ENV ?? appEnvironment,
-      NODE_ENV: process.env.NODE_ENV ?? nodeEnvironment,
-    }, {
-      envKey: 'HAPPIER_PIPELINE_EXPO_MAX_OLD_SPACE_SIZE_MB',
-    }),
-  });
+
+  const sourceShaInput = String(values['source-sha'] ?? '').trim();
+  const expectedSourceShaInput = String(values['expected-source-sha'] ?? '').trim();
+  let preparedSourceSha = '';
+  if (phase !== 'publish') {
+    if (phase === 'prepare') {
+      const checkedOutSha = readFullGitSha(execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot,
+        env: process.env,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim(), 'candidate HEAD');
+      preparedSourceSha = sourceShaInput ? readFullGitSha(sourceShaInput, '--source-sha') : checkedOutSha;
+      if (preparedSourceSha !== checkedOutSha) fail('Prepared OTA source SHA does not match the checked-out candidate.');
+    }
+
+    const candidateEnv = { ...easCommandEnv, EXPO_TOKEN: '' };
+    run(opts, 'yarn', ['tsx', 'sources/scripts/parseChangelog.ts'], { cwd: uiDir, env: candidateEnv });
+    run(opts, 'yarn', ['tsx', 'sources/scripts/parseReleaseNotes.ts'], { cwd: uiDir, env: candidateEnv });
+    run(opts, 'yarn', ['typecheck'], { cwd: uiDir, env: candidateEnv });
+    run(opts, 'yarn', ['expo', 'export', '--platform', platform, '--output-dir', inputDir], {
+      cwd: uiDir,
+      env: candidateEnv,
+    });
+    if (!dryRun && phase === 'prepare') {
+      writePreparedUpdateMetadata({
+        inputDir,
+        sourceSha: preparedSourceSha,
+        environment: normalizedEnvironment,
+        platform,
+        runtimeVersion,
+        updateLane,
+        easCliVersion,
+      });
+    }
+    if (phase === 'prepare') return;
+  }
+
+  const expectedSourceSha = phase === 'publish'
+    ? readFullGitSha(expectedSourceShaInput, '--expected-source-sha')
+    : preparedSourceSha;
+  if (!dryRun && phase === 'publish') {
+    validatePreparedUpdateMetadata({
+      inputDir,
+      expectedSourceSha,
+      environment: normalizedEnvironment,
+      platform,
+      runtimeVersion,
+      updateLane,
+      easCliVersion,
+    });
+  }
 
   const message = resolvePreviewMessage(normalizedEnvironment, values.message, opts);
   if (!message) fail(`Missing Expo update message for ${normalizedEnvironment} OTA update.`);
@@ -356,6 +470,9 @@ function main() {
     ...(interactivity.nonInteractive ? ['--non-interactive'] : []),
     '--message',
     message,
+    '--skip-bundler',
+    '--input-dir',
+    inputDir,
   ];
 
   for (let attempt = 0; attempt <= retrySettings.maxRetries; attempt += 1) {
@@ -385,7 +502,7 @@ function main() {
   const upload = maybeUploadSentryExpoSourceMaps({
     dryRun,
     uiDir,
-    distDir: 'dist',
+    distDir: inputDir,
     env: process.env,
     run: (cmd, args, extra) => {
       run(opts, cmd, args, extra);

@@ -26,6 +26,21 @@ on:
         required: true
         default: true
         type: boolean
+      retry_version:
+        description: "Production version — Reproject an existing immutable release without rebuilding"
+        required: false
+        default: ""
+        type: string
+      release_message:
+        description: "Release notes — Exact approved candidate changelog projection"
+        required: false
+        default: ""
+        type: string
+      release_notes_id:
+        description: "Release notes — Exact approved project release ID when projecting candidate notes"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       environment:
@@ -38,6 +53,18 @@ on:
         required: false
         default: true
         type: boolean
+      retry_version:
+        required: false
+        default: ""
+        type: string
+      release_message:
+        required: false
+        default: ""
+        type: string
+      release_notes_id:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -51,14 +78,42 @@ env:
   UI_REPO: ${{ github.repository }}
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: build-tauri.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -70,31 +125,126 @@ jobs:
     name: Resolve source ref to SHA
     runs-on: ubuntu-latest
     needs: [release_actor_guard]
+    permissions:
+      contents: read
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
+      ui_version: ${{ steps.resolve.outputs.ui_version }}
+      build_version: ${{ steps.resolve.outputs.build_version }}
+      retry_version: ${{ steps.resolve.outputs.retry_version }}
+      release_notes_github_markdown: ${{ inputs.release_message != '' && inputs.release_message || steps.resolve.outputs.release_notes_github_markdown }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.retry_version != '' && format('ui-desktop-v{0}', inputs.retry_version) || inputs.source_ref }}
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Resolve source SHA
         id: resolve
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          RELEASE_MESSAGE: ${{ inputs.release_message }}
+          RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse HEAD)"
-          if [ -z "${source_sha:-}" ]; then
-            echo "Unable to resolve source SHA from ref '${{ inputs.source_ref }}'" >&2
+          if [[ ! "${source_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve a canonical source SHA from ref '${SOURCE_REF}'" >&2
             exit 1
           fi
-          echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
+          ui_version="$(node -p 'require("./apps/ui/package.json").version')"
+          canonical_semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$'
+          if [[ ! "${ui_version}" =~ ${canonical_semver_re} ]]; then
+            echo "apps/ui/package.json version must be a canonical semantic version" >&2
+            exit 1
+          fi
+          retry_version="${RETRY_VERSION:-}"
+          if [ -n "${retry_version}" ]; then
+            if [ "${RELEASE_ENVIRONMENT}" != "production" ]; then
+              echo "retry_version is supported only for production desktop releases" >&2
+              exit 1
+            fi
+            if [[ ! "${retry_version}" =~ ${canonical_semver_re} ]]; then
+              echo "retry_version must be a canonical semantic version" >&2
+              exit 1
+            fi
+            if [ "${retry_version}" != "${ui_version}" ]; then
+              echo "retry_version must match exact immutable candidate apps/ui version ${ui_version}" >&2
+              exit 1
+            fi
+          fi
+          if [ -z "$RELEASE_MESSAGE" ]; then
+            if [ -z "$RELEASE_NOTES_ID" ]; then
+              echo "release_notes_id is required when release_message is empty." >&2
+              exit 1
+            fi
+            UI_VERSION="$ui_version"
+            SOURCE_SHA="$source_sha"
+            export UI_VERSION SOURCE_SHA
+            node scripts/pipeline/release/release-notes/project-release-notes.mjs \
+              --release-id "$RELEASE_NOTES_ID" \
+              --source-sha "$source_sha" \
+              --component-version "ui=$UI_VERSION" \
+              --changelog "$GITHUB_WORKSPACE/apps/ui/CHANGELOG.md" | \
+              node --input-type=module -e '
+                import { appendFileSync } from "node:fs";
+                import { createHash } from "node:crypto";
+                let raw = "";
+                for await (const chunk of process.stdin) raw += chunk;
+                const bundle = JSON.parse(raw);
+                if (bundle.kind !== "happier.release-notes.projection.v2" || bundle.schemaVersion !== 2 || bundle.release?.id !== process.env.RELEASE_NOTES_ID || bundle.release?.sourceSha !== process.env.SOURCE_SHA || JSON.stringify(bundle.release?.components) !== JSON.stringify({ ui: process.env.UI_VERSION })) {
+                  throw new Error("Invalid exact-candidate release-notes projection");
+                }
+                const value = bundle.projections?.github?.markdown;
+                if (typeof value !== "string") throw new Error("Missing github_markdown projection");
+                const delimiter = `RELEASE_NOTES_${createHash("sha256").update(`github_markdown:${value}`).digest("hex")}`;
+                appendFileSync(process.env.GITHUB_OUTPUT, `release_notes_github_markdown<<${delimiter}\n${value}\n${delimiter}\n`);
+              '
+          fi
+          case "${RELEASE_ENVIRONMENT}" in
+            preview|dev)
+              if [[ ! "${GITHUB_RUN_NUMBER}" =~ ^[0-9]+$ ]]; then
+                echo "GITHUB_RUN_NUMBER must contain only decimal digits" >&2
+                exit 1
+              fi
+              version_core="${ui_version%%+*}"
+              version_metadata=""
+              if [[ "${ui_version}" == *+* ]]; then
+                version_metadata="+${ui_version#*+}"
+              fi
+              build_version="${version_core}-${RELEASE_ENVIRONMENT}.${GITHUB_RUN_NUMBER}${version_metadata}"
+              ;;
+            production) build_version="${ui_version}" ;;
+            *)
+              echo "Unsupported Tauri release environment" >&2
+              exit 1
+              ;;
+          esac
+          if [[ ! "${build_version}" =~ ${canonical_semver_re} ]]; then
+            echo "Unable to derive a canonical semantic build version" >&2
+            exit 1
+          fi
+          printf '%s=%s\n' source_sha "${source_sha}" >> "$GITHUB_OUTPUT"
+          printf '%s=%s\n' ui_version "${ui_version}" >> "$GITHUB_OUTPUT"
+          printf '%s=%s\n' build_version "${build_version}" >> "$GITHUB_OUTPUT"
+          printf '%s=%s\n' retry_version "${retry_version}" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build updater artifacts (${{ matrix.platform_key }})
+    name: Build desktop candidate (${{ matrix.platform_key }})
+    if: ${{ needs.resolve_source.outputs.retry_version == '' }}
     runs-on: ${{ matrix.os }}
     needs: [resolve_source]
-    environment: release-shared
+    permissions:
+      contents: read
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.environment == 'production' && 'production' || 'preview' }}
       EXPO_UNSTABLE_WEB_MODAL: "1"
@@ -103,15 +253,6 @@ jobs:
       EXPO_PUBLIC_HAPPIER_SERVER_URL: https://api.happier.dev
       EXPO_PUBLIC_HAPPY_SERVER_URL: https://api.happier.dev
       EXPO_PUBLIC_SERVER_URL: https://api.happier.dev
-      # Secrets are set at the job-level so `if:` expressions can gate on `env.*` without referencing
-      # `secrets.*` (the `secrets` context is not available in workflow expression contexts).
-      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
-      APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     strategy:
       fail-fast: false
       matrix:
@@ -130,11 +271,12 @@ jobs:
             platform_key: darwin-x86_64
             tauri_target: x86_64-apple-darwin
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ needs.resolve_source.outputs.source_sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Xcode (pin) (macOS only)
         if: runner.os == 'macOS'
@@ -157,22 +299,16 @@ jobs:
           esac
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.3.5
-
-      - name: Validate updater public key (production)
-        if: inputs.environment == 'production'
-        run: |
-          set -euo pipefail
-          node scripts/pipeline/run.mjs tauri-validate-updater-pubkey --config-path apps/ui/src-tauri/tauri.conf.json
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -212,12 +348,12 @@ jobs:
         run: yarn -s build:packages
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           targets: ${{ matrix.tauri_target }}
 
       - name: Cache Rust build (Cargo)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -227,42 +363,6 @@ jobs:
           restore-keys: |
             tauri-cargo-${{ runner.os }}-${{ matrix.platform_key }}-
             tauri-cargo-${{ runner.os }}-
-
-      - name: Import Apple codesigning certificate (macOS)
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
-        run: |
-          set -euo pipefail
-
-          keychain_path="${RUNNER_TEMP}/build.keychain-db"
-          keychain_password="$(uuidgen)"
-
-          cert_path="${RUNNER_TEMP}/apple-cert.p12"
-          echo "${APPLE_CERTIFICATE}" | base64 --decode > "${cert_path}"
-
-          security create-keychain -p "${keychain_password}" "${keychain_path}"
-          security set-keychain-settings -lut 21600 "${keychain_path}"
-          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
-          existing_keychains=()
-          while IFS= read -r line; do
-            existing_keychains+=("${line}")
-          done < <(security list-keychains -d user | tr -d '"')
-          security list-keychains -d user -s "${keychain_path}" "${existing_keychains[@]}"
-
-          security import "${cert_path}" -k "${keychain_path}" -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -s -k "${keychain_password}" "${keychain_path}"
-
-      - name: Resolve Apple signing identity (macOS)
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
-        id: apple_id
-        run: |
-          set -euo pipefail
-          identity="$(security find-identity -v -p codesigning 2>&1 | awk -F '"' '/Developer ID Application:/ { print $2; exit }')"
-          if [ -z "${identity:-}" ]; then
-            echo "Unable to find Developer ID Application identity after importing certificate." >&2
-            security find-identity -v -p codesigning || true
-            exit 1
-          fi
-          echo "identity=${identity}" >> "$GITHUB_OUTPUT"
 
       - name: Install Linux system dependencies (Tauri)
         if: runner.os == 'Linux'
@@ -307,73 +407,279 @@ jobs:
             sudo apt-get install -y --no-install-recommends "${fuse_utils}"
           fi
 
-      - name: Compute build version
-        id: ver
-        run: |
-          set -euo pipefail
-          ui_version="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"
-          if [ -z "${ui_version:-}" ]; then
-            echo "Unable to resolve apps/ui/package.json version" >&2
-            exit 1
-          fi
-          if [ "${{ inputs.environment }}" = "preview" ]; then
-            build_version="${ui_version}-preview.${GITHUB_RUN_NUMBER}"
-          elif [ "${{ inputs.environment }}" = "dev" ]; then
-            build_version="${ui_version}-dev.${GITHUB_RUN_NUMBER}"
-          else
-            build_version="${ui_version}"
-          fi
-          echo "ui_version=${ui_version}" >> "$GITHUB_OUTPUT"
-          echo "build_version=${build_version}" >> "$GITHUB_OUTPUT"
-
-      - name: Build desktop updater artifacts
+      - name: Build desktop candidate binary
         env:
           CI: "true"
           APP_ENV: ${{ inputs.environment }}
+          BUILD_VERSION: ${{ needs.resolve_source.outputs.build_version }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
-          APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs tauri-build-updater-artifacts \
-            --environment "${{ inputs.environment }}" \
-            --build-version "${{ steps.ver.outputs.build_version }}" \
+            --environment "${APP_ENV}" \
+            --build-version "${BUILD_VERSION}" \
             --tauri-target "${TAURI_TARGET}" \
-            --ui-dir "apps/ui"
+            --ui-dir "apps/ui" \
+            --no-bundle \
+            --secrets-source env
 
-      - name: Notarize macOS artifacts (updater + DMG) (macOS)
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_API_KEY_ID != '' && env.APPLE_API_ISSUER_ID != '' && env.APPLE_API_PRIVATE_KEY != '' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+      - name: Pack bounded desktop candidate
         env:
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          SOURCE_SHA: ${{ needs.resolve_source.outputs.source_sha }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          UI_VERSION: ${{ needs.resolve_source.outputs.ui_version }}
+          BUILD_VERSION: ${{ needs.resolve_source.outputs.build_version }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs tauri-notarize-macos-artifacts \
+          node scripts/pipeline/run.mjs tauri-bundle-candidate \
+            --mode pack \
+            --platform-key "${PLATFORM_KEY}" \
+            --source-sha "${SOURCE_SHA}" \
+            --environment "${RELEASE_ENVIRONMENT}" \
+            --ui-version "${UI_VERSION}" \
+            --build-version "${BUILD_VERSION}" \
+            --tauri-target "${TAURI_TARGET}" \
             --ui-dir "apps/ui" \
-            --tauri-target "${TAURI_TARGET}"
+            --out-dir "dist/tauri/candidates/${PLATFORM_KEY}"
+
+      - name: Upload desktop candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tauri-candidate-${{ matrix.platform_key }}
+          path: dist/tauri/candidates/${{ matrix.platform_key }}/**
+          retention-days: 7
+
+
+  finalize:
+    name: Finalize desktop artifacts (${{ matrix.platform_key }})
+    runs-on: ${{ matrix.os }}
+    needs: [resolve_source, build]
+    permissions:
+      contents: read
+    environment: release-shared
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform_key: linux-x86_64
+            tauri_target: ""
+          - os: windows-latest
+            platform_key: windows-x86_64
+            tauri_target: ""
+          - os: macos-latest
+            platform_key: darwin-aarch64
+            tauri_target: aarch64-apple-darwin
+          - os: macos-latest
+            platform_key: darwin-x86_64
+            tauri_target: x86_64-apple-darwin
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Xcode (pin) (macOS only)
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/setup-xcode
+        with:
+          xcode_version: "26.2"
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install trusted finalizer dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          npm_config_registry: https://registry.npmjs.org
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          targets: ${{ matrix.tauri_target }}
+
+      - name: Install Linux bundling dependencies
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            desktop-file-utils gstreamer1.0-tools gstreamer1.0-plugins-base squashfs-tools patchelf
+
+      - name: Download desktop candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: tauri-candidate-${{ matrix.platform_key }}
+          path: dist/tauri/candidate/${{ matrix.platform_key }}
+
+      - name: Validate and materialize desktop candidate
+        env:
+          PLATFORM_KEY: ${{ matrix.platform_key }}
+          SOURCE_SHA: ${{ needs.resolve_source.outputs.source_sha }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          UI_VERSION: ${{ needs.resolve_source.outputs.ui_version }}
+          BUILD_VERSION: ${{ needs.resolve_source.outputs.build_version }}
+          TAURI_TARGET: ${{ matrix.tauri_target }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs tauri-bundle-candidate \
+            --mode materialize \
+            --platform-key "${PLATFORM_KEY}" \
+            --expected-source-sha "${SOURCE_SHA}" \
+            --expected-environment "${RELEASE_ENVIRONMENT}" \
+            --expected-ui-version "${UI_VERSION}" \
+            --expected-build-version "${BUILD_VERSION}" \
+            --tauri-target "${TAURI_TARGET}" \
+            --ui-dir "apps/ui" \
+            --candidate-dir "dist/tauri/candidate/${PLATFORM_KEY}"
+
+      - name: Validate updater public key (production)
+        if: inputs.environment == 'production'
+        run: node scripts/pipeline/run.mjs tauri-validate-updater-pubkey --config-path apps/ui/src-tauri/tauri.conf.json
+
+      - name: Check private signing availability
+        id: signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "Missing required Tauri updater signing private key." >&2
+            exit 1
+          fi
+          apple_ready=true
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER_ID APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then apple_ready=false; fi
+          done
+          echo "apple_ready=${apple_ready}" >> "$GITHUB_OUTPUT"
 
       - name: Fail when production notarization/signing secrets are missing (macOS)
-        if: runner.os == 'macOS' && inputs.environment == 'production' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '' || env.APPLE_API_KEY_ID == '' || env.APPLE_API_ISSUER_ID == '' || env.APPLE_API_PRIVATE_KEY == '' || env.TAURI_SIGNING_PRIVATE_KEY == '')
+        if: runner.os == 'macOS' && inputs.environment == 'production' && steps.signing.outputs.apple_ready != 'true'
         run: |
           echo "Missing required production macOS signing/notarization secrets." >&2
           echo "Required: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY." >&2
           exit 1
 
+      - name: Setup Apple code signing identity (macOS)
+        if: runner.os == 'macOS' && steps.signing.outputs.apple_ready == 'true'
+        id: apple_id
+        uses: ./.github/actions/setup-apple-codesigning
+        with:
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Generate ephemeral updater bundle key
+        shell: bash
+        run: |
+          set -euo pipefail
+          ephemeral_password="$(node -p 'require("node:crypto").randomUUID()')"
+          ephemeral_key="${RUNNER_TEMP}/tauri-ephemeral.key"
+          yarn --silent tauri signer generate --ci --password "${ephemeral_password}" --write-keys "${ephemeral_key}"
+          echo "TAURI_EPHEMERAL_KEY=${ephemeral_key}" >> "$GITHUB_ENV"
+          echo "TAURI_EPHEMERAL_PASSWORD=${ephemeral_password}" >> "$GITHUB_ENV"
+
+      - name: Bundle and sign desktop updater artifacts
+        env:
+          CI: "true"
+          APP_ENV: ${{ inputs.environment }}
+          BUILD_VERSION: ${{ needs.resolve_source.outputs.build_version }}
+          TAURI_TARGET: ${{ matrix.tauri_target }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple_id.outputs.identity }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_EPHEMERAL_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_EPHEMERAL_PASSWORD }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/run.mjs tauri-build-updater-artifacts \
+            --environment "${APP_ENV}" \
+            --build-version "${BUILD_VERSION}" \
+            --tauri-target "${TAURI_TARGET}" \
+            --ui-dir "apps/ui" \
+            --bundle-only \
+            --secrets-source env
+
+      - name: Sign non-mac updater artifacts
+        if: runner.os != 'macOS'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_TARGET: ${{ matrix.tauri_target }}
+        run: |
+          node scripts/pipeline/run.mjs tauri-sign-updater-artifacts \
+            --ui-dir "apps/ui" \
+            --tauri-target "${TAURI_TARGET}"
+
+      - name: Notarize macOS artifacts (updater + DMG) (macOS)
+        if: runner.os == 'macOS' && steps.signing.outputs.apple_ready == 'true'
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_TARGET: ${{ matrix.tauri_target }}
+        run: |
+          node scripts/pipeline/run.mjs tauri-notarize-macos-artifacts \
+            --ui-dir "apps/ui" \
+            --tauri-target "${TAURI_TARGET}"
+
       - name: Collect updater artifact + signature
         env:
           PLATFORM_KEY: ${{ matrix.platform_key }}
-          UI_VERSION: ${{ steps.ver.outputs.ui_version }}
-          ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          UI_VERSION: ${{ needs.resolve_source.outputs.ui_version }}
           TAURI_TARGET: ${{ matrix.tauri_target }}
         run: |
-          set -euo pipefail
           node scripts/pipeline/run.mjs tauri-collect-updater-artifacts \
-            --environment "${ENVIRONMENT}" \
+            --environment "${RELEASE_ENVIRONMENT}" \
             --platform-key "${PLATFORM_KEY}" \
             --ui-version "${UI_VERSION}" \
             --tauri-target "${TAURI_TARGET}" \
             --ui-dir "apps/ui"
 
-      - name: Upload updater assets artifact
-        uses: actions/upload-artifact@v4
+      - name: Clean private signing material
+        if: always()
+        shell: bash
+        env:
+          APPLE_KEYCHAIN_PATH: ${{ steps.apple_id.outputs.keychain-path }}
+          APPLE_CERTIFICATE_PATH: ${{ steps.apple_id.outputs.certificate-path }}
+        run: |
+          if [ "${RUNNER_OS}" = "macOS" ]; then
+            security delete-keychain "${APPLE_KEYCHAIN_PATH}" >/dev/null 2>&1 || true
+            rm -f "${APPLE_CERTIFICATE_PATH}"
+          fi
+          rm -f "${TAURI_EPHEMERAL_KEY:-}" "${TAURI_EPHEMERAL_KEY:-}.pub"
+
+      - name: Upload finalized updater assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tauri-updates-${{ matrix.platform_key }}
           path: dist/tauri/updates/${{ matrix.platform_key }}/**
@@ -382,36 +688,32 @@ jobs:
   prepare_assets:
     name: Prepare latest.json + publish assets
     runs-on: ubuntu-latest
-    needs: [resolve_source, build]
+    needs: [resolve_source, finalize]
+    permissions:
+      contents: read
+    environment: release-shared
     outputs:
-      ui_version: ${{ steps.meta.outputs.ui_version }}
-      target_sha: ${{ steps.meta.outputs.target_sha }}
+      ui_version: ${{ needs.resolve_source.outputs.ui_version }}
+      target_sha: ${{ needs.resolve_source.outputs.source_sha }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.resolve_source.outputs.source_sha }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Compute build metadata
-        id: meta
-        run: |
-          set -euo pipefail
-          ui_version="$(node -p 'require("./apps/ui/package.json").version' | tr -d '\n')"
-          if [ -z "${ui_version:-}" ]; then
-            echo "Unable to resolve apps/ui/package.json version" >&2
-            exit 1
-          fi
-          echo "ui_version=${ui_version}" >> "$GITHUB_OUTPUT"
-          echo "target_sha=${{ needs.resolve_source.outputs.source_sha }}" >> "$GITHUB_OUTPUT"
+      - name: Install minisign
+        uses: ./.github/actions/bootstrap-minisign
 
       - name: Download updater assets artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: tauri-updates-*
           path: dist/tauri/updates
@@ -421,17 +723,20 @@ jobs:
         env:
           REPO: ${{ env.UI_REPO }}
           ENVIRONMENT: ${{ inputs.environment }}
+          UI_VERSION: ${{ needs.resolve_source.outputs.ui_version }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs tauri-prepare-assets \
             --environment "${ENVIRONMENT}" \
-            --ui-version "${{ steps.meta.outputs.ui_version }}" \
+            --ui-version "${UI_VERSION}" \
             --repo "${REPO}" \
             --artifacts-dir "dist/tauri/updates" \
             --publish-dir "dist/tauri/publish"
 
       - name: Upload publish assets artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-desktop-assets
           path: dist/tauri/publish/**
@@ -439,7 +744,7 @@ jobs:
 
   publish_preview:
     if: ${{ inputs.publish_release == true && inputs.environment == 'preview' }}
-    needs: [prepare_assets]
+    needs: [prepare_assets, resolve_source]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:
@@ -449,7 +754,7 @@ jobs:
       prerelease: true
       rolling_tag: true
       generate_notes: false
-      notes: Rolling preview build.
+      notes: ${{ needs.resolve_source.outputs.release_notes_github_markdown }}
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
       assets_dir: dist/ui-desktop-assets/ui-desktop-preview
@@ -457,7 +762,7 @@ jobs:
 
   publish_dev:
     if: ${{ inputs.publish_release == true && inputs.environment == 'dev' }}
-    needs: [prepare_assets]
+    needs: [prepare_assets, resolve_source]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:
@@ -467,15 +772,15 @@ jobs:
       prerelease: true
       rolling_tag: true
       generate_notes: false
-      notes: Rolling dev build.
+      notes: ${{ needs.resolve_source.outputs.release_notes_github_markdown }}
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
       assets_dir: dist/ui-desktop-assets/ui-desktop-dev
       clobber: true
 
   publish_stable_release:
-    if: ${{ inputs.publish_release == true && inputs.environment == 'production' }}
-    needs: [prepare_assets]
+    if: ${{ inputs.publish_release == true && inputs.environment == 'production' && needs.resolve_source.outputs.retry_version == '' }}
+    needs: [prepare_assets, resolve_source]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
     with:
@@ -484,26 +789,64 @@ jobs:
       target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
       prerelease: false
       rolling_tag: false
-      generate_notes: true
+      generate_notes: false
+      notes: ${{ needs.resolve_source.outputs.release_notes_github_markdown }}
       assets_artifact: ui-desktop-assets
       assets_artifact_path: dist/ui-desktop-assets
       assets_dir: dist/ui-desktop-assets/ui-desktop-v
-      clobber: true
+      clobber: false
 
-  publish_stable_feed:
-    if: ${{ inputs.publish_release == true && inputs.environment == 'production' }}
-    needs: [prepare_assets, publish_stable_release]
-    uses: ./.github/workflows/publish-ui-release.yml
-    secrets: inherit
-    with:
-      tag: ui-desktop-stable
-      title: Happier UI Desktop Stable
-      target_sha: ${{ needs.prepare_assets.outputs.target_sha }}
-      prerelease: false
-      rolling_tag: true
-      generate_notes: false
-      notes: Stable update feed.
-      assets_artifact: ui-desktop-assets
-      assets_artifact_path: dist/ui-desktop-assets
-      assets_dir: dist/ui-desktop-assets/ui-desktop-stable
-      clobber: true
+  promote_stable_feed:
+    name: Promote immutable desktop release to stable feed
+    if: ${{ always() && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
+    needs: [resolve_source, publish_stable_release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment: release-shared
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install minisign
+        uses: ./.github/actions/bootstrap-minisign
+
+      - name: Create scoped release token
+        id: app_token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Promote verified immutable desktop release
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_TAG: ui-desktop-v${{ needs.resolve_source.outputs.retry_version != '' && needs.resolve_source.outputs.retry_version || needs.resolve_source.outputs.ui_version }}
+          TARGET_SHA: ${{ needs.resolve_source.outputs.source_sha }}
+          RELEASE_MESSAGE: ${{ needs.resolve_source.outputs.release_notes_github_markdown }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/promote-rolling-release.mjs \
+            --source-tag "$SOURCE_TAG" \
+            --rolling-tag ui-desktop-stable \
+            --title "Happier UI Desktop Stable" \
+            --target-sha "$TARGET_SHA" \
+            --prerelease false \
+            --notes "$RELEASE_MESSAGE" \
+            --release-message "$RELEASE_MESSAGE" \
+            --repo "$GH_REPO" \
+            --public-key scripts/release/installers/happier-release.pub

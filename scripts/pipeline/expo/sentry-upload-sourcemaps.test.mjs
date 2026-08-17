@@ -34,7 +34,7 @@ test('maybeUploadSentryExpoSourceMaps skips when dist dir is missing', () => {
   assert.equal(calls.length, 0);
 });
 
-test('maybeUploadSentryExpoSourceMaps runs npx sentry-expo-upload-sourcemaps when token and dist exist', () => {
+test('maybeUploadSentryExpoSourceMaps runs the workspace-pinned uploader when token and dist exist', () => {
   const calls = [];
   const uiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-ui-'));
   fs.mkdirSync(path.join(uiDir, 'dist'), { recursive: true });
@@ -44,14 +44,15 @@ test('maybeUploadSentryExpoSourceMaps runs npx sentry-expo-upload-sourcemaps whe
     uiDir,
     distDir: 'dist',
     env: { SENTRY_AUTH_TOKEN: 'token' },
+    resolveUploaderScript: () => '/trusted/node_modules/@sentry/react-native/scripts/expo-upload-sourcemaps.js',
     run: (cmd, args, extra) => calls.push({ cmd, args, extra }),
   });
 
   assert.equal(res.status, 'uploaded');
   assert.deepEqual(calls, [
     {
-      cmd: 'npx',
-      args: ['--yes', 'sentry-expo-upload-sourcemaps', 'dist'],
+      cmd: process.execPath,
+      args: ['/trusted/node_modules/@sentry/react-native/scripts/expo-upload-sourcemaps.js', 'dist'],
       extra: { cwd: uiDir, stdio: 'inherit' },
     },
   ]);

@@ -27,6 +27,8 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
         'true',
         '--repository',
         'happier-dev/happier',
+        '--release-notes-id',
+        'test-release',
         '--dry-run',
       ],
       {
@@ -51,6 +53,8 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
     assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
     assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
     assert.match(out, /- deploy_targets: server/);
+    assert.match(out, /- release_profile: integrated/);
+    assert.match(out, /- checks_profile: fast/);
     assert.match(out, /- force_deploy: true/);
     assert.doesNotMatch(out, /runDeployServer|runPublish/);
   } finally {

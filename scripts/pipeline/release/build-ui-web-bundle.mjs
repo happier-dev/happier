@@ -34,7 +34,7 @@ async function main() {
   if (!skipBuild) {
     // Metro resolves internal workspace packages via `package.json#exports` which points to `dist/**`.
     // Ensure all `@happier-dev/*` workspace deps used by the UI have been built before `expo export`.
-    execOrThrow(process.execPath, ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'], {
+    await execOrThrow(process.execPath, ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'], {
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -44,7 +44,7 @@ async function main() {
     });
 
     const yarn = resolveYarnCommand({});
-    execOrThrow(
+    await execOrThrow(
       yarn.cmd,
       [...yarn.args, '--cwd', 'apps/ui', '-s', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist'],
       {

@@ -62,14 +62,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trusted workflow ref guard
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Admit trusted workflow control ref
+        env:
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+          WORKFLOW_FILE: publish-github-release.yml
+        run: |
+          set -euo pipefail
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/$WORKFLOW_FILE@refs/heads/main") ;;
+            *) echo "Untrusted workflow control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
+    needs: [trusted_ref_guard]
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -85,20 +112,85 @@ jobs:
       RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
       RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
 
+      - name: Validate publish inputs
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_TARGET_SHA: ${{ inputs.target_sha }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_ROLLING_TAG: ${{ inputs.rolling_tag }}
+          INPUT_GENERATE_NOTES: ${{ inputs.generate_notes }}
+          INPUT_CLOBBER: ${{ inputs.clobber }}
+          INPUT_PRUNE_ASSETS: ${{ inputs.prune_assets }}
+          INPUT_ASSETS_ARTIFACT: ${{ inputs.assets_artifact }}
+          INPUT_ASSETS_ARTIFACT_PATH: ${{ inputs.assets_artifact_path }}
+        run: |
+          set -euo pipefail
+
+          require_bool() {
+            case "$2" in
+              true|false) ;;
+              *) echo "$1 must be true or false." >&2; exit 1 ;;
+            esac
+          }
+
+          require_safe_dist_path() {
+            label="$1"
+            value="$2"
+            case "$value" in
+              dist/*) ;;
+              *) echo "$label must be a relative path under dist/." >&2; exit 1 ;;
+            esac
+            case "/$value/" in
+              */../*|*/./*) echo "$label must not contain traversal segments." >&2; exit 1 ;;
+            esac
+            case "$value" in
+              *\\*) echo "$label must use forward slashes." >&2; exit 1 ;;
+            esac
+          }
+
+          if [ -z "$INPUT_TAG" ] || ! git check-ref-format "refs/tags/$INPUT_TAG" >/dev/null; then
+            echo "tag must be a valid Git tag name." >&2
+            exit 1
+          fi
+          if [ -z "$INPUT_TITLE" ]; then
+            echo "title is required." >&2
+            exit 1
+          fi
+          case "$INPUT_TARGET_SHA" in
+            ''|*[!0-9a-fA-F]*) echo "target_sha must be a hexadecimal commit SHA." >&2; exit 1 ;;
+          esac
+          case "${#INPUT_TARGET_SHA}" in
+            40|64) ;;
+            *) echo "target_sha must contain 40 or 64 hexadecimal characters." >&2; exit 1 ;;
+          esac
+
+          require_bool prerelease "$INPUT_PRERELEASE"
+          require_bool rolling_tag "$INPUT_ROLLING_TAG"
+          require_bool generate_notes "$INPUT_GENERATE_NOTES"
+          require_bool clobber "$INPUT_CLOBBER"
+          require_bool prune_assets "$INPUT_PRUNE_ASSETS"
+
+          if [ -n "$INPUT_ASSETS_ARTIFACT" ]; then
+            require_safe_dist_path assets_artifact_path "$INPUT_ASSETS_ARTIFACT_PATH"
+          fi
+
       - name: Create GitHub App token (release bot)
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         if: ${{ env.RELEASE_BOT_APP_ID != '' && env.RELEASE_BOT_PRIVATE_KEY != '' }}
         with:
           app-id: ${{ env.RELEASE_BOT_APP_ID }}
@@ -119,7 +211,7 @@ jobs:
 
       - name: Download release assets artifact
         if: ${{ inputs.assets_artifact != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: ${{ inputs.assets_artifact }}
           path: ${{ inputs.assets_artifact_path }}
@@ -128,6 +220,14 @@ jobs:
         env:
           GH_TOKEN: ${{ (steps.app_token.outputs.token != '' && steps.app_token.outputs.token) || github.token }}
           GH_REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_TITLE: ${{ inputs.title }}
+          INPUT_TARGET_SHA: ${{ inputs.target_sha }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_ROLLING_TAG: ${{ inputs.rolling_tag }}
+          INPUT_GENERATE_NOTES: ${{ inputs.generate_notes }}
+          INPUT_CLOBBER: ${{ inputs.clobber }}
+          INPUT_PRUNE_ASSETS: ${{ inputs.prune_assets }}
           NOTES: ${{ inputs.notes }}
           ASSETS: ${{ inputs.assets }}
           assets_dir: ${{ inputs.assets_dir }}
@@ -135,15 +235,15 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs github-publish-release \
-            --tag "${{ inputs.tag }}" \
-            --title "${{ inputs.title }}" \
-            --target-sha "${{ inputs.target_sha }}" \
-            --prerelease "${{ inputs.prerelease }}" \
-            --rolling-tag "${{ inputs.rolling_tag }}" \
-            --generate-notes "${{ inputs.generate_notes }}" \
+            --tag "$INPUT_TAG" \
+            --title "$INPUT_TITLE" \
+            --target-sha "$INPUT_TARGET_SHA" \
+            --prerelease "$INPUT_PRERELEASE" \
+            --rolling-tag "$INPUT_ROLLING_TAG" \
+            --generate-notes "$INPUT_GENERATE_NOTES" \
             --notes "${NOTES}" \
             --assets "${ASSETS}" \
             --assets-dir "${assets_dir}" \
-            --clobber "${{ inputs.clobber }}" \
-            --prune-assets "${{ inputs.prune_assets }}" \
+            --clobber "$INPUT_CLOBBER" \
+            --prune-assets "$INPUT_PRUNE_ASSETS" \
             --release-message "${release_message}"

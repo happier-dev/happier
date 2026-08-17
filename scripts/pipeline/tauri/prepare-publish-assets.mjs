@@ -9,6 +9,7 @@ import {
   formatPublicReleaseChannelChoices,
   normalizePublicReleaseChannel,
 } from '../release/lib/public-release-rings.mjs';
+import { createSignedReleaseAssetEnvelope } from '../release/lib/signed-asset-envelope.mjs';
 
 function fail(message) {
   console.error(message);
@@ -74,7 +75,7 @@ function copyDir(repoRoot, fromDir, toDir, opts) {
  * @param {{ search: string; replacement: string }} replacement
  * @param {{ dryRun: boolean }} opts
  */
-function copyDirWithRenamedBasenames(repoRoot, fromDir, toDir, replacement, opts) {
+function copyDirFlattened(repoRoot, fromDir, toDir, opts) {
   const src = path.resolve(repoRoot, fromDir);
   const dst = path.resolve(repoRoot, toDir);
   if (opts.dryRun) {
@@ -82,24 +83,35 @@ function copyDirWithRenamedBasenames(repoRoot, fromDir, toDir, replacement, opts
     return;
   }
 
+  if (fs.existsSync(dst)) {
+    fail(`Refusing to replace an existing immutable desktop asset directory: ${path.relative(repoRoot, dst)}`);
+  }
+
+  /** @type {Array<{ fromPath: string; name: string }>} */
+  const files = [];
+  const seenNames = new Set();
   const queue = [src];
   while (queue.length > 0) {
     const current = queue.pop();
-    const entries = fs.readdirSync(current, { withFileTypes: true });
+    const entries = fs.readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
       const fromPath = path.join(current, entry.name);
-      const relativeParent = path.relative(src, current);
       if (entry.isDirectory()) {
         queue.push(fromPath);
         continue;
       }
       if (!entry.isFile()) continue;
-
-      const toName = entry.name.replace(replacement.search, replacement.replacement);
-      const toPath = path.join(dst, relativeParent, toName);
-      fs.mkdirSync(path.dirname(toPath), { recursive: true });
-      fs.copyFileSync(fromPath, toPath);
+      if (seenNames.has(entry.name)) {
+        fail(`Cannot flatten desktop release assets with duplicate filename: ${entry.name}`);
+      }
+      seenNames.add(entry.name);
+      files.push({ fromPath, name: entry.name });
     }
+  }
+
+  fs.mkdirSync(dst, { recursive: true });
+  for (const { fromPath, name } of files) {
+    fs.copyFileSync(fromPath, path.join(dst, name));
   }
 }
 
@@ -141,7 +153,7 @@ function computeRollingVersion(uiVersion, environment) {
   return `${base}-${suffix}.${runNumber}`;
 }
 
-function main() {
+async function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
     options: {
@@ -224,7 +236,6 @@ function main() {
   const previewDir = path.join(publishDir, 'ui-desktop-preview');
   const publicdevDir = path.join(publishDir, 'ui-desktop-dev');
   const versionedDir = path.join(publishDir, 'ui-desktop-v');
-  const stableDir = path.join(publishDir, 'ui-desktop-stable');
 
   if (environment === 'preview') {
     copyFile(repoRoot, latestJsonRel, path.join(previewDir, 'latest.json'), opts);
@@ -233,16 +244,27 @@ function main() {
     copyFile(repoRoot, latestJsonRel, path.join(publicdevDir, 'latest.json'), opts);
     copyDir(repoRoot, artifactsDir, publicdevDir, opts);
   } else {
-    copyFile(repoRoot, latestJsonRel, path.join(stableDir, 'latest.json'), opts);
-    copyDirWithRenamedBasenames(
-      repoRoot,
-      artifactsDir,
-      stableDir,
-      { search: `-v${uiVersion}`, replacement: '' },
-      opts,
-    );
-    copyDir(repoRoot, artifactsDir, versionedDir, opts);
+    if (opts.dryRun) {
+      console.log(`[dry-run] create signed immutable desktop envelope in ${path.relative(repoRoot, versionedDir)}`);
+      return;
+    }
+    copyDirFlattened(repoRoot, artifactsDir, versionedDir, opts);
+    copyFile(repoRoot, latestJsonRel, path.join(versionedDir, 'latest.json'), opts);
+    const assetNames = fs.readdirSync(versionedDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
+    await createSignedReleaseAssetEnvelope({
+      assetsDir: versionedDir,
+      product: 'happier-ui-desktop',
+      version: uiVersion,
+      assetNames,
+      trustedComment: `happier-ui-desktop ${uiVersion} production`,
+    });
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
